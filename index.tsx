@@ -1,6 +1,6 @@
 import {
   Button, Form, HStack, Label, Navigation, NavigationLink, NavigationStack, Picker, Script, Section, SecureField, Spacer,
-  Text, TextField, Toggle, VStack, Widget, useEffect, useState, Dialog,
+  Text, TextField, Toggle, VStack, Widget, useEffect, useState,
 } from "scripting"
 import {
   VERSION, Controller, Group, Conn, Rule, Overview, Kind, listControllers, saveController, removeController, getActive, setActive, getSecret,
