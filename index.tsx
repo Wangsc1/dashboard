@@ -220,9 +220,6 @@ function EditController({ initial, onDone }: { initial?: Controller; onDone: () 
     </Section>
     {err ? <Section><Text foregroundStyle="systemRed">{err}</Text></Section> : null}
     <Section><Button title="保存并测试" action={save} /></Section>
-    {initial ? <Section><Button title="删除此控制器" role="destructive" action={async () => {
-      if (await Dialog.confirm({ title: "删除控制器", message: initial.name, confirmLabel: "删除" })) { removeController(initial.id); onDone(); dismiss() }
-    }} /></Section> : null}
   </Form>
 }
 
@@ -255,7 +252,9 @@ function SettingsPage({ active, onChanged }: { active: Controller | null; onChan
   const [refreshMin, setRefreshMin] = useState(String(getRefreshMinutes()))
   const reload = () => { setList(listControllers()); onChanged() }
   async function del(c: Controller) {
-    if (await Dialog.confirm({ title: "删除控制器", message: c.name, confirmLabel: "删除" })) { removeController(c.id); reload() }
+    if (!(await Dialog.confirm({ title: "删除控制器", message: c.name, confirmLabel: "删除" }))) return
+    try { removeController(c.id) } catch { return }
+    setTimeout(reload, 400)
   }
   return <Form navigationTitle="设置" navigationBarTitleDisplayMode="inline">
     <Section header={<Text>控制器</Text>}>
