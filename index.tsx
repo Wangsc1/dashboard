@@ -122,8 +122,6 @@ function OverviewPage({ active, version, onSwitch }: { active: Controller | null
   const [busy, setBusy] = useState(false)
   const [dn, setDn] = useState<number[]>([])
   const [upH, setUpH] = useState<number[]>([])
-  const [connH, setConnH] = useState<number[]>([])
-  const [memH, setMemH] = useState<number[]>([])
   const [st] = useState({ refreshing: false })
   const all = listControllers()
   const dismiss = Navigation.useDismiss()
@@ -136,12 +134,10 @@ function OverviewPage({ active, version, onSwitch }: { active: Controller | null
       setOv(o); setErr("")
       setDn(h => [...h, o.traffic.down].slice(-HIST))
       setUpH(h => [...h, o.traffic.up].slice(-HIST))
-      setConnH(h => [...h, o.connCount].slice(-HIST))
-      if (o.wrt) setMemH(h => [...h, Math.max(0, o.wrt!.memTotal - o.wrt!.memFree)].slice(-HIST))
     } catch (e) { setErr(msg(e)) }
     finally { st.refreshing = false }
   }
-  useEffect(() => { setDn([]); setUpH([]); setOv(null); setCv(null); setConnH([]); setMemH([]) }, [active?.id])
+  useEffect(() => { setDn([]); setUpH([]); setOv(null); setCv(null) }, [active?.id])
   // 代理状态只供下面的运行模式控制，不参与 OpenWrt 概览。
   useEffect(() => {
     if (!active) return
@@ -205,8 +201,8 @@ function OverviewPage({ active, version, onSwitch }: { active: Controller | null
         <StatCard icon="icloud.and.arrow.up.fill" color="#34C759" title="上传总量" parts={ov ? fmtParts(ov.upTotal) : null} />
       </HStack>
       <HStack spacing={12}>
-        <StatCard icon="link" color="#A855F7" title="活动连接" parts={ov ? [String(ov.connCount), ""] : null} spark={connH} floor={10} />
-        <StatCard icon="square.stack.3d.up.fill" color="#F59E0B" title="内存使用" parts={w ? fmtParts(memUsed) : null} spark={memH} floor={1024 * 1024} />
+        <StatCard icon="link" color="#A855F7" title="活动连接" parts={ov ? [String(ov.connCount), ""] : null} />
+        <StatCard icon="square.stack.3d.up.fill" color="#F59E0B" title="内存使用" parts={w ? fmtParts(memUsed) : null} />
       </HStack>
 
       <RateChart down={dn} up={upH} />
