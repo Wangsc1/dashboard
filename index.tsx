@@ -62,25 +62,26 @@ function Big({ parts }: { parts: [string, string] | null }) {
 const HIST = 60
 function Spark({ data, color, floor = 1024 }: { data: number[]; color: string; floor?: number }) {
   const W = 100, H = 40
-  if (data.length < 2) return <SVG code='<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' frame={{ width: 64, height: 24 }} />
+  if (data.length < 2) return <SVG code='<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' frame={{ maxWidth: "infinity", height: 48 }} />
   const max = Math.max(floor, ...data)
   const pts = data.map((v, i) => `${((i + (HIST - data.length)) / (HIST - 1) * W).toFixed(1)},${(H - 2 - v / max * (H - 4)).toFixed(1)}`)
   const firstX = ((HIST - data.length) / (HIST - 1) * W).toFixed(1)
   const area = `${firstX},${H} ${pts.join(" ")} ${W},${H}`
-  const code = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"><polygon points="${area}" fill="${color}" fill-opacity="0.18"/><polyline points="${pts.join(" ")}" fill="none" stroke="${color}" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/></svg>`
-  return <SVG code={code} resizable frame={{ width: 64, height: 24 }} />
+  const code = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"><polygon points="${area}" fill="${color}" fill-opacity="0.18"/><polyline points="${pts.join(" ")}" fill="none" stroke="${color}" stroke-opacity="0.65" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round"/></svg>`
+  return <SVG code={code} resizable frame={{ maxWidth: "infinity", height: 48 }} />
 }
 function StatCard({ icon, color, title, parts, spark, floor }: { icon: string; color: string; title: string; parts: [string, string] | null; spark?: number[]; floor?: number }) {
-  return <Card>
-    <HStack spacing={8}><Badge icon={icon} color={color} /><Text font={13} foregroundStyle="secondaryLabel">{title}</Text></HStack>
-    <ZStack alignment="bottomTrailing" frame={{ maxWidth: "infinity", height: 52 }}>
-      {spark ? <Spark data={spark} color={color} floor={floor} /> : null}
-      <VStack alignment="leading" spacing={0} frame={{ maxWidth: "infinity", height: 52 }}>
-        <Big parts={parts} />
-        <Spacer />
-      </VStack>
-    </ZStack>
-  </Card>
+  return <ZStack alignment="bottom" frame={{ maxWidth: "infinity", height: 116 }}
+    clipShape={{ type: "rect", cornerRadius: 22 }}>
+    <RoundedRectangle cornerRadius={22} fill={CARD_BG} />
+    {spark ? <Spark data={spark} color={color} floor={floor} /> : null}
+    <VStack alignment="leading" spacing={10} foregroundStyle={MAIN_FG}
+      modifiers={modifiers().frame({ maxWidth: "infinity", height: 88, alignment: "topLeading" }).padding({ horizontal: 16, vertical: 14 })}>
+      <HStack spacing={8}><Badge icon={icon} color={color} /><Text font={13} foregroundStyle="secondaryLabel">{title}</Text></HStack>
+      <Big parts={parts} />
+      <Spacer />
+    </VStack>
+  </ZStack>
 }
 function InfoItem({ icon, color, title, value }: { icon: string; color: string; title: string; value: string }) {
   return <HStack spacing={8} frame={{ maxWidth: "infinity", alignment: "leading" as any }}>
@@ -158,7 +159,6 @@ function OverviewPage({ active, version, onSwitch }: { active: Controller | null
   const rate = ov?.traffic ?? null
   const w = ov?.wrt
   const memUsed = w ? Math.max(0, w.memTotal - w.memFree) : 0
-  const memText = w ? `${fmtBytes(memUsed)} / ${fmtBytes(w.memTotal)}` : "-"
   const toolbar = {
     topBarLeading: <Button title="" systemImage="xmark" action={dismiss} />,
     topBarTrailing: <Menu label={<Image systemName="ellipsis.circle" />}>
@@ -193,7 +193,6 @@ function OverviewPage({ active, version, onSwitch }: { active: Controller | null
           <HStack spacing={4}><Circle fill={err ? "systemRed" : "systemGreen"} frame={{ width: 5, height: 5 }} /><Text font={12} foregroundStyle={err ? "systemRed" : "systemGreen"}>{err ? "连接失败" : ov ? "运行正常" : "连接中"}</Text></HStack>
         </HStack>
         <InfoItem icon="clock" color="#3B82F6" title="运行时间" value={w ? fmtUptime(w.uptime) : "-"} />
-        <InfoItem icon="chart.pie" color="#A855F7" title="内存使用" value={memText} />
         <InfoItem icon="waveform.path.ecg" color="#F59E0B" title="系统负载" value={w ? w.load.map(v => v.toFixed(2)).join(" ") : "-"} />
       </Card>
 
