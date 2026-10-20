@@ -1,6 +1,6 @@
 // dashboard 数据层：Clash 外部控制 API 与 OpenWrt（LuCI ubus JSON-RPC）
 import { getPreferences, customHeaders, recordEvent, controllerHealth, feedback } from "./preferences"
-export const VERSION = "1.4.4"
+export const VERSION = "1.5.0"
 
 export type Kind = "clash" | "openwrt"
 export type Plugin = "openclash" | "nikki" | "mihomo"
@@ -11,7 +11,7 @@ export interface Controller {
 }
 export interface ControllerInput { id?: string; name: string; host: string; port: number; https: boolean; username: string; plugin: Plugin; auto: boolean; cport: number }
 export interface Group { name: string; type: string; now: string; all: string[]; delays: Record<string, number>; hidden?: boolean; icon?: string }
-export interface Conn { id: string; host: string; src: string; dst: string; network: string; rule: string; chain: string; up: number; down: number; start: number; upSpeed?: number; downSpeed?: number }
+export interface Conn { id: string; host: string; src: string; dst: string; network: string; rule: string; chain: string; up: number; down: number; start: number; upSpeed?: number; downSpeed?: number; sourceIP?: string; inboundType?: string; chains?: string[]; closedAt?: number }
 export interface Rule { type: string; payload: string; proxy: string }
 export interface Traffic { up: number; down: number; upTotal?: number; downTotal?: number }
 export interface WrtInfo { model: string; release: string; uptime: number; load: number[]; memTotal: number; memFree: number; wan: string }
@@ -330,7 +330,7 @@ export async function loadGroups(c0: Controller): Promise<Group[]> {
       const h = node?.history
       return h?.length ? num(h[h.length - 1].delay) : undefined
     }
-    return names.filter(n => (n !== "GLOBAL" || prefs.showGlobal || order.includes("GLOBAL")) && (prefs.showHidden || !all[n]?.hidden)).map(n => {
+    return names.filter(n => (n !== "GLOBAL" || prefs.showGlobal) && (prefs.showHidden || !all[n]?.hidden)).map(n => {
       const g = all[n]; const delays: Record<string, number> = {}
       for (const m of g.all as string[]) { const delay = delayOf(m); if (delay !== undefined) delays[m] = delay }
       return { name: n, type: String(g.type ?? ""), now: String(g.now ?? ""), all: g.all, delays, hidden: !!g.hidden, icon: typeof g.icon === "string" ? g.icon : undefined }
@@ -378,6 +378,7 @@ export async function loadConnections(c0: Controller): Promise<Conn[]> {
     return (j.connections ?? []).map((x: any): Conn => {
       const m = x.metadata ?? {}
       return {
+        sourceIP: String(m.sourceIP ?? ""), inboundType: String(m.type ?? ""), chains: (x.chains ?? []).slice().reverse().map(String),
         id: String(x.id), host: String(m.host || m.destinationIP || "-"), src: `${m.sourceIP ?? ""}${m.sourcePort ? ":" + m.sourcePort : ""}`,
         dst: `${m.destinationIP ?? ""}${m.destinationPort ? ":" + m.destinationPort : ""}`, network: String(m.network ?? "").toUpperCase(),
         rule: [x.rule, x.rulePayload].filter(Boolean).join(" · "), chain: (x.chains ?? []).slice().reverse().join(" → "),
@@ -459,3 +460,48 @@ export function delayColor(ms: number | undefined): string {
   return ms < p.delayGreen ? "systemGreen" : ms <= p.delayRed ? "systemYellow" : "systemRed"
 }
 
+
+// ---------- 1.5：经上游固定提交核实的 Mihomo / Nikki 管理契约 ----------
+export interface Provider { name: string; type: string; vehicleType: string; count: number | null; updatedAt: string; behavior?: string; format?: string }
+export function parseProviders(j: any, kind: "proxies" | "rules"): Provider[] {
+  return Object.entries<any>(j?.providers ?? {}).map(([name,p]) => ({ name, type: String(p.type ?? "未提供"), vehicleType: String(p.vehicleType ?? "未提供"),
+    count: kind === "proxies" ? (Array.isArray(p.proxies) ? p.proxies.length : null) : (typeof p.ruleCount === "number" ? p.ruleCount : null),
+    updatedAt: typeof p.updatedAt === "string" && Date.parse(p.updatedAt)>0 ? p.updatedAt : "", behavior: p.behavior, format: p.format }))
+}
+export async function loadProviders(c: Controller, kind: "proxies" | "rules") { return parseProviders(await http(await cc(c), "/providers/"+kind),kind) }
+export async function updateProvider(c: Controller, kind: "proxies" | "rules", name: string) { await http(await cc(c), "/providers/"+kind+"/"+enc(name), { method: "PUT" }) }
+function requireNikki(c: Controller) { if (c.kind !== "openwrt" || c.plugin !== "nikki") throw new Error("仅支持 Nikki 的 LuCI RPC；当前来源不是 Nikki") }
+export async function nikkiInfo(c: Controller): Promise<{ app: string; core: string }> { requireNikki(c); const j = await ubus(c,"luci.nikki","version"); return { app: String(j.app || "未提供"), core: String(j.core || "未提供") } }
+export async function coreVersion(c: Controller) { return String((await http(await cc(c),"/version")).version || "未提供") }
+export async function nikkiService(c: Controller, action: "start"|"stop"|"restart"|"reload") { requireNikki(c); if (!["start","stop","restart","reload"].includes(action)) throw new Error("不支持的服务动作"); await ubus(c,"rc","init",{name:"nikki",action}) }
+export type CoreAction = "restart"|"reload"|"geo"|"dns"|"fakeip"
+export async function coreAction(c: Controller, action: CoreAction) {
+  const paths = { restart: ["POST","/restart"], reload: ["PUT","/configs?force=true"], geo: ["POST","/configs/geo"], dns: ["POST","/cache/dns/flush"], fakeip: ["POST","/cache/fakeip/flush"] }
+  const entry = paths[action]; if (!entry) throw new Error("不支持的核心动作")
+  await http(await cc(c),entry[1],{method:entry[0], ...(action === "reload" ? {body:{}} : {})})
+}
+export async function queryDNS(c: Controller, name: string, type: string) {
+  if (!/^(?=.{1,253}\.?$)[a-z0-9_*-]+(?:\.[a-z0-9_-]+)*\.?$/i.test(name) || !["A","AAAA","CNAME","TXT","MX","HTTPS"].includes(type)) throw new Error("域名或查询类型无效")
+  const j = await http(await cc(c),`/dns/query?name=${enc(name)}&type=${enc(type)}`)
+  return { status: num(j.Status), answers: (j.Answer ?? []).map((x:any) => ({ data:String(x.data ?? ""), type:num(x.type), ttl:num(x.TTL) })) }
+}
+export interface NikkiSubscription { id: string; name: string; updated: string; used: string; total: string; expire: string }
+export interface NikkiManagement { profile: string; files: {name:string; size:number}[]; subscriptions: NikkiSubscription[]; rules: {id:string; type:string; matcher:string; node:string; enabled:boolean}[]; appendRules: boolean }
+export async function loadNikkiManagement(c: Controller): Promise<NikkiManagement> {
+  requireNikki(c)
+  const [j,files] = await Promise.all([ubus(c,"uci","get",{config:"nikki"}),ubus(c,"file","list",{path:"/etc/nikki/profiles"})])
+  const vs: any[] = Object.values(j.values ?? {})
+  return { profile:String(j.values?.config?.profile ?? "未提供"), appendRules: j.values?.mixin?.rule === "1",
+    files:(files.entries ?? []).filter((x:any)=>x.type === "file" && /^[^/]+\.ya?ml$/i.test(x.name)).map((x:any)=>({name:String(x.name),size:num(x.size)})),
+    subscriptions:vs.filter(x=>x[".type"] === "subscription").map(x=>({id:String(x[".name"]),name:String(x.name || x[".name"]),updated:String(x.update || "未提供"),used:String(x.used || "未提供"),total:String(x.total || "未提供"),expire:String(x.expire || "未提供")})),
+    rules:vs.filter(x=>x[".type"] === "rule").map(x=>({id:String(x[".name"]),type:String(x.type??""),matcher:String(x.matcher??""),node:String(x.node??""),enabled:x.enabled === "1"})) }
+}
+export async function updateNikkiSubscription(c: Controller, id: string) { requireNikki(c); if (!/^[a-zA-Z0-9_]+$/.test(id)) throw new Error("订阅标识无效"); const j = await ubus(c,"luci.nikki","update_subscription",{section_id:id}); if (j.success !== true) throw new Error("Nikki报告订阅更新失败") }
+export async function webpage(c: Controller, page: "home"|"profile"|"mixin"|"log"|"editor" = "home") {
+  if (page !== "home") requireNikki(c)
+  // 无 token、session 或账号信息，浏览器使用自己的 LuCI 登录；不复制 API 密钥。
+  const base = c.kind === "openwrt" ? c.url : (await cc(c)).url
+  if (!/^https?:\/\/[^/?#@]+\/?$/.test(base)) throw new Error("当前地址含路径或认证参数，不允许交给浏览器")
+  return base.replace(/\/$/,"") + (c.kind === "openwrt" ? "/cgi-bin/luci/"+(page === "home" ? "" : "admin/services/nikki/"+page) : "/ui/")
+}
+export async function nikkiServiceStatus(c: Controller): Promise<boolean | null> { requireNikki(c); const j = await ubus(c,"rc","list",{name:"nikki"}); return typeof j.nikki?.running === "boolean" ? j.nikki.running : null }

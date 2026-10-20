@@ -1,4 +1,4 @@
-# dashboard · v1.4.2
+# dashboard · v1.5.0
 
 在 iPhone「Scripting」中管理 OpenWrt，并通过 LuCI ubus 自动读取 OpenClash / Nikki / MihomoTProxy 的代理控制器地址和密钥。非官方实现。
 
@@ -9,7 +9,7 @@
 - 全屏根页保留 **X**；与 scriptgit 实际入口一致，每个原生 `Tab` 内独立一个 `NavigationStack`，没有外层嵌套导航栈。各 tab 的详情页仍使用系统推入/返回，不用设置弹层。
 - 底部使用与 `/opt/openbear/workspace/scriptgit/index.tsx` 相同的原生 **`TabView selection={useObservable(...)}` + `Tab`** 路径，固定 **主页 / 代理 / 规则 / 连接 / 更多**。1.4.2 删除自绘 FloatingBar、safeAreaInset 和重复 UIGlass 样式。玻璃、选中态、系统拖动选择及宽度均交给系统，不再仿造原生手势或强制缩短栏宽。官方此 Tab API 面向 iOS 18+；iOS 26 的原生玻璃与较旧系统的原生外观由系统适配，不承诺旧系统具有 iOS 26 的拖动/玻璃效果。
 - 主页菜单只保留 **设置（控制器管理）/ 运行日志 / 外观设置 / 全局配置**。网络接口、在线设备移至设置中的路由器详情，页面没有删除。
-- 代理、规则、连接读取**当前路由器自动发现或手动配置的 Clash/Mihomo 控制器**；“更多”提供当前代理的运行模式/内核配置，以及现有应用设置入口，不添加新业务。
+- 代理、规则、连接读取**当前路由器自动发现或手动配置的 Clash/Mihomo 控制器**；“更多”新增 Nikki/Mihomo 管理工具，保留现有应用设置入口。
 - 控制器保留原 `ForEach.onDelete` 左滑删除和延迟刷新逻辑；本轮没有改写删除回调，没有给控制器添加替代删除动画。
 
 ## 主页与曲线
@@ -18,7 +18,7 @@
 
 六卡由 116pt 小幅缩至 **104pt**。只有上传/下载速率卡有曲线：背景色之上、文字之下的全卡高度 SVG，无面积填充/28% 线条，零速率基线贴底，22pt 圆角裁剪。连接和内存无曲线；大速率图维持 120pt。主页底部的运行模式和策略组/连接/规则入口模块已移除，改由原生标签导航访问；不再为运行模式请求 Clash。只有主动启用“连接信息背景”才额外读取真实代理连接主机，**不用于六卡数值**。
 
-曲线每秒读取一次真实路由器采样，保留最多 60 点；在新旧采样窗口之间做横向平移、末端和纵轴比例的视觉插值，用不超出端点幅值的三次 Bézier 绘制平滑线段。不补造采样，不写入插值值，不预测未来流量；大数字仍取真实采样的原有数字过渡。
+曲线每秒读取一次真实路由器采样，保留最多 60 点；在新旧采样窗口之间做横向平移、末端和纵轴比例的视觉插值，用不超出端点幅值的三次 Bézier 绘制平滑线段。不补造采样，不写入插值值，不预测未来流量；大数字保留 1.4.4 的 950ms smoothstep / 16ms 插值过渡，目标始终取真实采样。
 
 两个迷你图和大图共用 **50ms（目标 20fps）** 帧调度器，高频状态只更新图表组件，不触发全页或网络刷新。动画最长 1 秒，完成后停止帧定时器；推入子页、切换底部导航、离开主页或卸载时移除订阅并清理采样/动画定时器。原生 TabView 可能留存隐藏导航栈，因此按 Observable selection 只挂载所选 tab 的业务内容；切走主页就卸载其采样和曲线，不依赖系统是否释放隐藏 Tab。已经发出的请求可能在超时前完成，页面忽略已退出后的结果，不继续周期采样。目标帧率不等于实机保证帧率。
 
@@ -40,7 +40,7 @@
 | Surge 智能测速补全 | 明示不适用；本脚本不支持 Surge API，保留已有手动组测速。 |
 | 嵌套代理组延迟 | 开启后递归读取最终选中节点的真实延迟，循环引用保护；关闭显示组自身延迟。 |
 | 代理组节点排序 | 配置顺序 / 延迟（未测速与超时最后）/ 名称，实际改变组内列表。 |
-| 显示 Global 代理组 | 开启强制显示 GLOBAL；关闭保持内核配置中原有可见性规则。 |
+| 显示 Global 代理组 | 开启显示 GLOBAL；关闭隐藏 GLOBAL（即使内核 GLOBAL.all 引用了自身，也不绕过偏好）。 |
 | 连接超时时间 | 1–30 秒，进入控制器/ubus fetch；测速请求另留测量超时的传输余量。 |
 | 测速链接 / 超时时间 | 保存链接后用于真实测速请求，测量超时 1000–10000ms；旧内核回退逐节点测速并记录警告。 |
 | 日志最大条数 / 详细 API | 100–2000 条，降低上限立即裁剪；详细模式只记录安全结果摘要，不记录请求/响应正文。 |
@@ -96,3 +96,46 @@ git diff --check
 `TYPESCRIPT_PATH` 可指定其他现有 TypeScript 包路径。测试中的所有网络、Storage、Keychain、iCloud 和 UI hooks 都是内存模拟，测试数据不进入生产页面。类型检查桩只检查业务变量，**不能证明宿主 UI API/布局正确**；UI API 另以官方文档核对。
 
 **未做 iPhone 真机测试**，不宣称导航手势、原生标签栏最终布局及系统拖动选择、字体遮挡、20fps 实际流畅度/功耗、触感、SVG 动画、网络图标解码或真实 iCloud 上传已经手机验证；也未连接路由器、执行远端 PATCH/断开连接、推送或部署。本轮结果是本地源码、文档与模拟验证。
+
+## 1.5.0 四页逐图交付表
+
+本轮视觉依据为主控已逐张核对 IMG_5041–5045 的完整控件转录。保留 1.4.4 主页代码与曲线、950ms 数字插值，保留真正原生五 Tab / 每 Tab 独立导航栈 / 根 X / 系统 push 返回；不使用截图中的私人节点、地址、账户或示例提供者。新页沿用 12–15pt 浅灰文字、小 SF Symbol 和圆角卡片，并非照搬大白字。
+
+| 原图 / 可见项目 | 本地实现与真实行为 |
+| --- | --- |
+| IMG_5042：顶栏、组卡片 | 顶栏用当前控制器 name。组名、当前节点及已有旗帜文字均原样来自 `/proxies`，不推断国家；延迟色点/ms来自真实 history。图标只取当前内核 icon 元数据或本地 SF 回退；受全局图标偏好控制。黄色闪电独立测速，点击组卡片系统推入完整节点选择页。 |
+| IMG_5042：排序 / Global / 展示全部 / 提供者菜单 | 配置顺序、名称、延迟排序真实生效；Global / 隐藏组复用全局偏好。展示全部展开各组节点（分页），也保留长按折叠偏好；提供者显示开关与刷新独立可用。 |
+| IMG_5042：组节点子页 | 搜索、完整数量、每批80节点；实际支持 Selector、URLTest、Fallback 的 SelectAble 选择；LoadBalance 等不可手动选择类型明确禁用。测速、选择及自动断开旧连接均明确目标影响并确认，自动组仍可能自行改选/健康检查。 |
+| IMG_5042：代理提供者卡片 | `/providers/proxies` 的名称、type、vehicleType、真实 proxies.length、updatedAt。HTTP显示远程订阅。更新按钮 PUT 此提供者；Inline/Compatible无可下载内容，禁用并解释。缺少数量/时间显示未提供，不伪造。 |
+| IMG_5041：规则 / 提供者分段 | 规则数量来自 rules.length，提供者数量来自返回的 providers 键数。读取失败明确数量未提供，0仅表示已加载数量。规则保留原始编号、完整type、payload、proxy，逻辑/进程/IP等彩色badge；搜索不重编号。菜单搜索/刷新。 |
+| IMG_5041：规则提供者 | 使用 `/providers/rules` 的真实 ruleCount、vehicleType、behavior、format、updatedAt，独立 PUT 更新；不是代理订阅数量或配置内规则条数。 |
+| IMG_5043：活动中 / 已断开 | 活动连接来自完整 `/connections` 快照。历史仅为脚本连续观察到消失的会话，不生成旧记录；暂停/离页期间不推断消失。每来源最多300条，采样/读取时裁剪一小时前历史，最多缓存8来源，脚本退出即清空。 |
+| IMG_5043：连接卡片 | 主机、TCP/UDP、TProxy等metadata.type、sourceIP:port均真实；绿上传/蓝下载的每秒速率由累计upload/download除以实际采样间隔（默认1500ms）得出，首帧/恢复帧0，计数回退不产生负速率；其下显示累计字节。时长用start至当前/实际观察关闭时间；策略chips按Mihomo chains的反向顺序显示入口组→出口节点，不编造链。单条X仅在活动连接出现。 |
+| IMG_5043：全部六菜单动作 | 搜索、暂停/恢复、客户端标签、来源客户端筛选、本地清历史、断开全部连接。标签只存本地并按完整sourceIP匹配；断开单条/全部均确认；清历史也确认且不发网络请求。标准/简约样式、移除淡出偏好继续生效。 |
+| IMG_5044：运行信息 / 核心配置 | 内核版本来自 `/version`，Nikki插件版本来自 `luci.nikki.version`；两种运行时间均明确“未提供”。不调用OpenWrt uptime冒充。代理配置入口使用已有内核配置页，当前模式来自 `/configs`，仍只PATCH已确认的白名单脏字段。 |
+| IMG_5044：三列两行快捷管理 | 网页访问打开当前LuCI根地址或当前独立控制器`/ui/`，无token URL。运行日志是**远端Nikki日志**入口，与保留的“脚本安全日志（本地）”分开。配置管理/订阅管理/附加规则都有真实数据及真实官方管理入口，详见下节边界。 |
+| IMG_5044：启动 / 停止 / 重启 / 重载 | 仅Nikki来源启用，ubus `rc.init {name:"nikki",action}`，确认明确这是整个Nikki服务而非单独核心。之后重新读取`rc.list`运行状态；接口不返回脚本退出码，不将“请求返回”冒充配置已成功加载。其他插件明确不可用，不发错命令。 |
+| IMG_5045：核心操作 | 重启核心`POST /restart`、强制重载当前配置`PUT /configs?force=true {}`、更新GEO`POST /configs/geo`。各自说明断流、重新应用、外部下载影响并确认；旧内核/关闭管理API/权限不足可能拒绝，显示失败而非假成功。 |
+| IMG_5045：DNS工具 | 清Mihomo DNS缓存`POST /cache/dns/flush`、FakeIP映射`POST /cache/fakeip/flush`，均确认影响，不冒充dnsmasq缓存。域名查询页支持A/AAAA/CNAME/TXT/MX/HTTPS，`GET /dns/query?name=…&type=…`；发送域名前说明可能访问内核配置的DNS上游并确认，展示真实Status、Answer、TTL。 |
+
+所有长列表使用 `LazyVStack` 并提供“已展示 / 过滤后真实总数 + 加载更多”；没有静默截断200/300条。连接监控暂停/离页清计时器，pending结果以生命周期标记丢弃；恢复不把暂停时间的累计增量冒充瞬时速度。所有新API错误只提示固定安全说明，不把fetch异常、URL、正文、session、secret或订阅URL写入日志。
+
+### Nikki配置、订阅、附加规则的写入边界（非空占位页）
+
+- **原生只读数据**：ubus `uci.get {config:"nikki"}` 与 `file.list {path:"/etc/nikki/profiles"}`；只映射选用配置、文件名/大小、订阅名/更新时间/用量/到期及附加规则字段。不读取配置正文，不保留UCI响应中订阅URL、认证字段等敏感内容。
+- **原生订阅更新**：`luci.nikki.update_subscription {section_id}`，必须确认，检查返回`success`。这会由Nikki写入`/etc/nikki/subscriptions/<section>.yaml`，不等同于Mihomo provider更新，也不宣称自动完成配置应用。
+- **配置上传/选用、文件编辑、订阅增删编辑、附加规则增删/排序/启用**：进入当前设备真实官方LuCI页面，而非在脚本内重做完整文件/UCI编辑器。分别为`admin/services/nikki/profile`、`editor`、`mixin`；日志为`log`。可在原生页看到真实当前数据，但这些编辑操作**不是脚本原生CRUD能力**。浏览器需独立登录，不携带本脚本密钥或ubus session。
+- 官方编辑器可通过`file.write`改`/etc/nikki/profiles/*`、订阅文件、`/etc/nikki/mixin.yaml`、运行配置和providers；保存/应用进一步可能调用Nikki重载/重启。为避免本脚本复制秘密正文、误覆盖生成配置或将整份UCI pending改动混为一个保存动作，本轮将这些完整编辑交由官方LuCI，**并非上游没有写入API**。UI明确提示此边界及后续网页操作影响。
+- 配置文件写入、UCI保存、Nikki重载、Mihomo运行配置PATCH是不同操作，不能互相冒充。非Nikki来源不调用`luci.nikki`或读写`nikki`配置；对应原生管理页说明不可用原因。独立Mihomo仍可使用其核心/提供者/DNS API。
+
+### 本轮只读上游依据
+
+- Nikki固定提交 [`78e1a751d55ed0762811f054ee699049473da7b8`](https://github.com/nikkinikki-org/OpenWrt-nikki/tree/78e1a751d55ed0762811f054ee699049473da7b8)：`luci-app-nikki/root/usr/share/rpcd/ucode/luci.nikki`（version / update_subscription）、`htdocs/luci-static/resources/tools/nikki.js`（rc与文件边界）、`view/nikki/{app,profile,editor,mixin}.js`（配置选择、订阅、附加规则字段）、`root/usr/share/luci/menu.d/luci-app-nikki.json`（真实网页路径）、`root/usr/share/rpcd/acl.d/luci-app-nikki.json`（权限）。没有执行其中的命令或连接任何设备。
+- Mihomo固定提交 [`88dcbf7f1614a67c3b36b848ee3592dfa92ada36`](https://github.com/MetaCubeX/mihomo/tree/88dcbf7f1614a67c3b36b848ee3592dfa92ada36)：`hub/route/{server,provider,proxies,configs,cache,dns,restart,connections}.go`、`adapter/provider/provider.go`、`rules/provider/provider.go`以及`adapter/outboundgroup/{selector,urltest,fallback,loadbalance}.go`。`/version`只返回meta/version；Nikki version只返回app/core，没有进程运行时间。
+- OpenWrt `rpcd`公开`rc.c` / `file.c`核对rc.init动作及file.list返回字段；Scripting官方本地文档核对Safari.openURL、LazyVStack、ScrollView.axes、Tab/TabView及已有导航/生命周期API。
+
+### 验证与仍未验证项
+
+本轮 `node tests/run.cjs` **38项通过**，业务类型检查与`git diff --check`通过。新增覆盖：提供者解析/编码更新、完整组子页分页/排序、规则提供者、真实累计差分/历史限量/暂停断档、sourceIP标签/筛选/来源隔离、暂停与切源pending丢弃、Nikki管理字段映射/订阅更新契约、远程动作确认取消不请求、核心/DNS路径、敏感错误日志，以及首页源码关键区域与1.4.4一致。
+
+**未连接真实路由器，未运行任何生产修改、服务命令、核心重启、订阅或GEO更新、缓存清理、DNS查询或外部网页发送。** 所有fetch、Safari/存储/确认均应在测试环境模拟；本轮没有提交或推送。未做iPhone真机布局/手势/图标解码/权限/浏览器LuCI登录验证，不声称宿主最终像素表现或远端兼容性已实测。管理入口中的完整编辑依赖设备安装对应版本Nikki LuCI及登录权限；旧版API缺失时明确失败。

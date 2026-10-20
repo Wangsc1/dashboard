@@ -4,13 +4,14 @@ const fs = require('node:fs'), path = require('node:path'), vm = require('node:v
 const ts = require(process.env.TYPESCRIPT_PATH || '/tmp/chk/node_modules/typescript')
 const root = path.resolve(__dirname, '..')
 const store = new Map(), secrets = new Map(), calls = [], cache = new Map(), files = new Map()
-let now = 1800000000000, failStorage = false, responder = () => ({ body: {} }), hooks = [], hookIndex = 0, effects = [], confirms = [], alerts = [], clipboard = '', haptics = 0, intervals = new Map(), nextInterval = 1, cleanups = new Map()
+let now = 1800000000000, failStorage = false, responder = () => ({ body: {} }), hooks = [], hookIndex = 0, effects = [], confirms = [], alerts = [], clipboard = '', haptics = 0, openedURLs = [], intervals = new Map(), nextInterval = 1, cleanups = new Map()
 const clone = v => v === undefined ? undefined : JSON.parse(JSON.stringify(v))
 const h = (type, props, ...children) => ({ type, props: { ...props, children: children.flat(Infinity).filter(x => x !== null && x !== undefined && x !== false) } })
 const scripting = new Proxy({
   useState(v) { const i = hookIndex++; if (!(i in hooks)) hooks[i] = typeof v === 'function' ? v() : v; return [hooks[i], v => { hooks[i] = typeof v === 'function' ? v(hooks[i]) : v }] },
   useObservable(v) { const [o] = scripting.useState(() => ({ value: typeof v === "function" ? v() : v, setValue(value) { this.value = value } })); return o },
   useEffect(fn, deps) { const i = hookIndex++, old = hooks[i]; if (!old || deps.some((v, j) => v !== old[j])) { hooks[i] = deps; effects.push(() => { cleanups.get(i)?.(); cleanups.delete(i); const c = fn(); if (typeof c === "function") cleanups.set(i, c) }) } },
+  Safari: { async openURL(url) { openedURLs.push(url); return true } },
   Navigation: { useDismiss: () => () => {} },
   Animation: { easeOut: () => ({}) }, Transition: { opacity: () => ({ combined: () => ({}) }), scale: () => ({}) },
   modifiers: () => new Proxy({}, { get: () => () => scripting.modifiers() }),
@@ -28,13 +29,13 @@ const context = {
     calls.push({ url, init: clone(init) }); const r = responder(url, init)
     if (r.throw) throw Error(r.throw)
     const status = r.status ?? 200
-    return { ok: status >= 200 && status < 300, status, headers: { get: () => r.contentType ?? 'application/json' }, text: async () => JSON.stringify(r.body ?? {}), data: async () => r.data ?? 'fake-image-data' }
+    return { ok: status >= 200 && status < 300, status, headers: { get: () => r.contentType ?? 'application/json' }, text: async () => { if(r.wait) await r.wait; return JSON.stringify(r.body ?? {}) }, data: async () => r.data ?? 'fake-image-data' }
   },
 }
 function load(name) {
   name = name.replace(/^\.\//, '')
   if (cache.has(name)) return cache.get(name)
-  const file = path.join(root, name + (name === 'index' || name === 'settings-ui' ? '.tsx' : '.ts'))
+  const file = path.join(root, name + (name === 'index' || name === 'settings-ui' || name === 'dashboard-pages' ? '.tsx' : '.ts'))
   let source = fs.readFileSync(file, 'utf8')
   if (name === 'index') source = source.replace(/\nrun\(\)\s*$/, '') + '\nexport { OverviewPage, SettingsPage, ConnectionsPage, ProxiesPage, RulesPage, Spark, RateChart, StatCard, GroupSection, MorePage, Root };'
   const code = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020, jsx: ts.JsxEmit.React, jsxFactory: 'h' } }).outputText
@@ -42,13 +43,14 @@ function load(name) {
   vm.runInNewContext('(function(require,module,exports){' + code + '\n})', context, { filename: file })(n => n === 'scripting' ? scripting : load(n), module, module.exports)
   return module.exports
 }
-const pref = load('preferences'), api = load('api'), ui = load('settings-ui'), app = load('index'), cloud = load('cloud-backup')
+const pref = load('preferences'), api = load('api'), ui = load('settings-ui'), app = load('index'), cloud = load('cloud-backup'), pages = load('dashboard-pages'), model = load('dashboard-model')
 function unmount() { for (const fn of cleanups.values()) fn(); cleanups.clear(); hooks = []; effects = [] }
 function render(fn, props, reset = false) { if (reset) unmount(); hookIndex = 0; effects = []; return fn(props) }
-async function flush() { const es = effects; effects = []; es.forEach(f => f()); for (let i = 0; i < 12; i++) await Promise.resolve() }
-function nodes(tree, type) { const out = []; function visit(n) { if (!n || typeof n !== 'object') return; if (n.type === type) out.push(n); for (const x of n.props?.children ?? []) visit(x) } visit(tree); return out }
-function button(tree, title) { const b = nodes(tree, 'Button').find(b => b.props.title === title); assert.ok(b, 'button: ' + title); return b }
-function text(tree) { if (typeof tree === 'string' || typeof tree === 'number') return String(tree); return (tree?.props?.children ?? []).map(text).join(' ') }
+async function flush() { const es = effects; effects = []; es.forEach(f => f()); for (let i = 0; i < 60; i++) await Promise.resolve() }
+function unwrap(tree) { if (!tree || typeof tree !== 'object') return tree; if (typeof tree.type === 'function' && ['Card','Shell','Hint','Chip','Pages'].includes(tree.type.name)) return unwrap(tree.type(tree.props)); return { ...tree, props: { ...tree.props, children: (tree.props?.children ?? []).map(unwrap) } } }
+function nodes(tree, type) { const out = []; function visit(n) { if (!n || typeof n !== 'object') return; if (n.type === type) out.push(n); for (const x of n.props?.children ?? []) visit(x) } visit(unwrap(tree)); return out }
+function button(tree, title) { const b = nodes(tree, 'Button').find(b => b.props.title === title || nodes(b,'Label').some(l => l.props.title === title)); assert.ok(b, 'button: ' + title); return b }
+function text(tree) { tree = unwrap(tree); if (typeof tree === 'string' || typeof tree === 'number') return String(tree); return (tree?.props?.children ?? []).map(text).join(' ') }
 let count = 0
 async function test(title, fn) { await fn(); count++; console.log('PASS', title) }
 ;(async () => {
@@ -233,12 +235,12 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     assert.equal(nodes(tree, app.ProxiesPage).length, 1); assert.equal(nodes(tree, app.OverviewPage).length, 0)
     tree.props.selection.setValue('more'); tree = render(app.Root, {})
     assert.equal(nodes(tree, app.MorePage).length, 1); assert.equal(nodes(tree, app.ProxiesPage).length, 0)
-    const more = app.MorePage({ active: c, onChanged() {} }); assert.ok(nodes(more, 'NavigationLink').some(n => n.props.destination.type === ui.KernelConfigPage))
+    const more = render(pages.MorePage, { active: c, onChanged() {} }, true); assert.ok(nodes(more, 'NavigationLink').some(n => n.props.destination.type === ui.KernelConfigPage))
     const source = fs.readFileSync(path.join(root, 'index.tsx'), 'utf8')
     for (const removed of ['FloatingBar', 'safeAreaInset', 'UIGlass', 'GlassEffectContainer']) assert.ok(!source.includes(removed))
     const rootSource = source.slice(source.indexOf('function Root()'))
     assert.ok(!rootSource.includes('onDragGesture')); assert.ok(!rootSource.includes('onTapGesture')); assert.ok(!rootSource.includes('<NavigationStack>\n    <TabView'))
-    const overview = source.slice(source.indexOf('function OverviewPage'), source.indexOf('// ---------- 策略组'))
+    const overview = source.slice(source.indexOf('function OverviewPage'), source.indexOf('// ---------- OpenWrt 页面'))
     assert.ok(!overview.includes('loadClashOverview')); assert.ok(!overview.includes('运行模式')); assert.ok(!overview.includes('<NavigationLink'))
   })
   await test('原生Tab保留栈时也只挂载可见业务页；反复选择不保留隐藏采样组件', () => {
@@ -250,7 +252,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) assert.equal(nodes(tree, types[i]).length, ids[i] === id ? 1 : 0)
     }
-    assert.equal(api.VERSION, '1.4.4'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.5.0'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('首页实际模拟请求仅ubus；不可见停止新采样且清理计时器', async () => {
     pref.savePreferences({ connectionBackground: false })
@@ -273,9 +275,9 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
   await test('代理节点排序/长按折叠/简约样式实际改变视图', () => {
     pref.savePreferences({ nodeSort: 'delay', proxyStyle: 'compact', collapseGesture: true })
     const props = { c, g: { name: 'G', type: 'Selector', now: 'A', all: ['A', 'B', 'C'], delays: { A: 100, B: 10, C: 0 } }, onChanged() {} }
-    let tree = render(app.GroupSection, props, true); assert.equal(tree.props.footer, undefined)
-    tree.props.header.props.onLongPressGesture(); tree = render(app.GroupSection, props)
-    const rows = nodes(tree, 'Button').filter(n => !n.props.title)
+    let tree = render(app.GroupSection, props, true)
+    nodes(tree,'HStack')[0].props.onLongPressGesture(); tree = render(app.GroupSection, props)
+    const rows = nodes(tree, 'Button').filter(n => n.props.children?.length)
     assert.equal(rows.length, 3); assert.ok(text(rows[0]).includes('B')); assert.ok(text(rows[2]).includes('C'))
     assert.ok(nodes(rows[0], 'Text').some(t => t.props.font === 12))
   })
@@ -297,6 +299,97 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     setList(listControllers())
     setTimeout(onChanged, 500)`)
     assert.ok(source.includes('onDelete={onDelete}'))
+  })
+  await test('1.5提供者：真实数量/类型/更新时间及URL编码更新', async () => {
+    const xs = api.parseProviders({providers:{'A / B':{type:'Proxy',vehicleType:'HTTP',proxies:[{},{}],updatedAt:'2026-10-20T00:00:00Z'},inline:{type:'Proxy',vehicleType:'Inline'}}},'proxies')
+    assert.equal(xs[0].count,2);assert.equal(xs[0].vehicleType,'HTTP');assert.equal(xs[1].count,null)
+    assert.equal(api.parseProviders({providers:{R:{ruleCount:953,behavior:'domain',format:'mrs'}}},'rules')[0].count,953)
+    responder=()=>({status:204});calls.length=0;await api.updateProvider(c,'proxies','A / B');assert.ok(calls[0].url.endsWith('/providers/proxies/A%20%2F%20B'));assert.equal(calls[0].init.method,'PUT')
+    context.confirmResult=false;calls.length=0;let tree=render(pages.ProviderCard,{c,p:xs[0],kind:'proxies',onChanged(){}},true)
+    await nodes(tree,'Button')[0].props.action();assert.equal(calls.length,0);assert.match(confirms.at(-1).message,/目标：.*A \/ B/);context.confirmResult=true
+  })
+  await test('1.5组子页：完整节点分页、排序、切换取消不请求及测速确认', async () => {
+    pref.savePreferences({nodeSort:'name',disconnectOnSwitch:false});const g={name:'TestGroup',type:'Selector',now:'N000',all:Array.from({length:125},(_,i)=>'N'+String(i).padStart(3,'0')),delays:{}}
+    let tree=render(pages.GroupNodesPage,{c,g,onChanged(){}},true);await flush();tree=render(pages.GroupNodesPage,{c,g,onChanged(){}})
+    assert.equal(nodes(tree,'Button').filter(x=>x.props.children?.length).length,80);assert.ok(text(tree).includes('80 / 125'))
+    button(tree,'加载更多').props.action();tree=render(pages.GroupNodesPage,{c,g,onChanged(){}});assert.equal(nodes(tree,'Button').filter(x=>x.props.children?.length).length,125)
+    context.confirmResult=false;calls.length=0;await nodes(tree,'Button').filter(x=>x.props.children?.length)[1].props.action();assert.equal(calls.length,0)
+    await button(tree.props.toolbar.topBarTrailing,'测速').props.action();assert.equal(calls.length,0);context.confirmResult=true
+  })
+  await test('1.5规则：编号保留真实位置、数量及规则提供者更新路径', async () => {
+    responder=url=>({body:url.includes('/providers/')?{providers:{real:{type:'Rule',vehicleType:'HTTP',ruleCount:91,behavior:'domain'}}}:{rules:[{type:'DomainSuffix',payload:'alpha.invalid',proxy:'DIRECT'},{type:'IPCIDR',payload:'test-value',proxy:'REJECT'}]}})
+    render(pages.RulesPage,{active:c,version:0},true);await flush();let tree=render(pages.RulesPage,{active:c,version:0})
+    assert.ok(text(tree).includes('规则 2'));assert.ok(text(tree).includes('提供者 1'));assert.ok(text(tree).includes('#2'));assert.ok(text(tree).includes('IPCIDR'))
+    nodes(tree,'Picker')[0].props.onChanged('providers');tree=render(pages.RulesPage,{active:c,version:0});assert.equal(nodes(tree,pages.ProviderCard)[0].props.p.count,91)
+    calls.length=0;await api.updateProvider(c,'rules','Rule / Name');assert.ok(calls[0].url.endsWith('/providers/rules/Rule%20%2F%20Name'))
+  })
+  await test('1.5连接模型：实测差分、计数回退、真实消失、限量和暂停断档', () => {
+    const h=new model.ConnectionHistory(),x={id:'one',host:'h',src:'a',dst:'b',network:'TCP',rule:'',chain:'',up:100,down:200,start:now}
+    h.sample([x],now);assert.equal(h.active[0].upSpeed,0);h.sample([{...x,up:400,down:800}],now+1500);assert.equal(h.active[0].upSpeed,200);assert.equal(h.active[0].downSpeed,400)
+    h.sample([{...x,up:1,down:1}],now+3000);assert.equal(h.active[0].upSpeed,0);h.sample([],now+4500);assert.equal(h.closed.length,1);assert.equal(h.closed[0].closedAt,now+4500)
+    h.resume();h.sample([{...x,id:'new'}],now+6000);assert.equal(h.closed.length,1);assert.equal(h.active[0].upSpeed,0)
+    h.sample(Array.from({length:350},(_,i)=>({...x,id:'bulk'+i})),now+7000);h.sample([],now+8000);assert.equal(h.closed.length,300);h.sample([],now+3609000);assert.equal(h.closed.length,0)
+  })
+  await test('1.5来源隔离与sourceIP标签：本地持久化、搜索、精确筛选', () => {
+    const other={...c,id:'other-controller'};assert.notEqual(model.historyFor(c),model.historyFor(other));model.saveClientLabel(c,'source-v6','我的客户端');assert.equal(model.clientLabels(c)['source-v6'],'我的客户端');assert.equal(model.clientLabels(other)['source-v6'],undefined)
+    const xs=[{id:'1',host:'host',sourceIP:'source-v6',src:'source-v6:80',chain:'G',rule:''},{id:'2',host:'other',sourceIP:'source-v6-other',src:'source-v6-other:80',chain:'',rule:''}]
+    assert.equal(model.filterConnections(xs,'我的','',model.clientLabels(c)).length,1);assert.equal(model.filterConnections(xs,'','source-v6',{}).length,1)
+    assert.notEqual(model.sourceKey(c),model.sourceKey({...c,url:'http://changed.invalid'}))
+  })
+  await test('1.5连接监控：暂停/不可见清定时器、取消断开不发送DELETE', async () => {
+    responder=()=>({body:{connections:[{id:'observed',upload:20,download:40,metadata:{host:'observed.invalid',sourceIP:'source',type:'TProxy',network:'tcp'},start:new Date(now-5000).toISOString(),chains:['node','group']}]}})
+    render(pages.ConnectionsPage,{active:c,version:0},true);await flush();let tree=render(pages.ConnectionsPage,{active:c,version:0});assert.equal(intervals.size,1);assert.ok(text(tree).includes('observed.invalid'))
+    context.confirmResult=false;calls.length=0;await button(tree.props.toolbar.topBarTrailing,'打断全部连接').props.action();assert.equal(calls.length,0)
+    button(tree.props.toolbar.topBarTrailing,'暂停监控').props.action();render(pages.ConnectionsPage,{active:c,version:0});await flush();assert.equal(intervals.size,0)
+    tree=render(pages.ConnectionsPage,{active:c,version:0});assert.ok(text(tree).includes('监控已暂停'));button(tree.props.toolbar.topBarTrailing,'恢复监控').props.action();render(pages.ConnectionsPage,{active:c,version:0});await flush();assert.equal(intervals.size,1)
+    tree=unwrap(render(pages.ConnectionsPage,{active:c,version:0}));tree.props.onDisappear();render(pages.ConnectionsPage,{active:c,version:0});await flush();assert.equal(intervals.size,0);context.confirmResult=true
+  })
+  await test('1.5连接pending隔离：暂停后旧结果不写历史，切换来源丢弃旧响应', async () => {
+    let release;const wait=new Promise(r=>{release=r});const a={...c,id:'pending-a'},b={...c,id:'pending-b'}
+    responder=()=>({wait,body:{connections:[{id:'old-pending',upload:999,download:999,metadata:{host:'old-result.invalid'}}]}})
+    render(pages.ConnectionsPage,{active:a,version:0},true);await flush();let tree=render(pages.ConnectionsPage,{active:a,version:0})
+    button(tree.props.toolbar.topBarTrailing,'暂停监控').props.action();render(pages.ConnectionsPage,{active:a,version:0});await flush();release();await flush();tree=render(pages.ConnectionsPage,{active:a,version:0});assert.ok(!text(tree).includes('old-result.invalid'));assert.equal(model.historyFor(a).active.length,0);assert.equal(intervals.size,0)
+    let release2;const wait2=new Promise(r=>{release2=r});responder=()=>({wait:wait2,body:{connections:[{id:'old-source',metadata:{host:'source-a.invalid'}}]}})
+    render(pages.ConnectionsPage,{active:a,version:0},true);await flush();responder=()=>({body:{connections:[{id:'new-source',metadata:{host:'source-b.invalid'}}]}});render(pages.ConnectionsPage,{active:b,version:0});await flush();release2();await flush();tree=render(pages.ConnectionsPage,{active:b,version:0});assert.ok(text(tree).includes('source-b.invalid'));assert.ok(!text(tree).includes('source-a.invalid'));unmount();assert.equal(intervals.size,0)
+  })
+  await test('1.5Nikki管理：UCI/file真实解析，不保留订阅URL/配置秘密', async () => {
+    const n={...c,id:'nikki-tests',kind:'openwrt',plugin:'nikki',url:'http://nikki.invalid'}
+    responder=(url,init)=>{const req=JSON.parse(init.body),obj=req.params[1],method=req.params[2];return {body:{result:[0,obj==='session'?{ubus_rpc_session:'private-session'}:obj==='uci'?{values:{config:{profile:'file:actual.yaml'},mixin:{rule:'1'},s1:{'.type':'subscription','.name':'s1',name:'Real',url:'https://secret.invalid/?key=do-not-store',update:'2026'},r1:{'.type':'rule','.name':'r1',type:'DOMAIN',matcher:'domain.invalid',node:'DIRECT',enabled:'1'}}}:obj==='file'?{entries:[{name:'actual.yaml',type:'file',size:55},{name:'directory.yaml',type:'directory'}]}:method==='update_subscription'?{success:true}:{app:'v-test',core:'mihomo-test'}]}}}
+    const d=await api.loadNikkiManagement(n);assert.equal(d.files.length,1);assert.equal(d.profile,'file:actual.yaml');assert.equal(d.subscriptions[0].id,'s1');assert.equal(d.rules[0].matcher,'domain.invalid');assert.ok(!JSON.stringify(d).includes('do-not-store'))
+    calls.length=0;await api.updateNikkiSubscription(n,'s1');const req=JSON.parse(calls.at(-1).init.body);assert.deepEqual(req.params.slice(1),['luci.nikki','update_subscription',{section_id:'s1'}]);await assert.rejects(()=>api.updateNikkiSubscription(n,"bad' id"));await assert.rejects(()=>api.nikkiService(c,'restart'))
+    context.confirmResult=false;calls.length=0;await model.confirmed(n.name,'更新订阅',()=>api.updateNikkiSubscription(n,'s1'));assert.equal(calls.length,0);context.confirmResult=true
+  })
+  await test('1.5核心/DNS真实端点、无路径猜测与错误日志秘密白名单', async () => {
+    responder=()=>({status:204});calls.length=0
+    for(const a of ['restart','reload','geo','dns','fakeip'])await api.coreAction(c,a)
+    assert.deepEqual(calls.map(x=>[x.init.method,x.url.slice(c.url.length)]),[['POST','/restart'],['PUT','/configs?force=true'],['POST','/configs/geo'],['POST','/cache/dns/flush'],['POST','/cache/fakeip/flush']])
+    responder=()=>({body:{Status:0,Answer:[{data:'answer-value',TTL:60,type:1}]}});calls.length=0;const r=await api.queryDNS(c,'example.invalid','A');assert.equal(r.answers[0].ttl,60);assert.ok(calls[0].url.endsWith('/dns/query?name=example.invalid&type=A'));await assert.rejects(()=>api.queryDNS(c,'bad/path','A'))
+    pref.clearLogs();responder=()=>({throw:'https://secret.invalid/?token=private-token body=session-private'});await assert.rejects(()=>api.loadProviders(c,'proxies'));const logs=pref.exportLogs();assert.ok(!logs.includes('private-token'));assert.ok(!logs.includes('session-private'));assert.ok(!logs.includes('secret.invalid'));assert.ok(!pages.safeError().includes('http'))
+    context.confirmResult=false;calls.length=0;for(const a of ['restart','reload','geo','dns','fakeip'])await model.confirmed(c.name,a,()=>api.coreAction(c,a));assert.equal(calls.length,0);context.confirmResult=true
+  })
+  await test('1.5更多实际动作：运行时间未知不冒充，取消操作不请求，网页无密钥', async () => {
+    const n={...c,id:'more-nikki',kind:'openwrt',plugin:'nikki',url:'http://current-device.invalid'}
+    responder=(url,init)=>({body:url.endsWith('/ubus')?{result:[0,JSON.parse(init.body).params[1]==='session'?{ubus_rpc_session:'session'}:{app:'nikki-real',core:'core-real'}]}:url.endsWith('/configs')?{mode:'rule'}:{version:'core-real'}})
+    render(pages.MorePage,{active:n,onChanged(){}},true);await flush();let tree=render(pages.MorePage,{active:n,onChanged(){}});assert.ok(text(tree).includes('运行时间：未提供'));assert.ok(text(tree).includes('nikki-real'))
+    context.confirmResult=false;calls.length=0;await button(tree,'重启核心').props.action();await button(tree,'刷新DNS缓存').props.action();assert.equal(calls.length,0);context.confirmResult=true
+    assert.equal(await api.webpage(n,'profile'),'http://current-device.invalid/cgi-bin/luci/admin/services/nikki/profile');assert.equal(await api.webpage(c),c.url+'/ui/');await assert.rejects(()=>api.webpage({...c,url:'http://private@controller.invalid/?token=secret'}))
+  })
+  await test('1.5所有危险入口UI取消：核心/服务/DNS/网页/订阅均无请求或外发', async () => {
+    const n={...c,id:'cancel-nikki',kind:'openwrt',plugin:'nikki',url:'http://cancel-device.invalid'}
+    responder=(url,init)=>({body:url.endsWith('/ubus')?{result:[0,JSON.parse(init.body).params[1]==='session'?{ubus_rpc_session:'session'}:JSON.parse(init.body).params[1]==='uci'?{values:{s1:{'.type':'subscription','.name':'s1',name:'Real subscription'}}}:JSON.parse(init.body).params[1]==='file'?{entries:[]}:{app:'nikki',core:'mihomo'}]}:{version:'mihomo',mode:'rule'}})
+    render(pages.MorePage,{active:n,onChanged(){}},true);await flush();let tree=render(pages.MorePage,{active:n,onChanged(){}})
+    context.confirmResult=false;calls.length=0;openedURLs.length=0
+    for(const title of ['重启核心','重载配置','更新GEO数据库','刷新DNS缓存','刷新FakeIP缓存'])await button(tree,title).props.action()
+    for(const b of nodes(tree,'Button').filter(b=>['启动','停止','重启','重载'].includes(text(b)))) await b.props.action()
+    await nodes(tree,'Button').find(b=>text(b).includes('网页访问')).props.action();assert.equal(calls.length,0);assert.equal(openedURLs.length,0)
+    render(pages.DNSPage,{c:n},true);tree=render(pages.DNSPage,{c:n});nodes(tree,'TextField')[0].props.onChanged('example.invalid');tree=render(pages.DNSPage,{c:n});calls.length=0;await button(tree,'查询').props.action();assert.equal(calls.length,0)
+    render(pages.ManagementPage,{c:n,kind:'subscription'},true);await flush();tree=render(pages.ManagementPage,{c:n,kind:'subscription'});calls.length=0;await button(tree,'更新订阅').props.action();assert.equal(calls.length,0)
+    await button(tree,'打开Nikki官方管理页面').props.action();assert.equal(openedURLs.length,0);context.confirmResult=true
+  })
+  await test('1.5首页与根导航源码完整保持1.4.4关键行为', () => {
+    const source=fs.readFileSync(path.join(root,'index.tsx'),'utf8'),before=require('child_process').execFileSync('git',['show','HEAD:index.tsx'],{cwd:root,encoding:'utf8'})
+    const portion=s=>s.slice(s.indexOf('const MAIN_FG'),s.indexOf('// ---------- '+(s.includes('// ---------- 策略组')?'策略组':'OpenWrt 页面')))
+    assert.equal(portion(source),portion(before));assert.ok(source.includes('(Date.now() - at) / 950'));assert.ok(source.includes('}, 16)'))
   })
   console.log(`\n${count} tests passed. All fetch, Storage, Keychain, iCloud and UI bindings were mocked; no device/remote effects executed.`)
 })().catch(e => { console.error(e); process.exitCode = 1 })

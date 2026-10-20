@@ -1,3 +1,4 @@
+import { ProxiesPage, ConnectionsPage, RulesPage, GroupSection, MorePage as DashboardMorePage } from "./dashboard-pages"
 import {
   Animation, Transition, Button, ForEach, Form, HStack, Label, Navigation, NavigationLink, NavigationStack, Picker, Script, Section, SecureField, Spacer,
   Image, Menu, RoundedRectangle, Circle, ScrollView, SVG, Text, ZStack, modifiers, TextField, Toggle, VStack, TabView, Tab, useObservable, useEffect, useState,
@@ -236,143 +237,6 @@ function OverviewPage({ active, version, onSwitch }: { active: Controller | null
   </ScrollView>
 }
 
-// ---------- 策略组 ----------
-function GroupIcon({ g }: { g: Group }) {
-  const p = usePreferences(), [image, setImage] = useState<any>(null)
-  const symbol = p.groupIcons[g.name]
-  useEffect(() => {
-    let alive = true; setImage(null)
-    if (p.customIcons && !symbol && g.icon) cachedIcon(g.icon).then(img => { if (alive) setImage(img) }).catch(() => {})
-    return () => { alive = false }
-  }, [p.customIcons, symbol, g.icon])
-  if (!p.customIcons) return null
-  return image ? <Image image={image} resizable scaleToFit frame={{ width: 20, height: 20 }} /> : <Image systemName={symbol || "point.3.connected.trianglepath.dotted"} frame={{ width: 20, height: 20 }} />
-}
-function GroupSection({ c, g, onChanged }: { c: Controller; g: Group; onChanged: () => void }) {
-  const prefs = usePreferences()
-  const [delays, setDelays] = useState<Record<string, number>>(g.delays)
-  useEffect(() => setDelays(g.delays), [g.delays])
-  const [testing, setTesting] = useState(false)
-  const [open, setOpen] = useState(false)
-  async function test() {
-    setTesting(true)
-    try { setDelays(await testGroup(c, g)) } catch (e) { await Dialog.alert({ message: msg(e) }) } finally { setTesting(false) }
-  }
-  async function pick(n: string) {
-    if (n === g.now) return
-    try { await selectProxy(c, g.name, n); onChanged() } catch (e) { await Dialog.alert({ message: msg(e) }) }
-  }
-  const nodes = [...g.all]
-  if (prefs.nodeSort === "name") nodes.sort((a, b) => a.localeCompare(b))
-  if (prefs.nodeSort === "delay") nodes.sort((a, b) => (delays[a] > 0 ? delays[a] : Infinity) - (delays[b] > 0 ? delays[b] : Infinity))
-  return <Section header={<HStack onLongPressGesture={() => { if (prefs.collapseGesture) { setOpen(!open); feedback() } }}><GroupIcon g={g} /><Text>{g.name}</Text><Spacer />{prefs.proxyStyle === "list" ? <Text>{g.type}</Text> : null}</HStack>}
-    footer={prefs.proxyStyle === "list" ? <Text>{`当前：${g.now || "-"}`}</Text> : undefined}>
-    <HStack>
-      <Button title={open ? "收起节点" : `展开节点（${g.all.length}）`} action={() => { setOpen(!open); feedback() }} />
-      <Spacer />
-      <Button title={testing ? "测速中…" : "测速"} systemImage="bolt.fill" disabled={testing} action={test} />
-    </HStack>
-    {open ? nodes.map(n => <Button key={n} action={() => pick(n)}>
-      <HStack>
-        <Text font={prefs.proxyStyle === "compact" ? 12 : 15} foregroundStyle={n === g.now ? "systemBlue" : "label"}>{`${n === g.now ? "✓ " : ""}${n}`}</Text>
-        <Spacer />
-        {delays[n] !== undefined ? <Text font={13} foregroundStyle={delayColor(delays[n]) as any}>{delays[n] > 0 ? `${delays[n]} ms` : "超时"}</Text> : null}
-      </HStack>
-    </Button>) : null}
-  </Section>
-}
-function ProxiesPage({ active, version }: { active: Controller | null; version: number }) {
-  const prefs = usePreferences()
-  const [groups, setGroups] = useState<Group[]>([])
-  const [err, setErr] = useState("")
-  const [tick, setTick] = useState(0)
-  useEffect(() => {
-    if (!active) return
-    let alive = true
-    loadGroups(active).then(g => { if (alive) { setGroups(g); setErr("") } }).catch(e => { if (alive) setErr(msg(e)) })
-    return () => { alive = false }
-  }, [active?.id, version, tick, prefs.nestedDelay, prefs.showHidden, prefs.showGlobal])
-  return <Form navigationTitle="策略组" navigationBarTitleDisplayMode="inline"
-    toolbar={{ primaryAction: <Button title="刷新" systemImage="arrow.clockwise" action={() => setTick(tick + 1)} /> }}>
-    {!active ? <NoController /> : <>
-      {err ? <Section><Text foregroundStyle="systemRed">{err}</Text></Section> : null}
-      {groups.map(g => <GroupSection key={g.name + tick + (active?.id ?? "")} c={active} g={g} onChanged={() => setTick(tick + 1)} />)}
-    </>}
-  </Form>
-}
-
-// ---------- 连接 ----------
-function ConnectionsPage({ active, version }: { active: Controller | null; version: number }) {
-  const prefs = usePreferences()
-  const [conns, setConns] = useState<Conn[]>([])
-  const [err, setErr] = useState("")
-  const [q, setQ] = useState("")
-  async function refresh() {
-    if (!active) return
-    try { setConns(await loadConnections(active)); setErr("") } catch (e) { setErr(msg(e)) }
-  }
-  useInterval(refresh, 3000, [active?.id, version])
-  const shown = conns.filter(x => !q || (x.host + x.chain + x.rule + x.src).toLowerCase().includes(q.toLowerCase()))
-    .sort((a, b) => b.start - a.start).slice(0, 200)
-  async function close(x: Conn) {
-    if (!active) return
-    if (await Dialog.confirm({ title: "断开连接", message: x.host, confirmLabel: "断开" })) {
-      try { await closeConnection(active, x.id); await refresh() } catch (e) { await Dialog.alert({ message: msg(e) }) }
-    }
-  }
-  async function closeAll() {
-    if (!active) return
-    if (await Dialog.confirm({ title: "断开全部连接", message: `共 ${conns.length} 条`, confirmLabel: "全部断开" })) {
-      try { await closeAllConnections(active); await refresh() } catch (e) { await Dialog.alert({ message: msg(e) }) }
-    }
-  }
-  return <Form navigationTitle={`连接 (${conns.length})`} navigationBarTitleDisplayMode="inline"
-    toolbar={{ primaryAction: <Button title="全部断开" systemImage="xmark.circle" action={closeAll} /> }}>
-    {!active ? <NoController /> : <>
-      <Section><TextField title="筛选" value={q} onChanged={setQ} prompt="域名 / 规则 / 节点 / 源地址" /></Section>
-      {err ? <Section><Text foregroundStyle="systemRed">{err}</Text></Section> : null}
-      <Section animation={prefs.removalFade ? { animation: Animation.easeOut(0.3), value: shown.map(x => x.id).join(",") } : undefined} footer={conns.length > shown.length ? <Text>仅显示最新 200 条；点击条目可断开</Text> : <Text>点击条目可断开</Text>}>
-        {shown.map(x => <Button key={x.id} transition={prefs.removalFade ? Transition.opacity().combined(Transition.scale(0.85)) : undefined} action={() => close(x)}>
-          <VStack alignment="leading" spacing={2}>
-            <Text font={15}>{x.host}</Text>
-            {prefs.connectionStyle === "standard" ? <Text font={12} foregroundStyle="secondaryLabel">{`${x.network} ${x.src} → ${x.dst}`}</Text> : null}
-            {prefs.connectionStyle === "standard" ? <Text font={12} foregroundStyle="secondaryLabel">{`${x.chain || "-"} | ${x.rule || "-"}`}</Text> : null}
-            <Text font={12} foregroundStyle="secondaryLabel">{`↑${fmtBytes(x.up)} ↓${fmtBytes(x.down)} · ${fmtDuration(x.start)}`}</Text>
-          </VStack>
-        </Button>)}
-      </Section>
-    </>}
-  </Form>
-}
-
-// ---------- 规则 ----------
-function RulesPage({ active, version }: { active: Controller | null; version: number }) {
-  const [rules, setRules] = useState<Rule[]>([])
-  const [err, setErr] = useState("")
-  const [q, setQ] = useState("")
-  const [loading, setLoading] = useState(false)
-  useEffect(() => {
-    if (!active) return
-    let alive = true
-    setLoading(true)
-    loadRules(active).then(r => { if (alive) { setRules(r); setErr("") } }).catch(e => { if (alive) setErr(msg(e)) }).finally(() => { if (alive) setLoading(false) })
-    return () => { alive = false }
-  }, [active?.id, version])
-  const shown = rules.filter(r => !q || (r.type + r.payload + r.proxy).toLowerCase().includes(q.toLowerCase()))
-  return <Form navigationTitle={`规则 (${rules.length})`} navigationBarTitleDisplayMode="inline">
-    {!active ? <NoController /> : <>
-      <Section><TextField title="筛选" value={q} onChanged={setQ} prompt="类型 / 内容 / 策略" /></Section>
-      {err ? <Section><Text foregroundStyle="systemRed">{err}</Text></Section> : null}
-      <Section footer={shown.length > 300 ? <Text>仅显示前 300 条，请用筛选缩小范围</Text> : loading ? <Text>加载中…</Text> : undefined}>
-        {shown.slice(0, 300).map((r, i) => <VStack key={String(i)} alignment="leading" spacing={2}>
-          <Text font={15}>{r.payload || r.type}</Text>
-          <Text font={12} foregroundStyle="secondaryLabel">{`${r.type} → ${r.proxy}`}</Text>
-        </VStack>)}
-      </Section>
-    </>}
-  </Form>
-}
-
 // ---------- OpenWrt 页面 ----------
 function WrtInterfacesPage({ active, version }: { active: Controller; version: number }) {
   const [list, setList] = useState<WrtIface[]>([])
@@ -516,17 +380,11 @@ function SettingsPage({ active, onChanged }: { active: Controller | null; onChan
 type RootTab = "home" | "proxies" | "rules" | "connections" | "more"
 const ROOT_TABS: [RootTab, string, string][] = [["home", "主页", "house.fill"], ["proxies", "代理", "point.3.connected.trianglepath.dotted"], ["rules", "规则", "list.bullet.rectangle"], ["connections", "连接", "arrow.up.arrow.down"], ["more", "更多", "ellipsis.circle"]]
 function MorePage({ active, onChanged }: { active: Controller | null; onChanged: () => void }) {
-  return <Form navigationTitle="更多" navigationBarTitleDisplayMode="inline">
-    <Section header={<Text>当前代理控制器</Text>} footer={<Text>代理 / 规则 / 连接及内核配置使用当前 OpenWrt 的插件自动获取结果（或手动填写的控制器），与主页路由器统计独立。</Text>}>
-      {active ? <><Text>{active.name}</Text><NavigationLink destination={<KernelConfigPage c={active} />}><Label title="运行模式与内核配置" systemImage="gearshape.2" /></NavigationLink></> : <Text>请先在设置添加控制器</Text>}
-    </Section>
-    <Section header={<Text>应用设置（本地）</Text>}>
-      <NavigationLink destination={<LogsPage />}><Label title="运行日志" systemImage="doc.text" /></NavigationLink>
-      <NavigationLink destination={<AppearancePage />}><Label title="外观设置" systemImage="paintpalette" /></NavigationLink>
-      <NavigationLink destination={<GlobalConfigPage active={active} />}><Label title="全局配置" systemImage="slider.horizontal.3" /></NavigationLink>
-      <NavigationLink destination={<SettingsPage active={active} onChanged={onChanged} />}><Label title="设置（控制器管理）" systemImage="gearshape" /></NavigationLink>
-    </Section>
-  </Form>
+  return <DashboardMorePage active={active} onChanged={onChanged} settings={<Card>
+    <NavigationLink destination={<AppearancePage />}><Label title="外观设置" systemImage="paintpalette" /></NavigationLink>
+    <NavigationLink destination={<GlobalConfigPage active={active} />}><Label title="全局配置" systemImage="slider.horizontal.3" /></NavigationLink>
+    <NavigationLink destination={<SettingsPage active={active} onChanged={onChanged} />}><Label title="设置（控制器管理）" systemImage="gearshape" /></NavigationLink>
+  </Card>} />
 }
 function Root() {
   const prefs = usePreferences(), dismiss = Navigation.useDismiss()
