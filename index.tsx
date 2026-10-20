@@ -39,7 +39,7 @@ function OverviewPage({ active, version, onSwitch }: { active: Controller | null
     setBusy(true)
     try { await setMode(active, m); await refresh() } catch (e) { setErr(msg(e)) } finally { setBusy(false) }
   }
-  return <Form navigationTitle="Neko Dash" navigationBarTitleDisplayMode="inline">
+  return <Form navigationTitle="dashboard" navigationBarTitleDisplayMode="inline">
       {!active ? <NoController /> : <>
         {all.length > 1 ? <Section header={<Text>控制器</Text>}>
           <Picker title="当前" pickerStyle="menu" value={active.id} onChanged={(v: string) => { setActive(v); setOv(null); onSwitch() }}>
@@ -271,7 +271,7 @@ function SettingsPage({ active, onChanged }: { active: Controller | null; onChan
       <Button title="预览小组件" action={() => Widget.preview({ family: "systemSmall" })} />
     </Section>
     <Section footer={<Text>密钥保存在 Keychain，不会上传或写入脚本文件。</Text>}>
-      <Text foregroundStyle="secondaryLabel">{`Neko Dash for Scripting v${VERSION}（非官方实现）`}</Text>
+      <Text foregroundStyle="secondaryLabel">{`dashboard v${VERSION}（非官方实现）`}</Text>
     </Section>
   </Form>
 }

@@ -29,7 +29,7 @@ function View({ d }: { d: Awaited<ReturnType<typeof load>> }) {
     </VStack>
   }
   return <VStack alignment="leading" spacing={6} padding>
-    <HStack><Text font={14} fontWeight="bold">{d.name || "Neko Dash"}</Text><Spacer />
+    <HStack><Text font={14} fontWeight="bold">{d.name || "dashboard"}</Text><Spacer />
       {o?.mode ? <Text font={11} foregroundStyle="secondaryLabel">{o.mode}</Text> : null}</HStack>
     {o ? <>
       <Row label="↑ 上传" value={fmtSpeed(o.traffic.up)} size={15} />
