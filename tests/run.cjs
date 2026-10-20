@@ -252,7 +252,45 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) assert.equal(nodes(tree, types[i]).length, ids[i] === id ? 1 : 0)
     }
-    assert.equal(api.VERSION, '1.5.0'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.5.1'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+  })
+  await test('1.5.1 Tab固定所有权：主页→代理→规则→连接→回切，只有当前页声明唯一菜单', () => {
+    pref.savePreferences({ defaultPage: 'overview' })
+    let rootTree = render(app.Root, {}, true)
+    const pagesByTab = { home: app.OverviewPage, proxies: app.ProxiesPage, rules: app.RulesPage, connections: app.ConnectionsPage, more: app.MorePage }
+    const commands = { home: ['设置','运行日志','外观设置','全局配置'], proxies: ['刷新'], rules: ['搜索规则','刷新规则'], connections: ['搜索连接','暂停监控','客户端标签','筛选客户端','清理已断开连接','打断全部连接'] }
+    // 仅展开组件声明，不运行effect/网络；各页独立hooks，不能与Root共用hooks槽位。
+    function inspectPage(node) {
+      const saved = { hooks, hookIndex, effects, cleanups }
+      hooks=[];hookIndex=0;effects=[];cleanups=new Map()
+      try { return unwrap(node.type(node.props)) } finally { ({hooks,hookIndex,effects,cleanups}=saved) }
+    }
+    const roots = new Map()
+    for (const selected of ['home','proxies','rules','connections','proxies','home','rules','connections','home']) {
+      rootTree.props.selection.setValue(selected);rootTree=render(app.Root,{})
+      let menus=0
+      for (const tab of nodes(rootTree,'Tab')) {
+        const id=tab.props.value, stack=tab.props.children[0], owner=stack.props.children[0]
+        const identity=[tab.props.key,stack.props.key,owner.props.key].join('/')
+        if(roots.has(id))assert.equal(identity,roots.get(id));else roots.set(id,identity)
+        assert.equal(owner.props.toolbar.topBarTrailing,undefined)
+        assert.equal(owner.props.toolbar.topBarLeading.props.systemImage,'xmark')
+        const children=owner.props.children
+        if(id!==selected){assert.equal(children.length,0);continue}
+        assert.equal(children.length,1);assert.equal(children[0].type,pagesByTab[id]);assert.ok(children[0].props.key.startsWith(id+':'))
+        const page=inspectPage(children[0]), owners=[]
+        function scan(n){if(!n||typeof n!=='object')return;if(n.props?.toolbar?.topBarTrailing)owners.push(n);for(const child of n.props?.children??[])scan(child)}
+        scan(page);assert.equal(owners.length,1)
+        const menu=owners[0].props.toolbar.topBarTrailing
+        assert.equal(menu.type,'Menu');assert.equal(nodes(menu,'Image').length,0) // label单独验证，不能把正文图标算成toolbar
+        assert.equal(menu.props.label.props.systemName,'ellipsis.circle');menus++
+        assert.deepEqual(nodes(menu,'Button').map(b=>b.props.title),commands[id])
+        if(id!=='home')assert.ok(!nodes(menu,'Button').some(b=>b.props.title==='设置'))
+      }
+      assert.equal(menus,1)
+    }
+    const source=fs.readFileSync(path.join(root,'index.tsx'),'utf8').split('function Root()')[1]
+    assert.ok(!source.includes('const content ='));assert.ok(!source.includes('ROOT_TABS.map'));assert.ok(!source.includes('topBarTrailing'))
   })
   await test('首页实际模拟请求仅ubus；不可见停止新采样且清理计时器', async () => {
     pref.savePreferences({ connectionBackground: false })

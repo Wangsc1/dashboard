@@ -1,6 +1,14 @@
-# dashboard · v1.5.0
+# dashboard · v1.5.1
 
 在 iPhone「Scripting」中管理 OpenWrt，并通过 LuCI ubus 自动读取 OpenClash / Nikki / MihomoTProxy 的代理控制器地址和密钥。非官方实现。
+
+## 1.5.1：Tab 菜单归属修正
+
+针对真机代理/规则/连接出现双 `ellipsis.circle`：源码中各页本来仅有一个菜单，排查到根页把同一 `content` 节点放入不同导航栈的注册风险，不能仅凭模拟断定宿主的内部原因。本版参照 ScriptGit，将五个 Tab 的内容声明固定在各自栈的位置，增加各栈/根/业务页的独立稳定 key，不再跨栈搬运共享节点。栈根只持有左侧 X，右上菜单仍由各自业务页唯一声明；隐藏页不挂载业务和菜单，保留停止采样与 pending 丢弃。
+
+已查官方 toolbar props / toolbar view / toolbar view modifiers / lifecycle 文档：`ToolbarItem` 文档列出 placement 与 children，未提供可据以使用的唯一 item id 契约，因此不猜测原生 id 参数、不全局隐藏工具栏。保留原生 Tab 玻璃/系统拖动、全部菜单动作、子页系统返回；未修改四页业务或主页 UI。
+
+本地 **39 项模拟测试、业务类型检查、git diff --check 通过**。新增主页→代理→规则→连接→回切的逐栈身份、隐藏菜单为空、当前菜单唯一和菜单命令归属断言。模拟只能证明声明结构与所有权，**不能证明 Scripting/SwiftUI 真机已注销旧 toolbar 或完成去重**；需在原反馈设备复核。未提交、未推送、未操作真实路由器。
 
 ## 使用与导航
 

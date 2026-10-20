@@ -378,7 +378,6 @@ function SettingsPage({ active, onChanged }: { active: Controller | null; onChan
 
 // ---------- 根：与 scriptgit 一致的原生 TabView；每个 tab 独立 NavigationStack ----------
 type RootTab = "home" | "proxies" | "rules" | "connections" | "more"
-const ROOT_TABS: [RootTab, string, string][] = [["home", "主页", "house.fill"], ["proxies", "代理", "point.3.connected.trianglepath.dotted"], ["rules", "规则", "list.bullet.rectangle"], ["connections", "连接", "arrow.up.arrow.down"], ["more", "更多", "ellipsis.circle"]]
 function MorePage({ active, onChanged }: { active: Controller | null; onChanged: () => void }) {
   return <DashboardMorePage active={active} onChanged={onChanged} settings={<Card>
     <NavigationLink destination={<AppearancePage />}><Label title="外观设置" systemImage="paintpalette" /></NavigationLink>
@@ -392,22 +391,50 @@ function Root() {
   const selection = useObservable<RootTab>(() => { const p = getPreferences().defaultPage; return p === "overview" ? "home" : p })
   const tab = selection.value
   const active = getActive(), bump = () => { setVersion(v => v + 1) }
-  // 原生 TabView 可留存各栈，因此显式只挂载所选页的业务内容。
-  // 切走主页必定卸载采样/曲线；不依赖系统是否销毁隐藏 Tab，也不仿造拖动手势。
-  const content = tab === "home" ? <OverviewPage key={active?.id ?? "empty"} active={active} version={version} onSwitch={bump} />
-    : tab === "proxies" ? <ProxiesPage key={active?.id ?? "empty"} active={active} version={version} />
-    : tab === "rules" ? <RulesPage key={active?.id ?? "empty"} active={active} version={version} />
-    : tab === "connections" ? <ConnectionsPage key={active?.id ?? "empty"} active={active} version={version} />
-    : <MorePage active={active} onChanged={bump} />
+  // 与 ScriptGit 一样，每个 Tab 在自己的固定结构位置声明专属内容。
+  // 不把同一 content 节点在五个 NavigationStack 之间搬运：宿主可能保留旧 toolbar 注册。
+  // 各页独占其 trailing 菜单，栈根只声明 X；隐藏业务页仍卸载，停止采样并移除菜单声明。
   return <TabView selection={selection} preferredColorScheme={prefs.theme === "system" ? undefined : prefs.theme} font={14} foregroundStyle={MAIN_FG}>
-    {ROOT_TABS.map(([id, title, icon]) => <Tab key={id} title={title} systemImage={icon} value={id}>
-      <NavigationStack>
-        <VStack spacing={0} frame={{ maxWidth: "infinity", maxHeight: "infinity" }}
+    <Tab key="home" title="主页" systemImage="house.fill" value="home">
+      <NavigationStack key="home-stack">
+        <VStack key="home-root" spacing={0} frame={{ maxWidth: "infinity", maxHeight: "infinity" }}
           toolbar={{ topBarLeading: <Button title="" systemImage="xmark" action={dismiss} /> }}>
-          {tab === id ? content : null}
+          {tab === "home" ? <OverviewPage key={`home:${active?.id ?? "empty"}`} active={active} version={version} onSwitch={bump} /> : null}
         </VStack>
       </NavigationStack>
-    </Tab>)}
+    </Tab>
+    <Tab key="proxies" title="代理" systemImage="point.3.connected.trianglepath.dotted" value="proxies">
+      <NavigationStack key="proxies-stack">
+        <VStack key="proxies-root" spacing={0} frame={{ maxWidth: "infinity", maxHeight: "infinity" }}
+          toolbar={{ topBarLeading: <Button title="" systemImage="xmark" action={dismiss} /> }}>
+          {tab === "proxies" ? <ProxiesPage key={`proxies:${active?.id ?? "empty"}`} active={active} version={version} /> : null}
+        </VStack>
+      </NavigationStack>
+    </Tab>
+    <Tab key="rules" title="规则" systemImage="list.bullet.rectangle" value="rules">
+      <NavigationStack key="rules-stack">
+        <VStack key="rules-root" spacing={0} frame={{ maxWidth: "infinity", maxHeight: "infinity" }}
+          toolbar={{ topBarLeading: <Button title="" systemImage="xmark" action={dismiss} /> }}>
+          {tab === "rules" ? <RulesPage key={`rules:${active?.id ?? "empty"}`} active={active} version={version} /> : null}
+        </VStack>
+      </NavigationStack>
+    </Tab>
+    <Tab key="connections" title="连接" systemImage="arrow.up.arrow.down" value="connections">
+      <NavigationStack key="connections-stack">
+        <VStack key="connections-root" spacing={0} frame={{ maxWidth: "infinity", maxHeight: "infinity" }}
+          toolbar={{ topBarLeading: <Button title="" systemImage="xmark" action={dismiss} /> }}>
+          {tab === "connections" ? <ConnectionsPage key={`connections:${active?.id ?? "empty"}`} active={active} version={version} /> : null}
+        </VStack>
+      </NavigationStack>
+    </Tab>
+    <Tab key="more" title="更多" systemImage="ellipsis.circle" value="more">
+      <NavigationStack key="more-stack">
+        <VStack key="more-root" spacing={0} frame={{ maxWidth: "infinity", maxHeight: "infinity" }}
+          toolbar={{ topBarLeading: <Button title="" systemImage="xmark" action={dismiss} /> }}>
+          {tab === "more" ? <MorePage key={`more:${active?.id ?? "empty"}`} active={active} onChanged={bump} /> : null}
+        </VStack>
+      </NavigationStack>
+    </Tab>
   </TabView>
 }
 
