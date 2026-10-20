@@ -1,6 +1,6 @@
 import {
   Animation, Button, ForEach, Form, HStack, Label, Navigation, NavigationLink, NavigationStack, Picker, Script, Section, SecureField, Spacer,
-  Image, Menu, ProgressView, RoundedRectangle, Circle, ScrollView, SVG, Text, ZStack, modifiers, TextField, Toggle, VStack, useEffect, useState,
+  Image, Menu, RoundedRectangle, Circle, ScrollView, SVG, Text, ZStack, modifiers, TextField, Toggle, VStack, useEffect, useState,
 } from "scripting"
 import {
   VERSION, Controller, Group, Conn, Rule, Overview, Traffic, Plugin, PLUGINS, listControllers, saveController, removeController, getActive, setActive, getSecret, getClashSecret,
@@ -77,15 +77,15 @@ function RateChart({ down, up }: { down: number[]; up: number[] }) {
       <Spacer />
       <HStack spacing={4}><Circle fill="#3B82F6" frame={{ width: 5, height: 5 }} /><Text font={12} foregroundStyle="secondaryLabel">下载</Text></HStack><HStack spacing={4}><Circle fill="#34C759" frame={{ width: 5, height: 5 }} /><Text font={12} foregroundStyle="secondaryLabel">上传</Text></HStack>
     </HStack>
-    <ZStack>
-      <VStack alignment="trailing" spacing={0} frame={{ maxWidth: "infinity", height: H, alignment: "trailing" }}>
-        <Text font={12} foregroundStyle="secondaryLabel">{label(1)}</Text><Spacer />
-        <Text font={12} foregroundStyle="secondaryLabel">{label(0.75)}</Text><Spacer />
-        <Text font={12} foregroundStyle="secondaryLabel">{label(0.5)}</Text><Spacer />
-        <Text font={12} foregroundStyle="secondaryLabel">{label(0.25)}</Text><Spacer />
+    <HStack alignment="top" spacing={8} frame={{ maxWidth: "infinity" }}>
+      <SVG code={code} resizable frame={{ maxWidth: "infinity", height: H }} />
+      <VStack alignment="trailing" spacing={0} frame={{ width: 76, height: H }}>
+        {[1, 0.75, 0.5, 0.25].map((f, i) => <VStack key={String(f)} spacing={0}>
+          <HStack spacing={0}><Spacer /><Text font={11} lineLimit={1} fixedSize={{ horizontal: true, vertical: false }} foregroundStyle="secondaryLabel">{label(f)}</Text></HStack>
+          <Spacer />
+        </VStack>)}
       </VStack>
-      <SVG code={code} resizable frame={{ height: H }} />
-    </ZStack>
+    </HStack>
   </Card>
 }
 
@@ -141,7 +141,6 @@ function OverviewPage({ active, version, onSwitch }: { active: Controller | null
   const rate = live ?? src?.traffic ?? null
   const w = ov?.wrt
   const memUsed = w ? Math.max(0, w.memTotal - w.memFree) : 0
-  const memRatio = w && w.memTotal > 0 ? Math.min(1, memUsed / w.memTotal) : 0
   const memText = w ? `${fmtBytes(memUsed)} / ${fmtBytes(w.memTotal)}` : "-"
   const toolbar = {
     topBarLeading: <Button title="" systemImage="xmark" action={dismiss} />,
@@ -178,7 +177,6 @@ function OverviewPage({ active, version, onSwitch }: { active: Controller | null
         </HStack>
         <InfoItem icon="clock" color="#3B82F6" title="运行时间" value={w ? fmtUptime(w.uptime) : "-"} />
         <InfoItem icon="chart.pie" color="#A855F7" title="内存使用" value={memText} />
-        <ProgressView value={memRatio} total={1} tint="#A855F7" />
         <InfoItem icon="waveform.path.ecg" color="#F59E0B" title="系统负载" value={w ? w.load.map(v => v.toFixed(2)).join(" ") : "-"} />
       </Card>
 
