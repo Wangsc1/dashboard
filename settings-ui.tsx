@@ -115,7 +115,7 @@ export function GlobalConfigPage({ active }: { active: Controller | null }) {
     </Section>
     <Section header={<Text>切换代理设置</Text>} footer={<Text>开启后成功切换节点才断开该控制器全部现有连接；断开失败将明确提示。</Text>}>{toggle("disconnectOnSwitch", "自动断开旧连接")}</Section>
     <Section header={<Text>交互体验</Text>}>{toggle("haptics", "触感反馈")}</Section>
-    <Section header={<Text>启动设置</Text>} footer={<Text>下次启动脚本时选择对应底部悬浮导航页；随时可点“主页”返回 OpenWrt 概览。</Text>}><Choice title="默认打开界面" value={p.defaultPage} values={[["overview", "概览"], ["proxies", "策略组"], ["connections", "连接"], ["rules", "规则"]]} onChanged={v => update({ defaultPage: v as any })} /></Section>
+    <Section header={<Text>启动设置</Text>} footer={<Text>下次启动脚本时选择对应底部原生标签页；随时可点“主页”返回 OpenWrt 概览。</Text>}><Choice title="默认打开界面" value={p.defaultPage} values={[["overview", "概览"], ["proxies", "策略组"], ["connections", "连接"], ["rules", "规则"]]} onChanged={v => update({ defaultPage: v as any })} /></Section>
     <Section header={<Text>网络请求</Text>}>
       <NavigationLink destination={<HeadersPage />}><Label title="自定义请求头" systemImage="network" /></NavigationLink>
       <Unavailable title="Surge 智能测速补全 · 不适用" reason="本脚本仅支持 OpenWrt 上的 Mihomo/Clash 控制器，不支持 Surge API；仍保留手动组测速。" />
