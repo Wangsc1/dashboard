@@ -35,7 +35,7 @@ const context = {
 function load(name) {
   name = name.replace(/^\.\//, '')
   if (cache.has(name)) return cache.get(name)
-  const file = path.join(root, name + (name === 'index' || name === 'settings-ui' || name === 'dashboard-pages' ? '.tsx' : '.ts'))
+  const file = path.join(root, name + (name === 'index' || name === 'settings-ui' || name === 'dashboard-pages' || name === 'root-toolbar' ? '.tsx' : '.ts'))
   let source = fs.readFileSync(file, 'utf8')
   if (name === 'index') source = source.replace(/\nrun\(\)\s*$/, '') + '\nexport { OverviewPage, SettingsPage, ConnectionsPage, ProxiesPage, RulesPage, Spark, RateChart, StatCard, GroupSection, MorePage, Root };'
   const code = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020, jsx: ts.JsxEmit.React, jsxFactory: 'h' } }).outputText
@@ -49,6 +49,7 @@ function render(fn, props, reset = false) { if (reset) unmount(); hookIndex = 0;
 async function flush() { const es = effects; effects = []; es.forEach(f => f()); for (let i = 0; i < 60; i++) await Promise.resolve() }
 function unwrap(tree) { if (!tree || typeof tree !== 'object') return tree; if (typeof tree.type === 'function' && ['Card','Shell','Hint','Chip','Pages'].includes(tree.type.name)) return unwrap(tree.type(tree.props)); return { ...tree, props: { ...tree.props, children: (tree.props?.children ?? []).map(unwrap) } } }
 function nodes(tree, type) { const out = []; function visit(n) { if (!n || typeof n !== 'object') return; if (n.type === type) out.push(n); for (const x of n.props?.children ?? []) visit(x) } visit(unwrap(tree)); return out }
+function trailing(toolbar) { return toolbar?.type === 'Toolbar' ? nodes(toolbar,'ToolbarItem').find(n=>n.props.placement==='topBarTrailing')?.props.children[0] : toolbar?.topBarTrailing }
 function button(tree, title) { const b = nodes(tree, 'Button').find(b => b.props.title === title || nodes(b,'Label').some(l => l.props.title === title)); assert.ok(b, 'button: ' + title); return b }
 function text(tree) { tree = unwrap(tree); if (typeof tree === 'string' || typeof tree === 'number') return String(tree); return (tree?.props?.children ?? []).map(text).join(' ') }
 let count = 0
@@ -163,7 +164,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
   })
   await test('运行日志UI：四级过滤、搜索、刷新、复制全部与清空确认', async () => {
     pref.clearLogs(); pref.recordEvent('start', true); pref.recordEvent('login', false)
-    let tree = render(ui.LogsPage, {}, true), menu = tree.props.toolbar.topBarTrailing
+    let tree = render(ui.LogsPage, {}, true), menu = trailing(tree.props.toolbar)
     assert.equal(nodes(menu, 'Button').length, 8)
     await button(menu, '复制全部').props.action(); assert.ok(clipboard.includes('路由器登录失败'))
     context.confirmResult = false; await button(menu, '清空日志').props.action(); assert.equal(pref.getLogs().length, 2)
@@ -174,8 +175,8 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     pref.savePreferences({ defaultPage: 'overview' })
     let tree = render(app.OverviewPage, { active: null, version: 0, onSwitch() {} }, true)
     const toolbar = tree.props.toolbar
-    assert.deepEqual(nodes(toolbar.topBarTrailing, 'Button').map(n => n.props.title), ['设置', '运行日志', '外观设置', '全局配置'])
-    button(toolbar.topBarTrailing, '外观设置').props.action(); tree = render(app.OverviewPage, { active: null, version: 0, onSwitch() {} })
+    assert.deepEqual(nodes(trailing(toolbar), 'Button').map(n => n.props.title), ['编辑控制器', '运行日志', '外观设置', '全局配置'])
+    button(trailing(toolbar), '外观设置').props.action(); tree = render(app.OverviewPage, { active: null, version: 0, onSwitch() {} })
     assert.equal(tree.props.navigationDestination.isPresented, true); assert.equal(tree.props.navigationDestination.content.type, ui.AppearancePage)
     tree.props.navigationDestination.onChanged(false); tree = render(app.OverviewPage, { active: null, version: 0, onSwitch() {} }); assert.equal(tree.props.navigationDestination.isPresented, false)
     const src = fs.readFileSync(path.join(root, 'index.tsx'), 'utf8'); assert.ok(src.includes('function WrtInterfacesPage')); assert.ok(src.includes('function WrtLeasesPage')); assert.ok(src.includes('onDelete={onDelete}')); assert.ok(!src.includes('sheet='))
@@ -227,7 +228,8 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     for (const tab of tabs) {
       assert.equal(tab.props.children[0].type, 'NavigationStack')
       assert.equal(nodes(tab, 'NavigationStack').length, 1)
-      assert.equal(tab.props.children[0].props.children[0].props.toolbar.topBarLeading.props.systemImage, 'xmark')
+      assert.equal(tab.props.children[0].props.children[0].props.toolbar, undefined)
+      for (const child of tab.props.children[0].props.children[0].props.children) assert.equal(typeof child.props.onClose, 'function')
     }
     assert.equal(nodes(tree, app.OverviewPage).length, 1); assert.equal(nodes(tree, app.ProxiesPage).length, 0)
     // 系统点击/拖动通过同一个 Observable selection 回传；脚本不实现手势。
@@ -252,13 +254,13 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) assert.equal(nodes(tree, types[i]).length, ids[i] === id ? 1 : 0)
     }
-    assert.equal(api.VERSION, '1.5.1'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.5.2'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
-  await test('1.5.1 Tab固定所有权：主页→代理→规则→连接→回切，只有当前页声明唯一菜单', () => {
+  await test('1.5.2 唯一toolbar owner：根X与菜单合并、显式唯一item id、隐藏Tab无注册', () => {
     pref.savePreferences({ defaultPage: 'overview' })
     let rootTree = render(app.Root, {}, true)
     const pagesByTab = { home: app.OverviewPage, proxies: app.ProxiesPage, rules: app.RulesPage, connections: app.ConnectionsPage, more: app.MorePage }
-    const commands = { home: ['设置','运行日志','外观设置','全局配置'], proxies: ['刷新'], rules: ['搜索规则','刷新规则'], connections: ['搜索连接','暂停监控','客户端标签','筛选客户端','清理已断开连接','打断全部连接'] }
+    const commands = { home: ['编辑控制器','运行日志','外观设置','全局配置'], proxies: ['刷新'], rules: ['搜索规则','刷新规则'], connections: ['搜索连接','暂停监控','客户端标签','筛选客户端','清理已断开连接','打断全部连接'] }
     // 仅展开组件声明，不运行effect/网络；各页独立hooks，不能与Root共用hooks槽位。
     function inspectPage(node) {
       const saved = { hooks, hookIndex, effects, cleanups }
@@ -266,31 +268,53 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       try { return unwrap(node.type(node.props)) } finally { ({hooks,hookIndex,effects,cleanups}=saved) }
     }
     const roots = new Map()
-    for (const selected of ['home','proxies','rules','connections','proxies','home','rules','connections','home']) {
+    for (const selected of ['home','proxies','rules','connections','more','proxies','home','rules','connections','home']) {
       rootTree.props.selection.setValue(selected);rootTree=render(app.Root,{})
       let menus=0
       for (const tab of nodes(rootTree,'Tab')) {
         const id=tab.props.value, stack=tab.props.children[0], owner=stack.props.children[0]
         const identity=[tab.props.key,stack.props.key,owner.props.key].join('/')
         if(roots.has(id))assert.equal(identity,roots.get(id));else roots.set(id,identity)
-        assert.equal(owner.props.toolbar.topBarTrailing,undefined)
-        assert.equal(owner.props.toolbar.topBarLeading.props.systemImage,'xmark')
+        assert.equal(owner.props.toolbar,undefined)
         const children=owner.props.children
         if(id!==selected){assert.equal(children.length,0);continue}
         assert.equal(children.length,1);assert.equal(children[0].type,pagesByTab[id]);assert.ok(children[0].props.key.startsWith(id+':'))
-        const page=inspectPage(children[0]), owners=[]
-        function scan(n){if(!n||typeof n!=='object')return;if(n.props?.toolbar?.topBarTrailing)owners.push(n);for(const child of n.props?.children??[])scan(child)}
+        let page=inspectPage(children[0]);if(id==='more')page=inspectPage(page);const owners=[]
+        function scan(n){if(!n||typeof n!=='object')return;if(n.props?.toolbar)owners.push(n);for(const child of n.props?.children??[])scan(child)}
         scan(page);assert.equal(owners.length,1)
-        const menu=owners[0].props.toolbar.topBarTrailing
+        const toolbar=owners[0].props.toolbar;assert.equal(toolbar.type,'Toolbar')
+        const items=nodes(toolbar,'ToolbarItem');assert.equal(items.length,id==='more'?1:2)
+        assert.deepEqual(items.map(n=>n.props.key),id==='more'?[`dashboard.${id}.close`]:[`dashboard.${id}.close`,`dashboard.${id}.menu`])
+        assert.equal(items[0].props.placement,'topBarLeading');assert.equal(nodes(items[0],'Button')[0].props.systemImage,'xmark');assert.equal(nodes(items[0],'Button')[0].props.action,children[0].props.onClose)
+        if(id==='more')continue
+        const menu=trailing(toolbar)
         assert.equal(menu.type,'Menu');assert.equal(nodes(menu,'Image').length,0) // label单独验证，不能把正文图标算成toolbar
         assert.equal(menu.props.label.props.systemName,'ellipsis.circle');menus++
         assert.deepEqual(nodes(menu,'Button').map(b=>b.props.title),commands[id])
         if(id!=='home')assert.ok(!nodes(menu,'Button').some(b=>b.props.title==='设置'))
       }
-      assert.equal(menus,1)
+      assert.equal(menus,selected==='more'?0:1)
     }
     const source=fs.readFileSync(path.join(root,'index.tsx'),'utf8').split('function Root()')[1]
-    assert.ok(!source.includes('const content ='));assert.ok(!source.includes('ROOT_TABS.map'));assert.ok(!source.includes('topBarTrailing'))
+    assert.ok(!source.includes('const content ='));assert.ok(!source.includes('ROOT_TABS.map'));assert.ok(!source.includes('toolbar={'));assert.ok(!source.includes('topBarLeading'))
+  })
+  await test('1.5.2 编辑控制器仅更名仍进管理页；push详情不附根X', () => {
+    let closes=0
+    let page=render(app.OverviewPage,{active:c,version:0,onSwitch(){},onClose(){closes++}},true)
+    button(trailing(page.props.toolbar),'编辑控制器').props.action()
+    page=render(app.OverviewPage,{active:c,version:0,onSwitch(){},onClose(){closes++}})
+    const destination=page.props.navigationDestination.content
+    assert.equal(destination.type,app.SettingsPage)
+    assert.equal(destination.props.onClose,undefined)
+    const settings=render(destination.type,destination.props,true)
+    assert.equal(settings.props.toolbar,undefined)
+    const rootItem=nodes(page.props.toolbar,'ToolbarItem').find(n=>n.props.key==='dashboard.home.close')
+    nodes(rootItem,'Button')[0].props.action();assert.equal(closes,1)
+    const group=render(pages.GroupNodesPage,{c,g:{name:'G',type:'Selector',all:['A'],now:'A',delays:{}},onChanged(){}},true)
+    assert.equal(nodes(group.props.toolbar,'Button').filter(n=>n.props.systemImage==='xmark').length,0)
+    assert.equal(nodes(group.props.toolbar,'ToolbarItem').filter(n=>n.props.key?.endsWith('.close')).length,0)
+    const dns=render(pages.DNSPage,{c},true);assert.equal(dns.props.toolbar,undefined)
+    const management=render(pages.ManagementPage,{c,kind:'profile'},true);assert.equal(management.props.toolbar,undefined)
   })
   await test('首页实际模拟请求仅ubus；不可见停止新采样且清理计时器', async () => {
     pref.savePreferences({ connectionBackground: false })
@@ -326,8 +350,8 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     assert.ok(text(tree).includes('sample.invalid')); assert.ok(!text(tree).includes('source-address')); assert.ok(!text(tree).includes('sample-rule'))
     unmount(); pref.clearLogs(); pref.recordEvent('start', true); pref.recordEvent('login', true); pref.recordEvent('login', false); pref.recordEvent('fallback', false, { warning: true })
     tree = render(ui.LogsPage, {}, true); assert.equal(nodes(tree, 'VStack').length, 4)
-    button(tree.props.toolbar.topBarTrailing, '✓ 信息').props.action(); tree = render(ui.LogsPage, {}); assert.equal(nodes(tree, 'VStack').length, 3)
-    button(tree.props.toolbar.topBarTrailing, '搜索日志').props.action(); tree = render(ui.LogsPage, {}); nodes(tree, 'TextField')[0].props.onChanged('路由器'); tree = render(ui.LogsPage, {}); assert.equal(nodes(tree, 'VStack').length, 2)
+    button(trailing(tree.props.toolbar), '✓ 信息').props.action(); tree = render(ui.LogsPage, {}); assert.equal(nodes(tree, 'VStack').length, 3)
+    button(trailing(tree.props.toolbar), '搜索日志').props.action(); tree = render(ui.LogsPage, {}); nodes(tree, 'TextField')[0].props.onChanged('路由器'); tree = render(ui.LogsPage, {}); assert.equal(nodes(tree, 'VStack').length, 2)
   })
   await test('控制器左滑删除回调保持原实现', () => {
     const source = fs.readFileSync(path.join(root, 'index.tsx'), 'utf8')
@@ -352,7 +376,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     assert.equal(nodes(tree,'Button').filter(x=>x.props.children?.length).length,80);assert.ok(text(tree).includes('80 / 125'))
     button(tree,'加载更多').props.action();tree=render(pages.GroupNodesPage,{c,g,onChanged(){}});assert.equal(nodes(tree,'Button').filter(x=>x.props.children?.length).length,125)
     context.confirmResult=false;calls.length=0;await nodes(tree,'Button').filter(x=>x.props.children?.length)[1].props.action();assert.equal(calls.length,0)
-    await button(tree.props.toolbar.topBarTrailing,'测速').props.action();assert.equal(calls.length,0);context.confirmResult=true
+    await button(trailing(tree.props.toolbar),'测速').props.action();assert.equal(calls.length,0);context.confirmResult=true
   })
   await test('1.5规则：编号保留真实位置、数量及规则提供者更新路径', async () => {
     responder=url=>({body:url.includes('/providers/')?{providers:{real:{type:'Rule',vehicleType:'HTTP',ruleCount:91,behavior:'domain'}}}:{rules:[{type:'DomainSuffix',payload:'alpha.invalid',proxy:'DIRECT'},{type:'IPCIDR',payload:'test-value',proxy:'REJECT'}]}})
@@ -377,16 +401,16 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
   await test('1.5连接监控：暂停/不可见清定时器、取消断开不发送DELETE', async () => {
     responder=()=>({body:{connections:[{id:'observed',upload:20,download:40,metadata:{host:'observed.invalid',sourceIP:'source',type:'TProxy',network:'tcp'},start:new Date(now-5000).toISOString(),chains:['node','group']}]}})
     render(pages.ConnectionsPage,{active:c,version:0},true);await flush();let tree=render(pages.ConnectionsPage,{active:c,version:0});assert.equal(intervals.size,1);assert.ok(text(tree).includes('observed.invalid'))
-    context.confirmResult=false;calls.length=0;await button(tree.props.toolbar.topBarTrailing,'打断全部连接').props.action();assert.equal(calls.length,0)
-    button(tree.props.toolbar.topBarTrailing,'暂停监控').props.action();render(pages.ConnectionsPage,{active:c,version:0});await flush();assert.equal(intervals.size,0)
-    tree=render(pages.ConnectionsPage,{active:c,version:0});assert.ok(text(tree).includes('监控已暂停'));button(tree.props.toolbar.topBarTrailing,'恢复监控').props.action();render(pages.ConnectionsPage,{active:c,version:0});await flush();assert.equal(intervals.size,1)
+    context.confirmResult=false;calls.length=0;await button(trailing(tree.props.toolbar),'打断全部连接').props.action();assert.equal(calls.length,0)
+    button(trailing(tree.props.toolbar),'暂停监控').props.action();render(pages.ConnectionsPage,{active:c,version:0});await flush();assert.equal(intervals.size,0)
+    tree=render(pages.ConnectionsPage,{active:c,version:0});assert.ok(text(tree).includes('监控已暂停'));button(trailing(tree.props.toolbar),'恢复监控').props.action();render(pages.ConnectionsPage,{active:c,version:0});await flush();assert.equal(intervals.size,1)
     tree=unwrap(render(pages.ConnectionsPage,{active:c,version:0}));tree.props.onDisappear();render(pages.ConnectionsPage,{active:c,version:0});await flush();assert.equal(intervals.size,0);context.confirmResult=true
   })
   await test('1.5连接pending隔离：暂停后旧结果不写历史，切换来源丢弃旧响应', async () => {
     let release;const wait=new Promise(r=>{release=r});const a={...c,id:'pending-a'},b={...c,id:'pending-b'}
     responder=()=>({wait,body:{connections:[{id:'old-pending',upload:999,download:999,metadata:{host:'old-result.invalid'}}]}})
     render(pages.ConnectionsPage,{active:a,version:0},true);await flush();let tree=render(pages.ConnectionsPage,{active:a,version:0})
-    button(tree.props.toolbar.topBarTrailing,'暂停监控').props.action();render(pages.ConnectionsPage,{active:a,version:0});await flush();release();await flush();tree=render(pages.ConnectionsPage,{active:a,version:0});assert.ok(!text(tree).includes('old-result.invalid'));assert.equal(model.historyFor(a).active.length,0);assert.equal(intervals.size,0)
+    button(trailing(tree.props.toolbar),'暂停监控').props.action();render(pages.ConnectionsPage,{active:a,version:0});await flush();release();await flush();tree=render(pages.ConnectionsPage,{active:a,version:0});assert.ok(!text(tree).includes('old-result.invalid'));assert.equal(model.historyFor(a).active.length,0);assert.equal(intervals.size,0)
     let release2;const wait2=new Promise(r=>{release2=r});responder=()=>({wait:wait2,body:{connections:[{id:'old-source',metadata:{host:'source-a.invalid'}}]}})
     render(pages.ConnectionsPage,{active:a,version:0},true);await flush();responder=()=>({body:{connections:[{id:'new-source',metadata:{host:'source-b.invalid'}}]}});render(pages.ConnectionsPage,{active:b,version:0});await flush();release2();await flush();tree=render(pages.ConnectionsPage,{active:b,version:0});assert.ok(text(tree).includes('source-b.invalid'));assert.ok(!text(tree).includes('source-a.invalid'));unmount();assert.equal(intervals.size,0)
   })
@@ -427,7 +451,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
   await test('1.5首页与根导航源码完整保持1.4.4关键行为', () => {
     const source=fs.readFileSync(path.join(root,'index.tsx'),'utf8'),before=require('child_process').execFileSync('git',['show','HEAD:index.tsx'],{cwd:root,encoding:'utf8'})
     const portion=s=>s.slice(s.indexOf('const MAIN_FG'),s.indexOf('// ---------- '+(s.includes('// ---------- 策略组')?'策略组':'OpenWrt 页面')))
-    assert.equal(portion(source),portion(before));assert.ok(source.includes('(Date.now() - at) / 950'));assert.ok(source.includes('}, 16)'))
+    const normalize=s=>portion(s).replace(/function OverviewPage\([^\n]+/, 'function OverviewPage(SIGNATURE)').replace(/  const toolbar = [\s\S]*?  const destination =/, '  const toolbar = TOOLBAR\n  const destination =');assert.equal(normalize(source),normalize(before));assert.ok(source.includes('(Date.now() - at) / 950'));assert.ok(source.includes('}, 16)'))
   })
   console.log(`\n${count} tests passed. All fetch, Storage, Keychain, iCloud and UI bindings were mocked; no device/remote effects executed.`)
 })().catch(e => { console.error(e); process.exitCode = 1 })
