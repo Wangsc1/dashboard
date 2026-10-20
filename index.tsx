@@ -1,5 +1,5 @@
 import {
-  Button, ForEach, Form, HStack, Label, Navigation, NavigationLink, NavigationStack, Picker, Script, Section, SecureField, Spacer,
+  Animation, Button, ForEach, Form, HStack, Label, Navigation, NavigationLink, NavigationStack, Picker, Script, Section, SecureField, Spacer,
   Image, Menu, ProgressView, RoundedRectangle, ScrollView, SVG, Text, ZStack, modifiers, TextField, Toggle, VStack, useEffect, useState,
 } from "scripting"
 import {
@@ -30,14 +30,14 @@ function Card({ children }: { children?: any }) {
   return <VStack alignment="leading" spacing={10} modifiers={cardMods()}>{children}</VStack>
 }
 function Badge({ icon, color }: { icon: string; color: string }) {
-  return <ZStack modifiers={modifiers().frame({ width: 26, height: 26 }).background(<RoundedRectangle cornerRadius={8} fill={color + "33"} />)}>
-    <Image systemName={icon} resizable scaleToFit foregroundStyle={color as any} frame={{ width: 13, height: 13 }} />
+  return <ZStack modifiers={modifiers().frame({ width: 20, height: 20 }).background(<RoundedRectangle cornerRadius={6} fill={`rgba(${parseInt(color.slice(1,3),16)},${parseInt(color.slice(3,5),16)},${parseInt(color.slice(5,7),16)},0.15)`} />)}>
+    <Image systemName={icon} resizable scaleToFit foregroundStyle={color as any} frame={{ width: 11, height: 11 }} />
   </ZStack>
 }
 function Big({ parts }: { parts: [string, string] | null }) {
   return <HStack alignment="lastTextBaseline" spacing={4}>
-    <Text font={26} fontWeight="bold">{parts ? parts[0] : "-"}</Text>
-    <Text font={13} foregroundStyle="secondaryLabel">{parts ? parts[1] : ""}</Text>
+    <Text font={26} fontWeight="bold" lineLimit={1} minimumScaleFactor={0.65} contentTransition="numericText" animation={{ animation: Animation.easeOut(0.35), value: parts?.[0] ?? "-" }}>{parts ? parts[0] : "-"}</Text>
+    <Text font={13} lineLimit={1} fixedSize={{ horizontal: true, vertical: false }} foregroundStyle="secondaryLabel">{parts ? parts[1] : ""}</Text>
   </HStack>
 }
 const HIST = 60
@@ -53,11 +53,8 @@ function Spark({ data, color, floor = 1024 }: { data: number[]; color: string; f
 function StatCard({ icon, color, title, parts, spark, floor }: { icon: string; color: string; title: string; parts: [string, string] | null; spark?: number[]; floor?: number }) {
   return <Card>
     <HStack spacing={8}><Badge icon={icon} color={color} /><Text font={14} foregroundStyle="secondaryLabel">{title}</Text></HStack>
-    <HStack alignment="bottom">
-      <Big parts={parts} />
-      <Spacer />
-      {spark ? <Spark data={spark} color={color} floor={floor} /> : null}
-    </HStack>
+    <Big parts={parts} />
+    {spark ? <HStack><Spacer /><Spark data={spark} color={color} floor={floor} /></HStack> : null}
   </Card>
 }
 function InfoItem({ icon, color, title, value }: { icon: string; color: string; title: string; value: string }) {
@@ -104,19 +101,22 @@ function OverviewPage({ active, version, onSwitch }: { active: Controller | null
   const [memH, setMemH] = useState<number[]>([])
   const [liveConn, setLiveConn] = useState<number | null>(null)
   const [liveMem, setLiveMem] = useState<number | null>(null)
-  const [st] = useState({ live: false })
+  const [st] = useState({ live: false, refreshing: false })
   const all = listControllers()
   const dismiss = Navigation.useDismiss()
   const [page, setPage] = useState<"" | "interfaces" | "leases" | "settings">("")
   async function refresh() {
-    if (!active) return
-    const [a, b] = await Promise.allSettled([loadOverview(active), loadClashOverview(active)])
-    if (a.status === "fulfilled") { setOv(a.value); setErr("") } else setErr(msg(a.reason))
-    if (b.status === "fulfilled") { setCv(b.value); setCerr("") } else setCerr(msg(b.reason))
-    const src = b.status === "fulfilled" ? b.value : a.status === "fulfilled" ? a.value : null
-    if (src && !st.live) {   // 长连接没有数据时，退回轮询读数画曲线
-      setDn(h => [...h, src.traffic.down].slice(-HIST)); setUpH(h => [...h, src.traffic.up].slice(-HIST))
-    }
+    if (!active || st.refreshing) return
+    st.refreshing = true
+    // 两路结果各自显示，路由器不再等待代理 WebSocket 的超时。
+    await Promise.all([
+      loadOverview(active).then(o => { setOv(o); setErr("") }).catch(e => setErr(msg(e))),
+      loadClashOverview(active).then(o => {
+        setCv(o); setCerr("")
+        if (!st.live) { setDn(h => [...h, o.traffic.down].slice(-HIST)); setUpH(h => [...h, o.traffic.up].slice(-HIST)) }
+      }).catch(e => setCerr(msg(e))),
+    ])
+    st.refreshing = false
   }
   useEffect(() => { setDn([]); setUpH([]); setOv(null); setCv(null); setLive(null); setConnH([]); setMemH([]); setLiveConn(null); setLiveMem(null); st.live = false }, [active?.id])
   useEffect(() => {

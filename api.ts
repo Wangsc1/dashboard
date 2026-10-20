@@ -1,5 +1,5 @@
 // dashboard 数据层：Clash 外部控制 API 与 OpenWrt（LuCI ubus JSON-RPC）
-export const VERSION = "1.3.2"
+export const VERSION = "1.3.3"
 
 export type Kind = "clash" | "openwrt"
 export type Plugin = "openclash" | "nikki" | "mihomo"
@@ -106,7 +106,14 @@ async function ubusRaw(c: Controller, sid: string, obj: string, method: string, 
   if (res[0] !== 0) throw new Error("ubus 调用失败，代码 " + res[0])
   return res[1] ?? {}
 }
+const loginPending: Record<string, Promise<string> | undefined> = {}
 async function wrtLogin(c: Controller): Promise<string> {
+  if (loginPending[c.id]) return loginPending[c.id]!
+  const p = wrtLoginOnce(c)
+  loginPending[c.id] = p
+  try { return await p } finally { if (loginPending[c.id] === p) delete loginPending[c.id] }
+}
+async function wrtLoginOnce(c: Controller): Promise<string> {
   const user = c.username || "root"
   try {
     const r = await ubusRaw(c, NULL_SID, "session", "login", { username: user, password: getSecret(c.id), timeout: 3600 })
@@ -176,7 +183,14 @@ const UCI: Record<Plugin, { config: string; section: string; port: (v: any) => n
   nikki: { config: "nikki", section: "mixin", port: v => parseInt(String(v.api_listen ?? "").split(":").pop() ?? "", 10), secret: "api_secret" },
   mihomo: { config: "mihomo", section: "mixin", port: v => parseInt(String(v.api_listen ?? "").split(":").pop() ?? "", 10), secret: "api_secret" },
 }
+const resolvePending: Record<string, Promise<Controller> | undefined> = {}
 export async function resolveClash(c: Controller): Promise<Controller> {
+  if (resolvePending[c.id]) return resolvePending[c.id]!
+  const p = resolveClashOnce(c)
+  resolvePending[c.id] = p
+  try { return await p } finally { if (resolvePending[c.id] === p) delete resolvePending[c.id] }
+}
+async function resolveClashOnce(c: Controller): Promise<Controller> {
   const hit = clashCache[c.id]
   if (hit && Date.now() - hit.at < 60000 && hit.c) return hit.c
   const host = c.host ?? c.url.replace(/^https?:\/\//, "").replace(/:\d+$/, "")
