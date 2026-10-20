@@ -1,4 +1,4 @@
-# dashboard · v1.4.1
+# dashboard · v1.4.2
 
 在 iPhone「Scripting」中管理 OpenWrt，并通过 LuCI ubus 自动读取 OpenClash / Nikki / MihomoTProxy 的代理控制器地址和密钥。非官方实现。
 
@@ -6,8 +6,8 @@
 
 运行脚本 → 主页右上 `ellipsis.circle` → 设置 → 添加 OpenWrt。地址/端口是 LuCI 后台，账号是 LuCI 登录账号；开启“自动获取配置”后读取所选插件的控制器端口和密钥，也可关闭后手填。
 
-- 全屏根页保留 **X**；统一一个 `NavigationStack`，所有详情页使用系统推入/返回，不用设置弹层。
-- 自绘底部悬浮胶囊栏固定 **主页 / 代理 / 规则 / 连接 / 更多**，不是系统 TabView。采用系统原生材质：iOS 26+ 使用 `UIGlass.regular()` 与 `GlassEffectContainer`，旧系统使用 Material；使用官方 `safeAreaInset` 放置，左右留白26pt，比上一版各增加10pt。
+- 全屏根页保留 **X**；与 scriptgit 实际入口一致，每个原生 `Tab` 内独立一个 `NavigationStack`，没有外层嵌套导航栈。各 tab 的详情页仍使用系统推入/返回，不用设置弹层。
+- 底部使用与 `/opt/openbear/workspace/scriptgit/index.tsx` 相同的原生 **`TabView selection={useObservable(...)}` + `Tab`** 路径，固定 **主页 / 代理 / 规则 / 连接 / 更多**。1.4.2 删除自绘 FloatingBar、safeAreaInset 和重复 UIGlass 样式。玻璃、选中态、系统拖动选择及宽度均交给系统，不再仿造原生手势或强制缩短栏宽。官方此 Tab API 面向 iOS 18+；iOS 26 的原生玻璃与较旧系统的原生外观由系统适配，不承诺旧系统具有 iOS 26 的拖动/玻璃效果。
 - 主页菜单只保留 **设置（控制器管理）/ 运行日志 / 外观设置 / 全局配置**。网络接口、在线设备移至设置中的路由器详情，页面没有删除。
 - 代理、规则、连接读取**当前路由器自动发现或手动配置的 Clash/Mihomo 控制器**；“更多”提供当前代理的运行模式/内核配置，以及现有应用设置入口，不添加新业务。
 - 控制器保留原 `ForEach.onDelete` 左滑删除和延迟刷新逻辑；本轮没有改写删除回调，没有给控制器添加替代删除动画。
@@ -16,11 +16,11 @@
 
 主页六卡始终是 **OpenWrt** 数据：WAN 下载/上传速率及累计量、`nf_conntrack_count` 活动连接、`system.info` 内存。上方仅运行时间（天时分秒）和系统负载；保留浅灰字体、小图标、现有两列布局。
 
-六卡由 116pt 小幅缩至 **104pt**。只有上传/下载速率卡有曲线：背景色之上、文字之下的全卡高度 SVG，10% 填充/28% 线条，22pt 圆角裁剪。连接和内存无曲线；大速率图维持 120pt。主页底部的运行模式和策略组/连接/规则入口模块已移除，改由悬浮导航访问；不再为运行模式请求 Clash。只有主动启用“连接信息背景”才额外读取真实代理连接主机，**不用于六卡数值**。
+六卡由 116pt 小幅缩至 **104pt**。只有上传/下载速率卡有曲线：背景色之上、文字之下的全卡高度 SVG，10% 填充/28% 线条，22pt 圆角裁剪。连接和内存无曲线；大速率图维持 120pt。主页底部的运行模式和策略组/连接/规则入口模块已移除，改由原生标签导航访问；不再为运行模式请求 Clash。只有主动启用“连接信息背景”才额外读取真实代理连接主机，**不用于六卡数值**。
 
 曲线每秒读取一次真实路由器采样，保留最多 60 点；在新旧采样窗口之间做横向平移、末端和纵轴比例的视觉插值，用不超出端点幅值的三次 Bézier 绘制平滑线段。不补造采样，不写入插值值，不预测未来流量；大数字仍取真实采样的原有数字过渡。
 
-两个迷你图和大图共用 **50ms（目标 20fps）** 帧调度器，高频状态只更新图表组件，不触发全页或网络刷新。动画最长 1 秒，完成后停止帧定时器；推入子页、切换底部导航、离开主页或卸载时移除订阅并清理采样/动画定时器。已经发出的请求可能在超时前完成，页面忽略已退出后的结果，不继续周期采样。目标帧率不等于实机保证帧率。
+两个迷你图和大图共用 **50ms（目标 20fps）** 帧调度器，高频状态只更新图表组件，不触发全页或网络刷新。动画最长 1 秒，完成后停止帧定时器；推入子页、切换底部导航、离开主页或卸载时移除订阅并清理采样/动画定时器。原生 TabView 可能留存隐藏导航栈，因此按 Observable selection 只挂载所选 tab 的业务内容；切走主页就卸载其采样和曲线，不依赖系统是否释放隐藏 Tab。已经发出的请求可能在超时前完成，页面忽略已退出后的结果，不继续周期采样。目标帧率不等于实机保证帧率。
 
 ## 截图逐项对应
 
@@ -35,7 +35,7 @@
 | 根据 Wi-Fi 展示控制器 | 明示不可用；当前官方 Device 文档没有读取当前 SSID 的接口，不做假匹配。 |
 | 自动断开旧连接 | 代理 PUT 成功后才 DELETE 该代理控制器的全部旧连接；切换失败不断开，断开失败提示“代理已切换”。默认关闭。 |
 | 触感反馈 | 通过官方全局 `HapticFeedback.selection()` 接入切换、折叠、偏好和配置保存等交互。 |
-| 默认打开界面 | 下次启动选择主页/代理/规则/连接对应悬浮页。 |
+| 默认打开界面 | 下次启动选择主页/代理/规则/连接对应原生标签页。 |
 | 自定义请求头 | JSON 校验后存 Keychain，仅附加控制器与 ubus 请求；禁止覆盖认证和传输头，不附加外站图片请求。 |
 | Surge 智能测速补全 | 明示不适用；本脚本不支持 Surge API，保留已有手动组测速。 |
 | 嵌套代理组延迟 | 开启后递归读取最终选中节点的真实延迟，循环引用保护；关闭显示组自身延迟。 |
@@ -81,7 +81,7 @@
 
 ## 官方 API 与验证
 
-实现核对本地 `docs/Scripting Documentation` 中的导航、safe_area、lifecycle_events、preferred_color_scheme、gestures、animation、shadow、offset、Slider、Image、UIImage、Storage、Keychain、fetch/Response、FileManager、HapticFeedback 与 Pasteboard 文档。`Dialog` / `Storage` / `Keychain` / `fetch` 等使用全局 API，未从 `scripting` 导入。
+实现核对本地 `docs/Scripting Documentation` 中的 TabView、useObservable、导航、lifecycle_events、preferred_color_scheme、gestures、animation、shadow、offset、Slider、Image、UIImage、Storage、Keychain、fetch/Response、FileManager、HapticFeedback 与 Pasteboard 文档。`Dialog` / `Storage` / `Keychain` / `fetch` 等使用全局 API，未从 `scripting` 导入。
 
 在仓库目录运行（无需安装依赖）：
 
@@ -95,4 +95,4 @@ git diff --check
 
 `TYPESCRIPT_PATH` 可指定其他现有 TypeScript 包路径。测试中的所有网络、Storage、Keychain、iCloud 和 UI hooks 都是内存模拟，测试数据不进入生产页面。类型检查桩只检查业务变量，**不能证明宿主 UI API/布局正确**；UI API 另以官方文档核对。
 
-**未做 iPhone 真机测试**，不宣称导航手势、悬浮栏最终布局、字体遮挡、20fps 实际流畅度/功耗、触感、SVG 动画、网络图标解码或真实 iCloud 上传已经手机验证；也未连接路由器、执行远端 PATCH/断开连接、推送或部署。本轮结果是本地源码、文档与模拟验证。
+**未做 iPhone 真机测试**，不宣称导航手势、原生标签栏最终布局及系统拖动选择、字体遮挡、20fps 实际流畅度/功耗、触感、SVG 动画、网络图标解码或真实 iCloud 上传已经手机验证；也未连接路由器、执行远端 PATCH/断开连接、推送或部署。本轮结果是本地源码、文档与模拟验证。

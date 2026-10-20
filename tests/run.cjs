@@ -9,13 +9,13 @@ const clone = v => v === undefined ? undefined : JSON.parse(JSON.stringify(v))
 const h = (type, props, ...children) => ({ type, props: { ...props, children: children.flat(Infinity).filter(x => x !== null && x !== undefined && x !== false) } })
 const scripting = new Proxy({
   useState(v) { const i = hookIndex++; if (!(i in hooks)) hooks[i] = typeof v === 'function' ? v() : v; return [hooks[i], v => { hooks[i] = typeof v === 'function' ? v(hooks[i]) : v }] },
+  useObservable(v) { const [o] = scripting.useState(() => ({ value: typeof v === "function" ? v() : v, setValue(value) { this.value = value } })); return o },
   useEffect(fn, deps) { const i = hookIndex++, old = hooks[i]; if (!old || deps.some((v, j) => v !== old[j])) { hooks[i] = deps; effects.push(() => { cleanups.get(i)?.(); cleanups.delete(i); const c = fn(); if (typeof c === "function") cleanups.set(i, c) }) } },
   Navigation: { useDismiss: () => () => {} },
   Animation: { easeOut: () => ({}) }, Transition: { opacity: () => ({ combined: () => ({}) }), scale: () => ({}) },
   modifiers: () => new Proxy({}, { get: () => () => scripting.modifiers() }),
 }, { get: (o, k) => k in o ? o[k] : k })
 const context = {
-  Device: { systemVersion: "26.0" }, UIGlass: { regular: () => ({ interactive() { return this }, tint() { return this } }) },
   h, React: { Fragment: 'Fragment' }, console, Date: class extends Date { static now() { return now } },
   Storage: { get: k => clone(store.get(k) ?? null), set: (k, v) => { if (failStorage) return false; store.set(k, clone(v)); return true }, remove: k => store.delete(k), getData: k => store.get(k), setData: (k, v) => store.set(k, v) },
   Keychain: { get: k => secrets.get(k) ?? null, set: (k, v) => { secrets.set(k, v); return true }, remove: k => secrets.delete(k) },
@@ -36,7 +36,7 @@ function load(name) {
   if (cache.has(name)) return cache.get(name)
   const file = path.join(root, name + (name === 'index' || name === 'settings-ui' ? '.tsx' : '.ts'))
   let source = fs.readFileSync(file, 'utf8')
-  if (name === 'index') source = source.replace(/\nrun\(\)\s*$/, '') + '\nexport { OverviewPage, SettingsPage, ConnectionsPage, ProxiesPage, RulesPage, Spark, RateChart, StatCard, GroupSection, FloatingBar, MorePage, Root };'
+  if (name === 'index') source = source.replace(/\nrun\(\)\s*$/, '') + '\nexport { OverviewPage, SettingsPage, ConnectionsPage, ProxiesPage, RulesPage, Spark, RateChart, StatCard, GroupSection, MorePage, Root };'
   const code = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020, jsx: ts.JsxEmit.React, jsxFactory: 'h' } }).outputText
   const module = { exports: {} }; cache.set(name, module.exports)
   vm.runInNewContext('(function(require,module,exports){' + code + '\n})', context, { filename: file })(n => n === 'scripting' ? scripting : load(n), module, module.exports)
@@ -184,7 +184,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     assert.ok(!text(tree).includes('OpenWrt 状态'))
     const cards = nodes(tree, app.StatCard); assert.equal(cards.filter(n => n.props.spark).length, 2); assert.equal(cards.filter(n => n.props.droplets).length, 2)
     assert.ok(cards.filter(n => ['活动连接', '内存使用'].includes(n.props.title)).every(n => !n.props.spark))
-    tree = render(app.Root, {}, true); assert.equal(tree.props.preferredColorScheme, 'dark'); assert.equal(tree.props.children[0].props.children[0].type, app.RulesPage)
+    tree = render(app.Root, {}, true); assert.equal(tree.props.preferredColorScheme, 'dark'); assert.equal(tree.props.selection.value, 'rules'); assert.equal(nodes(tree, app.RulesPage).length, 1)
     tree = render(ui.AppearancePage, {}, true); assert.ok(!text(tree).includes('应用图标')); assert.equal(nodes(tree, 'Toggle').length, 8)
   })
   await test('曲线几何：真实历史不变、横向连续滚动、末端视觉插值和无过冲路径', () => {
@@ -214,20 +214,43 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     enabled = false; render(renderPlot, {}); await flush(); assert.equal(intervals.size, base)
     unmount(); assert.equal(intervals.size, base)
   })
-  await test('悬浮五入口、默认tab、根X、代理来源隔离；切换不保留首页组件', () => {
+  await test('原生TabView五入口、selection默认值/切换、每tab独立栈与根X', () => {
     pref.savePreferences({ defaultPage: 'overview', connectionBackground: false })
-    let tree = render(app.Root, {}, true), container = tree.props.children[0], content = container.props.children[0]
-    assert.equal(container.props.toolbar.topBarLeading.props.systemImage, 'xmark'); assert.equal(content.type, app.OverviewPage)
-    let bar = container.props.safeAreaInset.bottom.content.props.children[0]
-    const buttons = nodes(app.FloatingBar(bar.props), 'Button')
-    assert.deepEqual(buttons.map(b => b.props.accessibilityLabel), ['主页', '代理', '规则', '连接', '更多'])
-    buttons[1].props.action(); tree = render(app.Root, {}); assert.equal(tree.props.children[0].props.children[0].type, app.ProxiesPage)
-    bar = tree.props.children[0].props.safeAreaInset.bottom.content.props.children[0]
-    nodes(app.FloatingBar(bar.props), 'Button')[4].props.action(); tree = render(app.Root, {}); assert.equal(tree.props.children[0].props.children[0].type, app.MorePage)
-    assert.equal(nodes(tree, app.OverviewPage).length, 0)
+    let tree = render(app.Root, {}, true)
+    assert.equal(tree.type, 'TabView'); assert.equal(tree.props.selection.value, 'home')
+    const tabs = nodes(tree, 'Tab')
+    assert.deepEqual(tabs.map(t => t.props.title), ['主页', '代理', '规则', '连接', '更多'])
+    assert.deepEqual(tabs.map(t => t.props.value), ['home', 'proxies', 'rules', 'connections', 'more'])
+    assert.equal(nodes(tree, 'NavigationStack').length, 5)
+    for (const tab of tabs) {
+      assert.equal(tab.props.children[0].type, 'NavigationStack')
+      assert.equal(nodes(tab, 'NavigationStack').length, 1)
+      assert.equal(tab.props.children[0].props.children[0].props.toolbar.topBarLeading.props.systemImage, 'xmark')
+    }
+    assert.equal(nodes(tree, app.OverviewPage).length, 1); assert.equal(nodes(tree, app.ProxiesPage).length, 0)
+    // 系统点击/拖动通过同一个 Observable selection 回传；脚本不实现手势。
+    tree.props.selection.setValue('proxies'); tree = render(app.Root, {})
+    assert.equal(nodes(tree, app.ProxiesPage).length, 1); assert.equal(nodes(tree, app.OverviewPage).length, 0)
+    tree.props.selection.setValue('more'); tree = render(app.Root, {})
+    assert.equal(nodes(tree, app.MorePage).length, 1); assert.equal(nodes(tree, app.ProxiesPage).length, 0)
     const more = app.MorePage({ active: c, onChanged() {} }); assert.ok(nodes(more, 'NavigationLink').some(n => n.props.destination.type === ui.KernelConfigPage))
-    const source = fs.readFileSync(path.join(root, 'index.tsx'), 'utf8'); const overview = source.slice(source.indexOf('function OverviewPage'), source.indexOf('// ---------- 策略组'))
+    const source = fs.readFileSync(path.join(root, 'index.tsx'), 'utf8')
+    for (const removed of ['FloatingBar', 'safeAreaInset', 'UIGlass', 'GlassEffectContainer']) assert.ok(!source.includes(removed))
+    const rootSource = source.slice(source.indexOf('function Root()'))
+    assert.ok(!rootSource.includes('onDragGesture')); assert.ok(!rootSource.includes('onTapGesture')); assert.ok(!rootSource.includes('<NavigationStack>\n    <TabView'))
+    const overview = source.slice(source.indexOf('function OverviewPage'), source.indexOf('// ---------- 策略组'))
     assert.ok(!overview.includes('loadClashOverview')); assert.ok(!overview.includes('运行模式')); assert.ok(!overview.includes('<NavigationLink'))
+  })
+  await test('原生Tab保留栈时也只挂载可见业务页；反复选择不保留隐藏采样组件', () => {
+    pref.savePreferences({ defaultPage: 'overview' })
+    let tree = render(app.Root, {}, true)
+    const ids = ['home', 'proxies', 'rules', 'connections', 'more'], types = [app.OverviewPage, app.ProxiesPage, app.RulesPage, app.ConnectionsPage, app.MorePage]
+    for (const id of [...ids, 'home', 'connections', 'home']) {
+      tree.props.selection.setValue(id); tree = render(app.Root, {})
+      assert.equal(nodes(tree, 'NavigationStack').length, 5)
+      for (let i = 0; i < ids.length; i++) assert.equal(nodes(tree, types[i]).length, ids[i] === id ? 1 : 0)
+    }
+    assert.equal(api.VERSION, '1.4.2'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('首页实际模拟请求仅ubus；不可见停止新采样且清理计时器', async () => {
     pref.savePreferences({ connectionBackground: false })
