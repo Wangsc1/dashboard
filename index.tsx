@@ -192,7 +192,7 @@ function OverviewPage({ active, version, onSwitch }: { active: Controller | null
           <Spacer />
           <HStack spacing={4}><Circle fill={err ? "systemRed" : "systemGreen"} frame={{ width: 5, height: 5 }} /><Text font={12} foregroundStyle={err ? "systemRed" : "systemGreen"}>{err ? "连接失败" : ov ? "运行正常" : "连接中"}</Text></HStack>
         </HStack>
-        <InfoItem icon="clock" color="#3B82F6" title="运行时间" value={w ? fmtUptime(w.uptime) : "-"} />
+        <InfoItem icon="clock" color="#3B82F6" title="运行时间" value={w ? fmtUptime(w.uptime, true) : "-"} />
         <InfoItem icon="waveform.path.ecg" color="#F59E0B" title="系统负载" value={w ? w.load.map(v => v.toFixed(2)).join(" ") : "-"} />
       </Card>
 

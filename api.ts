@@ -1,5 +1,5 @@
 // dashboard 数据层：Clash 外部控制 API 与 OpenWrt（LuCI ubus JSON-RPC）
-export const VERSION = "1.3.9"
+export const VERSION = "1.3.10"
 
 export type Kind = "clash" | "openwrt"
 export type Plugin = "openclash" | "nikki" | "mihomo"
@@ -372,8 +372,9 @@ export function fmtBytes(n: number): string {
   while (v >= 1024 && i < u.length - 1) { v /= 1024; i++ }
   return `${v >= 100 || i === 0 ? v.toFixed(0) : v.toFixed(1)} ${u[i]}`
 }
-export function fmtUptime(sec: number): string {
+export function fmtUptime(sec: number, detailed = false): string {
   const d = Math.floor(sec / 86400), h = Math.floor(sec % 86400 / 3600), m = Math.floor(sec % 3600 / 60)
+  if (detailed) return `${d}天 ${h}时 ${m}分 ${Math.floor(sec % 60)}秒`
   return d ? `${d}天${h}时` : h ? `${h}时${m}分` : `${m}分`
 }
 // 拆成 [数值, 单位]，用于大号数字 + 小号单位的显示
