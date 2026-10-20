@@ -4,7 +4,7 @@ import {
 } from "scripting"
 import {
   VERSION, Controller, Group, Conn, Rule, Overview, Plugin, PLUGINS, listControllers, saveController, removeController, getActive, setActive, getSecret, getClashSecret,
-  loadOverview, loadClashOverview, loadWrtInterfaces, loadWrtLeases, WrtIface, WrtLease, loadGroups, selectProxy, testGroup, loadConnections, closeConnection,
+  loadOverview, loadClashOverview, subscribeTraffic, loadWrtInterfaces, loadWrtLeases, WrtIface, WrtLease, loadGroups, selectProxy, testGroup, loadConnections, closeConnection,
   closeAllConnections, loadRules, loadConfig, patchConfig, setMode, CLASH_MODES, fmtBytes, fmtSpeed, fmtParts, fmtUptime, fmtDuration, delayColor, LOG_LEVELS,
 } from "./api"
 
@@ -30,20 +30,34 @@ function Card({ children }: { children?: any }) {
   return <VStack alignment="leading" spacing={10} modifiers={cardMods()}>{children}</VStack>
 }
 function Badge({ icon, color }: { icon: string; color: string }) {
-  return <ZStack modifiers={modifiers().frame({ width: 34, height: 34 }).background(<RoundedRectangle cornerRadius={10} fill={color + "33"} />)}>
-    <Image systemName={icon} foregroundStyle={color as any} font={15} />
+  return <ZStack modifiers={modifiers().frame({ width: 26, height: 26 }).background(<RoundedRectangle cornerRadius={8} fill={color + "33"} />)}>
+    <Image systemName={icon} resizable scaleToFit foregroundStyle={color as any} frame={{ width: 13, height: 13 }} />
   </ZStack>
 }
 function Big({ parts }: { parts: [string, string] | null }) {
   return <HStack alignment="lastTextBaseline" spacing={4}>
-    <Text font={30} fontWeight="bold">{parts ? parts[0] : "-"}</Text>
-    <Text font={14} foregroundStyle="secondaryLabel">{parts ? parts[1] : ""}</Text>
+    <Text font={26} fontWeight="bold">{parts ? parts[0] : "-"}</Text>
+    <Text font={13} foregroundStyle="secondaryLabel">{parts ? parts[1] : ""}</Text>
   </HStack>
 }
-function StatCard({ icon, color, title, parts }: { icon: string; color: string; title: string; parts: [string, string] | null }) {
+const HIST = 60
+function Spark({ data, color }: { data: number[]; color: string }) {
+  const W = 100, H = 40
+  if (data.length < 2) return <Spacer />
+  const max = Math.max(1024, ...data)
+  const pts = data.map((v, i) => `${((i + (HIST - data.length)) / (HIST - 1) * W).toFixed(1)},${(H - 2 - v / max * (H - 4)).toFixed(1)}`)
+  const area = `0,${H} ${pts.join(" ")} ${W},${H}`
+  const code = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"><polygon points="${area}" fill="${color}" fill-opacity="0.18"/><polyline points="${pts.join(" ")}" fill="none" stroke="${color}" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/></svg>`
+  return <SVG code={code} resizable frame={{ width: 90, height: 36 }} />
+}
+function StatCard({ icon, color, title, parts, spark }: { icon: string; color: string; title: string; parts: [string, string] | null; spark?: number[] }) {
   return <Card>
-    <HStack spacing={8}><Badge icon={icon} color={color} /><Text foregroundStyle="secondaryLabel">{title}</Text></HStack>
-    <Big parts={parts} />
+    <HStack spacing={8}><Badge icon={icon} color={color} /><Text font={14} foregroundStyle="secondaryLabel">{title}</Text></HStack>
+    <HStack alignment="bottom">
+      <Big parts={parts} />
+      <Spacer />
+      {spark ? <Spark data={spark} color={color} /> : null}
+    </HStack>
   </Card>
 }
 function InfoItem({ icon, color, title, value }: { icon: string; color: string; title: string; value: string }) {
@@ -52,7 +66,6 @@ function InfoItem({ icon, color, title, value }: { icon: string; color: string; 
     <VStack alignment="leading" spacing={1}><Text font={13} foregroundStyle="secondaryLabel">{title}</Text><Text fontWeight="semibold">{value}</Text></VStack>
   </HStack>
 }
-const HIST = 60
 function RateChart({ down, up }: { down: number[]; up: number[] }) {
   const W = 300, H = 120
   const max = Math.max(1024, ...down, ...up) * 1.0
@@ -86,6 +99,8 @@ function OverviewPage({ active, version, onSwitch }: { active: Controller | null
   const [busy, setBusy] = useState(false)
   const [dn, setDn] = useState<number[]>([])
   const [upH, setUpH] = useState<number[]>([])
+  const [live, setLive] = useState<{ up: number; down: number } | null>(null)
+  const [st] = useState({ live: false })
   const all = listControllers()
   const dismiss = Navigation.useDismiss()
   const [page, setPage] = useState<"" | "interfaces" | "leases" | "settings">("")
@@ -95,11 +110,20 @@ function OverviewPage({ active, version, onSwitch }: { active: Controller | null
     if (a.status === "fulfilled") { setOv(a.value); setErr("") } else setErr(msg(a.reason))
     if (b.status === "fulfilled") { setCv(b.value); setCerr("") } else setCerr(msg(b.reason))
     const src = b.status === "fulfilled" ? b.value : a.status === "fulfilled" ? a.value : null
-    if (src) {
+    if (src && !st.live) {   // 长连接没有数据时，退回轮询读数画曲线
       setDn(h => [...h, src.traffic.down].slice(-HIST)); setUpH(h => [...h, src.traffic.up].slice(-HIST))
     }
   }
-  useEffect(() => { setDn([]); setUpH([]); setOv(null); setCv(null) }, [active?.id])
+  useEffect(() => { setDn([]); setUpH([]); setOv(null); setCv(null); setLive(null); st.live = false }, [active?.id])
+  useEffect(() => {
+    if (!active) return
+    const stop = subscribeTraffic(active, t => {
+      st.live = true
+      setLive(t)
+      setDn(h => [...h, t.down].slice(-HIST)); setUpH(h => [...h, t.up].slice(-HIST))
+    })
+    return () => { stop(); st.live = false }
+  }, [active?.id, version])
   useInterval(refresh, 3000, [active?.id, version])
   async function changeMode(m: string) {
     if (!active || busy) return
@@ -107,6 +131,7 @@ function OverviewPage({ active, version, onSwitch }: { active: Controller | null
     try { await setMode(active, m); await refresh() } catch (e) { setCerr(msg(e)) } finally { setBusy(false) }
   }
   const src = cv ?? ov            // 代理数据优先，没有则用 WAN 数据
+  const rate = live ?? src?.traffic ?? null
   const w = ov?.wrt
   const memUsed = w ? Math.max(0, w.memTotal - w.memFree) : 0
   const memRatio = w && w.memTotal > 0 ? Math.min(1, memUsed / w.memTotal) : 0
@@ -140,7 +165,7 @@ function OverviewPage({ active, version, onSwitch }: { active: Controller | null
       <Card>
         <HStack>
           <Badge icon="laptopcomputer" color="#6366F1" />
-          <Text fontWeight="semibold" font={18}>OpenWrt 状态</Text>
+          <Text fontWeight="semibold" font={16}>OpenWrt 状态</Text>
           <Spacer />
           <Text font={13} foregroundStyle={err ? "systemRed" : "systemGreen"}>{err ? "● 连接失败" : ov ? "● 运行正常" : "● 连接中"}</Text>
         </HStack>
@@ -153,8 +178,8 @@ function OverviewPage({ active, version, onSwitch }: { active: Controller | null
       </Card>
 
       <HStack spacing={12}>
-        <StatCard icon="arrow.down.circle.fill" color="#3B82F6" title="下载速率" parts={src ? fmtParts(src.traffic.down, true) : null} />
-        <StatCard icon="arrow.up.circle.fill" color="#34C759" title="上传速率" parts={src ? fmtParts(src.traffic.up, true) : null} />
+        <StatCard icon="arrow.down.circle.fill" color="#3B82F6" title="下载速率" parts={rate ? fmtParts(rate.down, true) : null} spark={dn} />
+        <StatCard icon="arrow.up.circle.fill" color="#34C759" title="上传速率" parts={rate ? fmtParts(rate.up, true) : null} spark={upH} />
       </HStack>
       <HStack spacing={12}>
         <StatCard icon="icloud.and.arrow.down.fill" color="#3B82F6" title="下载总量" parts={src ? fmtParts(src.downTotal) : null} />
