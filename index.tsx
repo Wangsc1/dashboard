@@ -1,11 +1,11 @@
 import {
   Button, ForEach, Form, HStack, Label, Navigation, NavigationLink, NavigationStack, Picker, Script, Section, SecureField, Spacer,
-  Text, TextField, Toggle, VStack, Widget, useEffect, useState,
+  Text, TextField, Toggle, VStack, useEffect, useState,
 } from "scripting"
 import {
-  VERSION, Controller, Group, Conn, Rule, Overview, Kind, listControllers, saveController, removeController, getActive, setActive, getSecret,
-  loadOverview, loadWrtInterfaces, loadWrtLeases, WrtIface, WrtLease, loadGroups, selectProxy, testGroup, loadConnections, closeConnection, closeAllConnections, loadRules, loadConfig, patchConfig,
-  setMode, modesOf, fmtBytes, fmtSpeed, fmtUptime, fmtDuration, delayColor, getRefreshMinutes, saveRefreshMinutes, REFRESH_OPTIONS, LOG_LEVELS, saveCache,
+  VERSION, Controller, Group, Conn, Rule, Overview, Plugin, PLUGINS, listControllers, saveController, removeController, getActive, setActive, getSecret, getClashSecret,
+  loadOverview, loadClashOverview, loadWrtInterfaces, loadWrtLeases, WrtIface, WrtLease, loadGroups, selectProxy, testGroup, loadConnections, closeConnection,
+  closeAllConnections, loadRules, loadConfig, patchConfig, setMode, CLASH_MODES, fmtBytes, fmtSpeed, fmtUptime, fmtDuration, delayColor, LOG_LEVELS,
 } from "./api"
 
 const msg = (e: any) => String(e?.message ?? e ?? "未知错误")
@@ -20,68 +20,77 @@ function useInterval(fn: () => void, ms: number, deps: any[]) {
 }
 
 function NoController() {
-  return <Section><Text foregroundStyle="secondaryLabel">尚未添加控制器，请到“设置”页添加 OpenWrt 或 Clash 控制器。</Text></Section>
+  return <Section><Text foregroundStyle="secondaryLabel">尚未添加控制器，请到“设置”页添加 OpenWrt 路由器。</Text></Section>
 }
 
 // ---------- 概览 ----------
 function OverviewPage({ active, version, onSwitch }: { active: Controller | null; version: number; onSwitch: () => void }) {
   const [ov, setOv] = useState<Overview | null>(null)
+  const [cv, setCv] = useState<Overview | null>(null)
   const [err, setErr] = useState("")
+  const [cerr, setCerr] = useState("")
   const [busy, setBusy] = useState(false)
   const all = listControllers()
   const dismiss = Navigation.useDismiss()
   async function refresh() {
     if (!active) return
-    try { const o = await loadOverview(active); setOv(o); setErr(""); saveCache(active.id, o) } catch (e) { setErr(msg(e)) }
+    const [a, b] = await Promise.allSettled([loadOverview(active), loadClashOverview(active)])
+    if (a.status === "fulfilled") { setOv(a.value); setErr("") } else setErr(msg(a.reason))
+    if (b.status === "fulfilled") { setCv(b.value); setCerr("") } else setCerr(msg(b.reason))
   }
   useInterval(refresh, 3000, [active?.id, version])
   async function changeMode(m: string) {
     if (!active || busy) return
     setBusy(true)
-    try { await setMode(active, m); await refresh() } catch (e) { setErr(msg(e)) } finally { setBusy(false) }
+    try { await setMode(active, m); await refresh() } catch (e) { setCerr(msg(e)) } finally { setBusy(false) }
   }
+  const row = (label: string, value: string) => <HStack><Text>{label}</Text><Spacer /><Text>{value}</Text></HStack>
   return <Form navigationTitle="dashboard" navigationBarTitleDisplayMode="inline"
     toolbar={{ topBarLeading: <Button title="" systemImage="xmark" action={dismiss} /> }}>
-      {!active ? <NoController /> : <>
-        {all.length > 1 ? <Section header={<Text>控制器</Text>}>
-          <Picker title="当前" pickerStyle="menu" value={active.id} onChanged={(v: string) => { setActive(v); setOv(null); onSwitch() }}>
-            {all.map(c => <Text key={c.id} tag={c.id}>{`${c.name} (${c.kind === "clash" ? "Clash" : "OpenWrt"})`}</Text>)}
-          </Picker>
-        </Section> : null}
-        {err ? <Section><Text foregroundStyle="systemRed">{err}</Text></Section> : null}
-        <Section header={<Text>{`${active.name}${ov?.version ? " · " + ov.version : ""}`}</Text>}>
-          <HStack><Text>↑ 上传</Text><Spacer /><Text>{ov ? fmtSpeed(ov.traffic.up) : "-"}</Text></HStack>
-          <HStack><Text>↓ 下载</Text><Spacer /><Text>{ov ? fmtSpeed(ov.traffic.down) : "-"}</Text></HStack>
-          <HStack><Text>{active.kind === "openwrt" ? "WAN 累计上传" : "累计上传"}</Text><Spacer /><Text>{ov ? fmtBytes(ov.upTotal) : "-"}</Text></HStack>
-          <HStack><Text>{active.kind === "openwrt" ? "WAN 累计下载" : "累计下载"}</Text><Spacer /><Text>{ov ? fmtBytes(ov.downTotal) : "-"}</Text></HStack>
-          <HStack><Text>{active.kind === "openwrt" ? "连接数" : "活动连接"}</Text><Spacer /><Text>{ov ? String(ov.connCount) : "-"}</Text></HStack>
-        </Section>
-        {active.kind === "clash" ? <Section header={<Text>运行模式</Text>}>
-          <Picker title="模式" pickerStyle="segmented" value={ov?.mode ?? ""} onChanged={changeMode} disabled={busy || !ov}>
-            {modesOf(active.kind).map(([v, l]) => <Text key={v} tag={v}>{l}</Text>)}
-          </Picker>
-        </Section> : null}
-        {active.kind === "openwrt" && ov?.wrt ? <Section header={<Text>系统</Text>}>
-          <HStack><Text>型号</Text><Spacer /><Text>{ov.wrt.model || "-"}</Text></HStack>
-          <HStack><Text>运行时间</Text><Spacer /><Text>{fmtUptime(ov.wrt.uptime)}</Text></HStack>
-          <HStack><Text>负载</Text><Spacer /><Text>{ov.wrt.load.map(v => v.toFixed(2)).join(" / ") || "-"}</Text></HStack>
-          <HStack><Text>内存可用</Text><Spacer /><Text>{`${fmtBytes(ov.wrt.memFree)} / ${fmtBytes(ov.wrt.memTotal)}`}</Text></HStack>
-          <HStack><Text>WAN 接口</Text><Spacer /><Text>{ov.wrt.wan || "-"}</Text></HStack>
-        </Section> : null}
-      </>}
-      <Section header={<Text>功能</Text>}>
-        {active?.kind === "openwrt" ? <>
-          <NavigationLink destination={<WrtInterfacesPage active={active} version={version} />}><Label title="网络接口" systemImage="network" /></NavigationLink>
-          <NavigationLink destination={<WrtLeasesPage active={active} version={version} />}><Label title="在线设备" systemImage="laptopcomputer.and.iphone" /></NavigationLink>
-        </> : null}
-        {active?.kind === "clash" ? <>
-          <NavigationLink destination={<ProxiesPage active={active} version={version} />}><Label title="策略组" systemImage="point.3.connected.trianglepath.dotted" /></NavigationLink>
-          <NavigationLink destination={<ConnectionsPage active={active} version={version} />}><Label title="连接" systemImage="arrow.up.arrow.down" /></NavigationLink>
-          <NavigationLink destination={<RulesPage active={active} version={version} />}><Label title="规则" systemImage="list.bullet.rectangle" /></NavigationLink>
-        </> : null}
-        <NavigationLink destination={<SettingsPage active={active} onChanged={onSwitch} />}><Label title="设置" systemImage="gearshape" /></NavigationLink>
+    {!active ? <NoController /> : <>
+      {all.length > 1 ? <Section header={<Text>路由器</Text>}>
+        <Picker title="当前" pickerStyle="menu" value={active.id} onChanged={(v: string) => { setActive(v); setOv(null); setCv(null); onSwitch() }}>
+          {all.map(c => <Text key={c.id} tag={c.id}>{c.name}</Text>)}
+        </Picker>
+      </Section> : null}
+      {err ? <Section><Text foregroundStyle="systemRed">{err}</Text></Section> : null}
+      <Section header={<Text>{`${active.name}${ov?.version ? " · " + ov.version : ""}`}</Text>}>
+        {row("↑ WAN 上传", ov ? fmtSpeed(ov.traffic.up) : "-")}
+        {row("↓ WAN 下载", ov ? fmtSpeed(ov.traffic.down) : "-")}
+        {row("WAN 累计上传", ov ? fmtBytes(ov.upTotal) : "-")}
+        {row("WAN 累计下载", ov ? fmtBytes(ov.downTotal) : "-")}
+        {row("连接数", ov ? String(ov.connCount) : "-")}
       </Section>
-    </Form>
+      {ov?.wrt ? <Section header={<Text>系统</Text>}>
+        {row("型号", ov.wrt.model || "-")}
+        {row("运行时间", fmtUptime(ov.wrt.uptime))}
+        {row("负载", ov.wrt.load.map(v => v.toFixed(2)).join(" / ") || "-")}
+        {row("内存可用", `${fmtBytes(ov.wrt.memFree)} / ${fmtBytes(ov.wrt.memTotal)}`)}
+        {row("WAN 接口", ov.wrt.wan || "-")}
+      </Section> : null}
+      <Section header={<Text>{`代理（${PLUGINS.find(p => p[0] === (active.plugin ?? "openclash"))?.[1] ?? "Clash"}${cv?.version ? " · " + cv.version : ""}）`}</Text>}>
+        {cerr ? <Text font={13} foregroundStyle="systemRed">{cerr}</Text> : null}
+        {row("↑ 上传", cv ? fmtSpeed(cv.traffic.up) : "-")}
+        {row("↓ 下载", cv ? fmtSpeed(cv.traffic.down) : "-")}
+        {row("累计上传", cv ? fmtBytes(cv.upTotal) : "-")}
+        {row("累计下载", cv ? fmtBytes(cv.downTotal) : "-")}
+        {row("活动连接", cv ? String(cv.connCount) : "-")}
+      </Section>
+      {cv ? <Section header={<Text>运行模式</Text>}>
+        <Picker title="模式" pickerStyle="segmented" value={cv.mode} onChanged={changeMode} disabled={busy}>
+          {CLASH_MODES.map(([v, l]) => <Text key={v} tag={v}>{l}</Text>)}
+        </Picker>
+      </Section> : null}
+    </>}
+    <Section header={<Text>功能</Text>}>
+      <NavigationLink destination={<WrtInterfacesPage active={active} version={version} />}><Label title="网络接口" systemImage="network" /></NavigationLink>
+      <NavigationLink destination={<WrtLeasesPage active={active} version={version} />}><Label title="在线设备" systemImage="laptopcomputer.and.iphone" /></NavigationLink>
+      <NavigationLink destination={<ProxiesPage active={active} version={version} />}><Label title="策略组" systemImage="point.3.connected.trianglepath.dotted" /></NavigationLink>
+      <NavigationLink destination={<ConnectionsPage active={active} version={version} />}><Label title="连接" systemImage="arrow.up.arrow.down" /></NavigationLink>
+      <NavigationLink destination={<RulesPage active={active} version={version} />}><Label title="规则" systemImage="list.bullet.rectangle" /></NavigationLink>
+      <NavigationLink destination={<SettingsPage active={active} onChanged={onSwitch} />}><Label title="设置" systemImage="gearshape" /></NavigationLink>
+    </Section>
+  </Form>
 }
 
 // ---------- 策略组 ----------
@@ -234,37 +243,77 @@ function WrtLeasesPage({ active, version }: { active: Controller; version: numbe
 }
 
 // ---------- 设置 ----------
+function HelpPage() {
+  return <Form navigationTitle="使用说明" navigationBarTitleDisplayMode="inline">
+    <Section header={<Text>OpenWrt</Text>}>
+      <Text>地址填路由器 LuCI 后台的 IP，端口为 LuCI 的端口（默认 80；开启 HTTPS 时通常 443）。用户名、密码是登录 LuCI 的账号。</Text>
+    </Section>
+    <Section header={<Text>自动获取配置</Text>}>
+      <Text>开启后，登录路由器读取所选插件（OpenClash / Nikki / MihomoTProxy）的配置，自动得到 Clash 控制器端口和密钥，无需手动填写。需要账号有读取配置的权限。</Text>
+      <Text>关闭后可手动填写控制器端口和密钥。</Text>
+    </Section>
+    <Section header={<Text>注意</Text>}>
+      <Text>Clash 控制器通过“路由器地址 + 控制器端口”访问，请确认该端口监听在局域网地址，而不是只监听 127.0.0.1。</Text>
+      <Text>密码和密钥保存在 Keychain。</Text>
+    </Section>
+  </Form>
+}
+
 function EditController({ initial, onDone }: { initial?: Controller; onDone: () => void }) {
   const dismiss = Navigation.useDismiss()
   const [name, setName] = useState(initial?.name ?? "")
-  const [kind, setKind] = useState<Kind>(initial?.kind ?? "openwrt")
+  const [host, setHost] = useState(initial?.host ?? "")
+  const [port, setPort] = useState(String(initial?.port ?? 80))
+  const [https, setHttps] = useState(initial?.https ?? false)
   const [username, setUsername] = useState(initial?.username ?? "root")
-  const [url, setUrl] = useState(initial?.url ?? "")
-  const [secret, setSecret] = useState(initial ? getSecret(initial.id) : "")
+  const [password, setPassword] = useState(initial ? getSecret(initial.id) : "")
+  const [plugin, setPlugin] = useState<Plugin>(initial?.plugin ?? "openclash")
+  const [auto, setAuto] = useState(initial?.auto ?? true)
+  const [cport, setCport] = useState(String(initial?.cport ?? 9090))
+  const [csecret, setCsecret] = useState(initial ? getClashSecret(initial.id) : "")
   const [err, setErr] = useState("")
-  async function save() {
-    try {
-      const c = saveController({ id: initial?.id, name, kind, url, username }, secret)
-      // 保存即测试连接，失败只提示，不阻止保存
-      try { await loadOverview(c) } catch (e) { await Dialog.alert({ title: "已保存，但连接测试失败", message: msg(e) }) }
-      onDone(); dismiss()
-    } catch (e) { setErr(msg(e)) }
+  const [saving, setSaving] = useState(false)
+  function toggleHttps(v: boolean) {
+    setHttps(v)
+    if (v && port === "80") setPort("443")
+    if (!v && port === "443") setPort("80")
   }
-  return <Form navigationTitle={initial ? "编辑控制器" : "添加控制器"} navigationBarTitleDisplayMode="inline">
-    <Section header={<Text>类型</Text>}>
-      <Picker title="类型" pickerStyle="segmented" value={kind} onChanged={(v: string) => setKind(v as Kind)}>
-        <Text tag="openwrt">OpenWrt</Text><Text tag="clash">Clash</Text>
-      </Picker>
+  async function save() {
+    if (saving) return
+    setSaving(true); setErr("")
+    try {
+      const c = saveController({ id: initial?.id, name, host, port: Number(port), https, username, plugin, auto, cport: Number(cport) || 9090 }, password, csecret)
+      try { await loadOverview(c) } catch (e) { await Dialog.alert({ title: "已保存，但连接测试失败", message: msg(e) }); onDone(); dismiss(); return }
+      try { await loadClashOverview(c) } catch (e) { await Dialog.alert({ title: "已保存，路由器已连接，但代理控制器获取失败", message: msg(e) }) }
+      onDone(); dismiss()
+    } catch (e) { setErr(msg(e)) } finally { setSaving(false) }
+  }
+  return <Form navigationTitle={initial ? "编辑 OpenWrt" : "添加 OpenWrt"} navigationBarTitleDisplayMode="inline"
+    toolbar={{ confirmationAction: <Button title={saving ? "保存中…" : "保存"} disabled={saving} action={save} /> }}>
+    <Section header={<Text>基本信息</Text>}>
+      <TextField title="名称" value={name} onChanged={setName} prompt="例如：家庭路由" />
+      <TextField title="地址" value={host} onChanged={setHost} prompt="IP 地址" />
+      <TextField title="端口" value={port} onChanged={setPort} prompt="80" />
+      <Toggle title="启用 SSL (HTTPS)" value={https} onChanged={toggleHttps} />
     </Section>
-    <Section header={<Text>连接信息</Text>}
-      footer={<Text>{kind === "clash" ? "填写 Clash external-controller 地址，如 http://192.168.1.1:9090，密钥填 Secret（OpenClash 在 服务→OpenClash→外部控制 中查看）。" : "填写 LuCI 后台地址，如 http://192.168.1.1（含端口则带上），用户名和密码是登录 LuCI 的账号。"}</Text>}>
-      <TextField title="名称" value={name} onChanged={setName} prompt="可留空" />
-      <TextField title="地址" value={url} onChanged={setUrl} prompt="http://主机:端口" />
-      {kind === "openwrt" ? <TextField title="用户名" value={username} onChanged={setUsername} prompt="root" /> : null}
-      <SecureField title={kind === "openwrt" ? "密码" : "密钥"} value={secret} onChanged={setSecret} prompt={kind === "openwrt" ? "LuCI 登录密码" : "Secret（无则留空）"} />
+    <Section header={<Text>认证</Text>}>
+      <TextField title="用户名" value={username} onChanged={setUsername} prompt="root" />
+      <SecureField title="密码" value={password} onChanged={setPassword} prompt="LuCI 登录密码" />
+    </Section>
+    <Section header={<Text>插件配置</Text>}>
+      <Picker title="插件" pickerStyle="segmented" value={plugin} onChanged={(v: string) => setPlugin(v as Plugin)}>
+        {PLUGINS.map(([v, l]) => <Text key={v} tag={v}>{l}</Text>)}
+      </Picker>
+      <Toggle title="自动获取配置" value={auto} onChanged={setAuto} />
+      {!auto ? <>
+        <TextField title="控制器端口" value={cport} onChanged={setCport} prompt="9090" />
+        <SecureField title="控制器密钥" value={csecret} onChanged={setCsecret} prompt="Secret（无则留空）" />
+      </> : null}
     </Section>
     {err ? <Section><Text foregroundStyle="systemRed">{err}</Text></Section> : null}
-    <Section><Button title="保存并测试" action={save} /></Section>
+    <Section>
+      <NavigationLink destination={<HelpPage />}><Label title="使用说明" systemImage="questionmark.circle.fill" /></NavigationLink>
+    </Section>
   </Form>
 }
 
@@ -294,7 +343,6 @@ function ClashConfigSection({ c }: { c: Controller }) {
 
 function SettingsPage({ active, onChanged }: { active: Controller | null; onChanged: () => void }) {
   const [list, setList] = useState(listControllers())
-  const [refreshMin, setRefreshMin] = useState(String(getRefreshMinutes()))
   const reload = () => { setList(listControllers()); onChanged() }
   // 系统滑动删除：回调触发时该行已被移除，只同步数据源；其余刷新延后，避免与删除动画冲突
   function onDelete(indices: number[]) {
@@ -304,22 +352,16 @@ function SettingsPage({ active, onChanged }: { active: Controller | null; onChan
     setTimeout(onChanged, 500)
   }
   return <Form navigationTitle="设置" navigationBarTitleDisplayMode="inline">
-    <Section header={<Text>控制器</Text>}>
+    <Section header={<Text>OpenWrt</Text>}>
       <ForEach count={list.length}
         itemBuilder={i => <NavigationLink key={list[i].id} destination={<EditController initial={list[i]} onDone={reload} />}>
-          <VStack alignment="leading"><Text>{list[i].name}</Text><Text font={12} foregroundStyle="secondaryLabel">{`${list[i].kind === "clash" ? "Clash" : "OpenWrt"} · ${list[i].url}`}</Text></VStack>
+          <VStack alignment="leading"><Text>{list[i].name}</Text><Text font={12} foregroundStyle="secondaryLabel">{list[i].url}</Text></VStack>
         </NavigationLink>}
         onDelete={onDelete} />
-      <NavigationLink destination={<EditController onDone={reload} />}><Label title="添加控制器" systemImage="plus" /></NavigationLink>
+      <NavigationLink destination={<EditController onDone={reload} />}><Label title="添加 OpenWrt" systemImage="plus" /></NavigationLink>
     </Section>
-    {active?.kind === "clash" ? <ClashConfigSection c={active} /> : null}
-    <Section header={<Text>小组件</Text>} footer={<Text>小组件显示当前所选控制器的实时速度与连接数；实际刷新间隔由 iOS 决定。</Text>}>
-      <Picker title="刷新间隔" value={refreshMin} onChanged={async (v: string) => { setRefreshMin(v); saveRefreshMinutes(Number(v)); await Widget.reloadAll() }}>
-        {REFRESH_OPTIONS.map(m => <Text key={m} tag={String(m)}>{m}分钟</Text>)}
-      </Picker>
-      <Button title="预览小组件" action={() => Widget.preview({ family: "systemSmall" })} />
-    </Section>
-    <Section footer={<Text>密钥保存在 Keychain，不会上传或写入脚本文件。</Text>}>
+    {active ? <ClashConfigSection c={active} /> : null}
+    <Section footer={<Text>密码和密钥保存在 Keychain，不会上传或写入脚本文件。</Text>}>
       <Text foregroundStyle="secondaryLabel">{`dashboard v${VERSION}（非官方实现）`}</Text>
     </Section>
   </Form>
@@ -329,7 +371,7 @@ function SettingsPage({ active, onChanged }: { active: Controller | null; onChan
 function Root() {
   const [version, setVersion] = useState(0)
   const [active, setActiveState] = useState<Controller | null>(getActive())
-  const bump = () => { setActiveState(getActive()); setVersion(v => v + 1); void Widget.reloadAll() }
+  const bump = () => { setActiveState(getActive()); setVersion(v => v + 1) }
   return <NavigationStack>
     <OverviewPage active={active} version={version} onSwitch={bump} />
   </NavigationStack>

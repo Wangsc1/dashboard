@@ -1,8 +1,14 @@
 // dashboard 数据层：Clash 外部控制 API 与 OpenWrt（LuCI ubus JSON-RPC）
-export const VERSION = "1.1.0"
+export const VERSION = "1.2.0"
 
 export type Kind = "clash" | "openwrt"
-export interface Controller { id: string; name: string; kind: Kind; url: string; username?: string }
+export type Plugin = "openclash" | "nikki" | "mihomo"
+export const PLUGINS: [Plugin, string][] = [["openclash", "OpenClash"], ["nikki", "Nikki"], ["mihomo", "MihomoTProxy"]]
+export interface Controller {
+  id: string; name: string; kind: Kind; url: string; username?: string
+  host?: string; port?: number; https?: boolean; plugin?: Plugin; auto?: boolean; cport?: number
+}
+export interface ControllerInput { id?: string; name: string; host: string; port: number; https: boolean; username: string; plugin: Plugin; auto: boolean; cport: number }
 export interface Group { name: string; type: string; now: string; all: string[]; delays: Record<string, number> }
 export interface Conn { id: string; host: string; src: string; dst: string; network: string; rule: string; chain: string; up: number; down: number; start: number; upSpeed?: number; downSpeed?: number }
 export interface Rule { type: string; payload: string; proxy: string }
@@ -14,46 +20,50 @@ export interface WrtLease { host: string; ip: string; mac: string; expires: numb
 
 const K_LIST = "neko_controllers_v1"
 const K_ACTIVE = "neko_active_v1"
-const K_REFRESH = "neko_refresh_min_v1"
-const K_CACHE = "neko_cache_v1"
 const TEST_URL = "http://www.gstatic.com/generate_204"
 
 // ---------- 控制器存储：地址/名称在 Storage，密钥在 Keychain ----------
 export function listControllers(): Controller[] { return (Storage.get<Controller[]>(K_LIST) ?? []).filter(c => c.kind === "clash" || c.kind === "openwrt") }
 function saveList(l: Controller[]) { Storage.set(K_LIST, l) }
+const clashCache: Record<string, { at: number; c: Controller | null }> = {}
 export function getSecret(id: string): string { return Keychain.get("neko_secret_" + id) ?? "" }
 export function normalizeUrl(u: string): string {
   let s = u.trim().replace(/\/+$/, "")
   if (s && !/^https?:\/\//i.test(s)) s = "http://" + s
   return s
 }
-export function saveController(c: Omit<Controller, "id"> & { id?: string }, secret: string): Controller {
-  const url = normalizeUrl(c.url)
-  if (!url) throw new Error("请填写控制器地址")
+export function saveController(c: ControllerInput, password: string, clashSecret: string): Controller {
+  const host = c.host.trim().replace(/^https?:\/\//i, "").replace(/\/.*$/, "").replace(/:\d+$/, "")
+  if (!host) throw new Error("请填写路由器地址")
+  if (!Number.isInteger(c.port) || c.port < 1 || c.port > 65535) throw new Error("端口无效")
   const id = c.id ?? Date.now().toString(36) + Math.random().toString(36).slice(2, 6)
-  const item: Controller = { id, name: c.name.trim() || url.replace(/^https?:\/\//, ""), kind: c.kind, url, username: c.kind === "openwrt" ? (c.username?.trim() || "root") : undefined }
+  const defPort = c.https ? 443 : 80
+  const url = `${c.https ? "https" : "http"}://${host.includes(":") ? "[" + host + "]" : host}${c.port === defPort ? "" : ":" + c.port}`
+  const item: Controller = { id, name: c.name.trim() || host, kind: "openwrt", url, username: c.username.trim() || "root",
+    host, port: c.port, https: c.https, plugin: c.plugin, auto: c.auto, cport: c.cport }
   const l = listControllers()
   const i = l.findIndex(x => x.id === id)
   if (i >= 0) l[i] = item; else l.push(item)
   saveList(l)
-  Keychain.set("neko_secret_" + id, secret.trim())
+  Keychain.set("neko_secret_" + id, password)
+  Keychain.set("neko_csecret_" + id, clashSecret.trim())
+  delete clashCache[id]; delete sessions[id]
   if (!getActive()) setActive(id)
   return item
 }
 export function removeController(id: string) {
   saveList(listControllers().filter(c => c.id !== id))
-  Keychain.remove("neko_secret_" + id)
-  Storage.remove(K_CACHE + id)
+  for (const k of ["neko_secret_" + id, "neko_csecret_" + id, "neko_secret_" + id + "~clash"]) Keychain.remove(k)
+  Storage.remove("neko_prev_" + id)
+  delete clashCache[id]; delete sessions[id]
   if (Storage.get<string>(K_ACTIVE) === id) Storage.remove(K_ACTIVE)
 }
+export function getClashSecret(id: string): string { return Keychain.get("neko_csecret_" + id) ?? "" }
 export function getActive(): Controller | null {
   const l = listControllers(); const id = Storage.get<string>(K_ACTIVE)
   return l.find(c => c.id === id) ?? l[0] ?? null
 }
 export function setActive(id: string) { Storage.set(K_ACTIVE, id) }
-export function getRefreshMinutes(): number { const m = Storage.get<number>(K_REFRESH); return m && m >= 5 ? m : 15 }
-export function saveRefreshMinutes(m: number) { Storage.set(K_REFRESH, m) }
-export const REFRESH_OPTIONS = [5, 15, 30, 60]
 
 // ---------- HTTP ----------
 async function http(c: Controller, path: string, init: { method?: string; body?: any; timeout?: number } = {}): Promise<any> {
@@ -160,6 +170,36 @@ export async function loadWrtLeases(c: Controller): Promise<WrtLease[]> {
   return (j.dhcp_leases ?? []).map((l: any): WrtLease => ({ host: String(l.hostname ?? ""), ip: String(l.ipaddr ?? ""), mac: String(l.macaddr ?? ""), expires: num(l.expires) }))
 }
 
+// ---------- 自动获取 Clash 控制器（通过 ubus uci 读取插件配置）----------
+const UCI: Record<Plugin, { config: string; section: string; port: (v: any) => number; secret: string }> = {
+  openclash: { config: "openclash", section: "config", port: v => parseInt(String(v.cn_port ?? ""), 10), secret: "dashboard_password" },
+  nikki: { config: "nikki", section: "mixin", port: v => parseInt(String(v.api_listen ?? "").split(":").pop() ?? "", 10), secret: "api_secret" },
+  mihomo: { config: "mihomo", section: "mixin", port: v => parseInt(String(v.api_listen ?? "").split(":").pop() ?? "", 10), secret: "api_secret" },
+}
+export async function resolveClash(c: Controller): Promise<Controller> {
+  const hit = clashCache[c.id]
+  if (hit && Date.now() - hit.at < 60000 && hit.c) return hit.c
+  const host = c.host ?? c.url.replace(/^https?:\/\//, "").replace(/:\d+$/, "")
+  let port = c.cport ?? 9090, secret = getClashSecret(c.id)
+  if (c.auto !== false) {
+    const u = UCI[c.plugin ?? "openclash"]
+    let v: any
+    try { v = (await ubus(c, "uci", "get", { config: u.config, section: u.section })).values } catch (e: any) {
+      throw new Error("自动获取配置失败：" + String(e?.message ?? e) + "（可关闭“自动获取配置”手动填写端口和密钥）")
+    }
+    if (!v) throw new Error("未找到 " + u.config + " 的配置，请确认插件类型是否选对")
+    const p = u.port(v)
+    if (!Number.isInteger(p) || p < 1 || p > 65535) throw new Error("没有从插件配置里读到控制器端口")
+    port = p; secret = String(v[u.secret] ?? "")
+  }
+  const id = c.id + "~clash"
+  Keychain.set("neko_secret_" + id, secret)
+  const cc: Controller = { id, name: c.name, kind: "clash", url: `http://${host.includes(":") ? "[" + host + "]" : host}:${port}` }
+  clashCache[c.id] = { at: Date.now(), c: cc }
+  return cc
+}
+async function cc(c: Controller): Promise<Controller> { return c.kind === "clash" ? c : resolveClash(c) }
+
 function wsUrl(c: Controller, path: string): string {
   const s = getSecret(c.id)
   const base = c.url.replace(/^http/i, "ws")
@@ -185,6 +225,10 @@ function clashTrafficOnce(c: Controller, timeoutMs = 3000): Promise<Traffic | nu
 // ---------- 概览 ----------
 export async function loadOverview(c: Controller): Promise<Overview> {
   if (c.kind === "openwrt") return wrtOverview(c)
+  return loadClashOverview(c)
+}
+export async function loadClashOverview(c0: Controller): Promise<Overview> {
+  const c = await cc(c0)
   {
     const [ver, cfg, conns, tr] = await Promise.all([
       http(c, "/version").catch(() => ({})), http(c, "/configs"), http(c, "/connections"), clashTrafficOnce(c),
@@ -199,10 +243,11 @@ export async function loadOverview(c: Controller): Promise<Overview> {
 // ---------- 模式 ----------
 export const CLASH_MODES = [["rule", "规则"], ["global", "全局"], ["direct", "直连"]]
 export const modesOf = (_k: Kind) => CLASH_MODES
-export async function setMode(c: Controller, mode: string) { await http(c, "/configs", { method: "PATCH", body: { mode } }) }
+export async function setMode(c: Controller, mode: string) { await http(await cc(c), "/configs", { method: "PATCH", body: { mode } }) }
 
 // ---------- 策略组 ----------
-export async function loadGroups(c: Controller): Promise<Group[]> {
+export async function loadGroups(c0: Controller): Promise<Group[]> {
+  const c = await cc(c0)
   {
     const j = await http(c, "/proxies")
     const all: Record<string, any> = j.proxies ?? {}
@@ -215,11 +260,13 @@ export async function loadGroups(c: Controller): Promise<Group[]> {
     })
   }
 }
-export async function selectProxy(c: Controller, group: string, name: string) {
+export async function selectProxy(c0: Controller, group: string, name: string) {
+  const c = await cc(c0)
   await http(c, "/proxies/" + enc(group), { method: "PUT", body: { name } })
 }
 // 测速整组，返回 节点→毫秒（0 表示超时/失败）
-export async function testGroup(c: Controller, g: Group): Promise<Record<string, number>> {
+export async function testGroup(c0: Controller, g: Group): Promise<Record<string, number>> {
+  const c = await cc(c0)
   const res: Record<string, number> = {}
   {
     try {
@@ -240,7 +287,8 @@ export async function testGroup(c: Controller, g: Group): Promise<Record<string,
 }
 
 // ---------- 连接 ----------
-export async function loadConnections(c: Controller): Promise<Conn[]> {
+export async function loadConnections(c0: Controller): Promise<Conn[]> {
+  const c = await cc(c0)
   if (c.kind === "clash") {
     const j = await http(c, "/connections")
     return (j.connections ?? []).map((x: any): Conn => {
@@ -254,13 +302,14 @@ export async function loadConnections(c: Controller): Promise<Conn[]> {
     })
   }
 }
-export async function closeConnection(c: Controller, id: string) { await http(c, "/connections/" + enc(id), { method: "DELETE" }) }
+export async function closeConnection(c: Controller, id: string) { await http(await cc(c), "/connections/" + enc(id), { method: "DELETE" }) }
 export async function closeAllConnections(c: Controller) {
-  await http(c, "/connections", { method: "DELETE" })
+  await http(await cc(c), "/connections", { method: "DELETE" })
 }
 
 // ---------- 规则 ----------
-export async function loadRules(c: Controller): Promise<Rule[]> {
+export async function loadRules(c0: Controller): Promise<Rule[]> {
+  const c = await cc(c0)
   {
     const j = await http(c, "/rules", { timeout: 15 })
     return (j.rules ?? []).map((r: any) => ({ type: String(r.type), payload: String(r.payload ?? ""), proxy: String(r.proxy ?? "") }))
@@ -269,8 +318,8 @@ export async function loadRules(c: Controller): Promise<Rule[]> {
 
 // ---------- 配置（仅 Clash） ----------
 export interface ClashConfig { mode: string; "log-level": string; port: number; "socks-port": number; "mixed-port": number; "allow-lan": boolean }
-export async function loadConfig(c: Controller): Promise<ClashConfig> { return await http(c, "/configs") }
-export async function patchConfig(c: Controller, patch: Partial<ClashConfig>) { await http(c, "/configs", { method: "PATCH", body: patch }) }
+export async function loadConfig(c: Controller): Promise<ClashConfig> { return await http(await cc(c), "/configs") }
+export async function patchConfig(c: Controller, patch: Partial<ClashConfig>) { await http(await cc(c), "/configs", { method: "PATCH", body: patch }) }
 export const LOG_LEVELS = ["silent", "error", "warning", "info", "debug"]
 
 // ---------- 格式化 ----------
@@ -298,6 +347,3 @@ export function delayColor(ms: number | undefined): string {
   return ms < 300 ? "systemGreen" : ms < 800 ? "systemOrange" : "systemRed"
 }
 
-// ---------- 小组件缓存 ----------
-export function saveCache(id: string, o: Overview) { Storage.set(K_CACHE + id, { at: Date.now(), o }) }
-export function loadCache(id: string): { at: number; o: Overview } | null { return Storage.get(K_CACHE + id) ?? null }

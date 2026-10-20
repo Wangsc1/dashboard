@@ -2,17 +2,17 @@
   "name": "dashboard",
   "icon": "server.rack",
   "color": "rgba(113, 143, 253,1)",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "entry": "index.tsx",
   "runInApp": false,
-  "description": "OpenWrt / Clash 控制器仪表盘：实时速度、系统与接口状态、在线设备、策略组切换与测速、连接管理、规则预览、内核配置与小组件。",
+  "description": "OpenWrt 路由器仪表盘：实时速度、系统与接口状态、在线设备，并自动获取 OpenClash / Nikki / MihomoTProxy 的 Clash 控制器，支持策略组切换与测速、连接管理、规则预览、内核配置。",
   "localizedNames": {
     "zh": "dashboard",
     "en": "dashboard"
   },
   "localizedDescriptions": {
-    "zh": "OpenWrt / Clash 控制器仪表盘：实时速度、系统与接口状态、在线设备、策略组切换与测速、连接管理、规则预览、内核配置与小组件。",
-    "en": "Dashboard for OpenWrt and Clash."
+    "zh": "OpenWrt 路由器仪表盘：实时速度、系统与接口状态、在线设备，并自动获取 OpenClash / Nikki / MihomoTProxy 的 Clash 控制器，支持策略组切换与测速、连接管理、规则预览、内核配置。",
+    "en": "OpenWrt dashboard with Clash controller auto-discovery."
   },
   "intentInputTypes": [],
   "contributors": [],
