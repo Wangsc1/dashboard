@@ -1,6 +1,6 @@
 import {
   Button, ForEach, Form, HStack, Label, Navigation, NavigationLink, NavigationStack, Picker, Script, Section, SecureField, Spacer,
-  Text, TextField, Toggle, VStack, useEffect, useState,
+  Image, Menu, Text, TextField, Toggle, VStack, useEffect, useState,
 } from "scripting"
 import {
   VERSION, Controller, Group, Conn, Rule, Overview, Plugin, PLUGINS, listControllers, saveController, removeController, getActive, setActive, getSecret, getClashSecret,
@@ -32,6 +32,7 @@ function OverviewPage({ active, version, onSwitch }: { active: Controller | null
   const [busy, setBusy] = useState(false)
   const all = listControllers()
   const dismiss = Navigation.useDismiss()
+  const [page, setPage] = useState<"" | "proxies" | "connections" | "rules">("")
   async function refresh() {
     if (!active) return
     const [a, b] = await Promise.allSettled([loadOverview(active), loadClashOverview(active)])
@@ -46,7 +47,21 @@ function OverviewPage({ active, version, onSwitch }: { active: Controller | null
   }
   const row = (label: string, value: string) => <HStack><Text>{label}</Text><Spacer /><Text>{value}</Text></HStack>
   return <Form navigationTitle="dashboard" navigationBarTitleDisplayMode="inline"
-    toolbar={{ topBarLeading: <Button title="" systemImage="xmark" action={dismiss} /> }}>
+    toolbar={{
+      topBarLeading: <Button title="" systemImage="xmark" action={dismiss} />,
+      topBarTrailing: <Menu label={<Image systemName="ellipsis.circle" />}>
+        <Button title="策略组" systemImage="point.3.connected.trianglepath.dotted" action={() => setPage("proxies")} />
+        <Button title="连接" systemImage="arrow.up.arrow.down" action={() => setPage("connections")} />
+        <Button title="规则" systemImage="list.bullet.rectangle" action={() => setPage("rules")} />
+      </Menu>,
+    }}
+    navigationDestination={{
+      isPresented: page !== "",
+      onChanged: (v: boolean) => { if (!v) setPage("") },
+      content: page === "proxies" ? <ProxiesPage active={active} version={version} />
+        : page === "connections" ? <ConnectionsPage active={active} version={version} />
+        : page === "rules" ? <RulesPage active={active} version={version} /> : <Text>-</Text>,
+    }}>
     {!active ? <NoController /> : <>
       {all.length > 1 ? <Section header={<Text>路由器</Text>}>
         <Picker title="当前" pickerStyle="menu" value={active.id} onChanged={(v: string) => { setActive(v); setOv(null); setCv(null); onSwitch() }}>
@@ -85,9 +100,6 @@ function OverviewPage({ active, version, onSwitch }: { active: Controller | null
     <Section header={<Text>功能</Text>}>
       <NavigationLink destination={<WrtInterfacesPage active={active} version={version} />}><Label title="网络接口" systemImage="network" /></NavigationLink>
       <NavigationLink destination={<WrtLeasesPage active={active} version={version} />}><Label title="在线设备" systemImage="laptopcomputer.and.iphone" /></NavigationLink>
-      <NavigationLink destination={<ProxiesPage active={active} version={version} />}><Label title="策略组" systemImage="point.3.connected.trianglepath.dotted" /></NavigationLink>
-      <NavigationLink destination={<ConnectionsPage active={active} version={version} />}><Label title="连接" systemImage="arrow.up.arrow.down" /></NavigationLink>
-      <NavigationLink destination={<RulesPage active={active} version={version} />}><Label title="规则" systemImage="list.bullet.rectangle" /></NavigationLink>
       <NavigationLink destination={<SettingsPage active={active} onChanged={onSwitch} />}><Label title="设置" systemImage="gearshape" /></NavigationLink>
     </Section>
   </Form>
