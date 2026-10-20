@@ -29,6 +29,7 @@ function OverviewPage({ active, version, onSwitch }: { active: Controller | null
   const [err, setErr] = useState("")
   const [busy, setBusy] = useState(false)
   const all = listControllers()
+  const dismiss = Navigation.useDismiss()
   async function refresh() {
     if (!active) return
     try { const o = await loadOverview(active); setOv(o); setErr(""); saveCache(active.id, o) } catch (e) { setErr(msg(e)) }
@@ -39,7 +40,8 @@ function OverviewPage({ active, version, onSwitch }: { active: Controller | null
     setBusy(true)
     try { await setMode(active, m); await refresh() } catch (e) { setErr(msg(e)) } finally { setBusy(false) }
   }
-  return <Form navigationTitle="dashboard" navigationBarTitleDisplayMode="inline">
+  return <Form navigationTitle="dashboard" navigationBarTitleDisplayMode="inline"
+    toolbar={{ topBarLeading: <Button title="" systemImage="xmark" action={dismiss} /> }}>
       {!active ? <NoController /> : <>
         {all.length > 1 ? <Section header={<Text>控制器</Text>}>
           <Picker title="当前" pickerStyle="menu" value={active.id} onChanged={(v: string) => { setActive(v); setOv(null); onSwitch() }}>
