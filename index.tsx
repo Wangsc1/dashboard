@@ -1,5 +1,5 @@
 import {
-  Button, Form, HStack, Label, Navigation, NavigationLink, NavigationStack, Picker, Script, Section, SecureField, Spacer,
+  Button, ForEach, Form, HStack, Label, Navigation, NavigationLink, NavigationStack, Picker, Script, Section, SecureField, Spacer,
   Text, TextField, Toggle, VStack, Widget, useEffect, useState,
 } from "scripting"
 import {
@@ -269,11 +269,20 @@ function SettingsPage({ active, onChanged }: { active: Controller | null; onChan
   const [list, setList] = useState(listControllers())
   const [refreshMin, setRefreshMin] = useState(String(getRefreshMinutes()))
   const reload = () => { setList(listControllers()); onChanged() }
+  // 系统滑动删除：回调触发时该行已被移除，只同步数据源；其余刷新延后，避免与删除动画冲突
+  function onDelete(indices: number[]) {
+    const ids = indices.map(i => list[i]?.id).filter(Boolean) as string[]
+    for (const id of ids) removeController(id)
+    setList(listControllers())
+    setTimeout(onChanged, 500)
+  }
   return <Form navigationTitle="设置" navigationBarTitleDisplayMode="inline">
     <Section header={<Text>控制器</Text>}>
-      {list.map(c => <NavigationLink key={c.id} destination={<EditController initial={c} onDone={reload} />}>
-        <VStack alignment="leading"><Text>{c.name}</Text><Text font={12} foregroundStyle="secondaryLabel">{`${c.kind === "clash" ? "Clash" : "Surge"} · ${c.url}`}</Text></VStack>
-      </NavigationLink>)}
+      <ForEach count={list.length}
+        itemBuilder={i => <NavigationLink key={list[i].id} destination={<EditController initial={list[i]} onDone={reload} />}>
+          <VStack alignment="leading"><Text>{list[i].name}</Text><Text font={12} foregroundStyle="secondaryLabel">{`${list[i].kind === "clash" ? "Clash" : "Surge"} · ${list[i].url}`}</Text></VStack>
+        </NavigationLink>}
+        onDelete={onDelete} />
       <NavigationLink destination={<EditController onDone={reload} />}><Label title="添加控制器" systemImage="plus" /></NavigationLink>
       {list.length ? <NavigationLink destination={<DeleteControllers onDone={reload} />}><Label title="删除控制器" systemImage="trash" /></NavigationLink> : null}
     </Section>
