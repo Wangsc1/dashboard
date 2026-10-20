@@ -1,11 +1,11 @@
 import {
   Button, ForEach, Form, HStack, Label, Navigation, NavigationLink, NavigationStack, Picker, Script, Section, SecureField, Spacer,
-  Image, Menu, Text, TextField, Toggle, VStack, useEffect, useState,
+  Image, Menu, ProgressView, RoundedRectangle, ScrollView, SVG, Text, ZStack, modifiers, TextField, Toggle, VStack, useEffect, useState,
 } from "scripting"
 import {
   VERSION, Controller, Group, Conn, Rule, Overview, Plugin, PLUGINS, listControllers, saveController, removeController, getActive, setActive, getSecret, getClashSecret,
   loadOverview, loadClashOverview, loadWrtInterfaces, loadWrtLeases, WrtIface, WrtLease, loadGroups, selectProxy, testGroup, loadConnections, closeConnection,
-  closeAllConnections, loadRules, loadConfig, patchConfig, setMode, CLASH_MODES, fmtBytes, fmtSpeed, fmtUptime, fmtDuration, delayColor, LOG_LEVELS,
+  closeAllConnections, loadRules, loadConfig, patchConfig, setMode, CLASH_MODES, fmtBytes, fmtSpeed, fmtParts, fmtUptime, fmtDuration, delayColor, LOG_LEVELS,
 } from "./api"
 
 const msg = (e: any) => String(e?.message ?? e ?? "未知错误")
@@ -24,12 +24,68 @@ function NoController() {
 }
 
 // ---------- 概览 ----------
+const CARD_BG = "secondarySystemBackground"
+const cardMods = () => modifiers().frame({ maxWidth: "infinity", alignment: "leading" as any }).padding({ horizontal: 16, vertical: 14 }).background(<RoundedRectangle cornerRadius={22} fill={CARD_BG} />)
+function Card({ children }: { children?: any }) {
+  return <VStack alignment="leading" spacing={10} modifiers={cardMods()}>{children}</VStack>
+}
+function Badge({ icon, color }: { icon: string; color: string }) {
+  return <ZStack modifiers={modifiers().frame({ width: 34, height: 34 }).background(<RoundedRectangle cornerRadius={10} fill={color + "33"} />)}>
+    <Image systemName={icon} foregroundStyle={color as any} font={15} />
+  </ZStack>
+}
+function Big({ parts }: { parts: [string, string] | null }) {
+  return <HStack alignment="lastTextBaseline" spacing={4}>
+    <Text font={30} fontWeight="bold">{parts ? parts[0] : "-"}</Text>
+    <Text font={14} foregroundStyle="secondaryLabel">{parts ? parts[1] : ""}</Text>
+  </HStack>
+}
+function StatCard({ icon, color, title, parts }: { icon: string; color: string; title: string; parts: [string, string] | null }) {
+  return <Card>
+    <HStack spacing={8}><Badge icon={icon} color={color} /><Text foregroundStyle="secondaryLabel">{title}</Text></HStack>
+    <Big parts={parts} />
+  </Card>
+}
+function InfoItem({ icon, color, title, value }: { icon: string; color: string; title: string; value: string }) {
+  return <HStack spacing={8} frame={{ maxWidth: "infinity", alignment: "leading" as any }}>
+    <Badge icon={icon} color={color} />
+    <VStack alignment="leading" spacing={1}><Text font={13} foregroundStyle="secondaryLabel">{title}</Text><Text fontWeight="semibold">{value}</Text></VStack>
+  </HStack>
+}
+const HIST = 60
+function RateChart({ down, up }: { down: number[]; up: number[] }) {
+  const W = 300, H = 120
+  const max = Math.max(1024, ...down, ...up) * 1.0
+  const pts = (arr: number[]) => arr.map((v, i) => `${((i + (HIST - arr.length)) / (HIST - 1) * W).toFixed(1)},${(H - v / max * H).toFixed(1)}`).join(" ")
+  const line = (arr: number[], color: string) => arr.length > 1 ? `<polyline points="${pts(arr)}" fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>` : ""
+  const code = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}">${line(down, "#3B82F6")}${line(up, "#34C759")}</svg>`
+  const label = (f: number) => fmtSpeed(max * f)
+  return <Card>
+    <HStack>
+      <HStack spacing={8}><Badge icon="chart.xyaxis.line" color="#6366F1" /><Text fontWeight="semibold" font={17}>速率图表</Text></HStack>
+      <Spacer />
+      <Text font={13} foregroundStyle="#3B82F6">● 下载</Text><Text font={13} foregroundStyle="#34C759">● 上传</Text>
+    </HStack>
+    <ZStack>
+      <VStack alignment="leading" spacing={0} frame={{ height: H }}>
+        <Text font={12} foregroundStyle="secondaryLabel">{label(1)}</Text><Spacer />
+        <Text font={12} foregroundStyle="secondaryLabel">{label(0.75)}</Text><Spacer />
+        <Text font={12} foregroundStyle="secondaryLabel">{label(0.5)}</Text><Spacer />
+        <Text font={12} foregroundStyle="secondaryLabel">{label(0.25)}</Text><Spacer />
+      </VStack>
+      <SVG code={code} resizable frame={{ height: H }} />
+    </ZStack>
+  </Card>
+}
+
 function OverviewPage({ active, version, onSwitch }: { active: Controller | null; version: number; onSwitch: () => void }) {
   const [ov, setOv] = useState<Overview | null>(null)
   const [cv, setCv] = useState<Overview | null>(null)
   const [err, setErr] = useState("")
   const [cerr, setCerr] = useState("")
   const [busy, setBusy] = useState(false)
+  const [dn, setDn] = useState<number[]>([])
+  const [upH, setUpH] = useState<number[]>([])
   const all = listControllers()
   const dismiss = Navigation.useDismiss()
   const [page, setPage] = useState<"" | "interfaces" | "leases" | "settings">("")
@@ -38,71 +94,93 @@ function OverviewPage({ active, version, onSwitch }: { active: Controller | null
     const [a, b] = await Promise.allSettled([loadOverview(active), loadClashOverview(active)])
     if (a.status === "fulfilled") { setOv(a.value); setErr("") } else setErr(msg(a.reason))
     if (b.status === "fulfilled") { setCv(b.value); setCerr("") } else setCerr(msg(b.reason))
+    const src = b.status === "fulfilled" ? b.value : a.status === "fulfilled" ? a.value : null
+    if (src) {
+      setDn(h => [...h, src.traffic.down].slice(-HIST)); setUpH(h => [...h, src.traffic.up].slice(-HIST))
+    }
   }
+  useEffect(() => { setDn([]); setUpH([]); setOv(null); setCv(null) }, [active?.id])
   useInterval(refresh, 3000, [active?.id, version])
   async function changeMode(m: string) {
     if (!active || busy) return
     setBusy(true)
     try { await setMode(active, m); await refresh() } catch (e) { setCerr(msg(e)) } finally { setBusy(false) }
   }
-  const row = (label: string, value: string) => <HStack><Text>{label}</Text><Spacer /><Text>{value}</Text></HStack>
-  return <Form navigationTitle="dashboard" navigationBarTitleDisplayMode="inline"
-    toolbar={{
-      topBarLeading: <Button title="" systemImage="xmark" action={dismiss} />,
-      topBarTrailing: <Menu label={<Image systemName="ellipsis.circle" />}>
-        <Button title="网络接口" systemImage="network" action={() => setPage("interfaces")} />
-        <Button title="在线设备" systemImage="laptopcomputer.and.iphone" action={() => setPage("leases")} />
-        <Button title="设置" systemImage="gearshape" action={() => setPage("settings")} />
-      </Menu>,
-    }}
-    navigationDestination={{
-      isPresented: page !== "",
-      onChanged: (v: boolean) => { if (!v) setPage("") },
-      content: page === "interfaces" && active ? <WrtInterfacesPage active={active} version={version} />
-        : page === "leases" && active ? <WrtLeasesPage active={active} version={version} />
-        : page === "settings" ? <SettingsPage active={active} onChanged={onSwitch} /> : <Text>-</Text>,
-    }}>
-    {!active ? <NoController /> : <>
-      {all.length > 1 ? <Section header={<Text>路由器</Text>}>
-        <Picker title="当前" pickerStyle="menu" value={active.id} onChanged={(v: string) => { setActive(v); setOv(null); setCv(null); onSwitch() }}>
+  const src = cv ?? ov            // 代理数据优先，没有则用 WAN 数据
+  const w = ov?.wrt
+  const memUsed = w ? Math.max(0, w.memTotal - w.memFree) : 0
+  const memRatio = w && w.memTotal > 0 ? Math.min(1, memUsed / w.memTotal) : 0
+  const memText = w ? `${fmtBytes(memUsed)} / ${fmtBytes(w.memTotal)}` : "-"
+  const toolbar = {
+    topBarLeading: <Button title="" systemImage="xmark" action={dismiss} />,
+    topBarTrailing: <Menu label={<Image systemName="ellipsis.circle" />}>
+      <Button title="网络接口" systemImage="network" action={() => setPage("interfaces")} />
+      <Button title="在线设备" systemImage="laptopcomputer.and.iphone" action={() => setPage("leases")} />
+      <Button title="设置" systemImage="gearshape" action={() => setPage("settings")} />
+    </Menu>,
+  }
+  const destination = {
+    isPresented: page !== "",
+    onChanged: (v: boolean) => { if (!v) setPage("") },
+    content: page === "interfaces" && active ? <WrtInterfacesPage active={active} version={version} />
+      : page === "leases" && active ? <WrtLeasesPage active={active} version={version} />
+      : page === "settings" ? <SettingsPage active={active} onChanged={onSwitch} /> : <Text>-</Text>,
+  }
+  if (!active) return <Form navigationTitle="dashboard" navigationBarTitleDisplayMode="inline" toolbar={toolbar} navigationDestination={destination}><NoController /></Form>
+  return <ScrollView navigationTitle={active.name} navigationBarTitleDisplayMode="inline" toolbar={toolbar} navigationDestination={destination}>
+    <VStack spacing={12} padding={{ horizontal: 14, vertical: 8 }}>
+      {all.length > 1 ? <Card>
+        <Picker title="当前路由器" pickerStyle="menu" value={active.id} onChanged={(v: string) => { setActive(v); onSwitch() }}>
           {all.map(c => <Text key={c.id} tag={c.id}>{c.name}</Text>)}
         </Picker>
-      </Section> : null}
-      {err ? <Section><Text foregroundStyle="systemRed">{err}</Text></Section> : null}
-      <Section header={<Text>{`${active.name}${ov?.version ? " · " + ov.version : ""}`}</Text>}>
-        {row("↑ WAN 上传", ov ? fmtSpeed(ov.traffic.up) : "-")}
-        {row("↓ WAN 下载", ov ? fmtSpeed(ov.traffic.down) : "-")}
-        {row("WAN 累计上传", ov ? fmtBytes(ov.upTotal) : "-")}
-        {row("WAN 累计下载", ov ? fmtBytes(ov.downTotal) : "-")}
-        {row("连接数", ov ? String(ov.connCount) : "-")}
-      </Section>
-      {ov?.wrt ? <Section header={<Text>系统</Text>}>
-        {row("型号", ov.wrt.model || "-")}
-        {row("运行时间", fmtUptime(ov.wrt.uptime))}
-        {row("负载", ov.wrt.load.map(v => v.toFixed(2)).join(" / ") || "-")}
-        {row("内存可用", `${fmtBytes(ov.wrt.memFree)} / ${fmtBytes(ov.wrt.memTotal)}`)}
-        {row("WAN 接口", ov.wrt.wan || "-")}
-      </Section> : null}
-      <Section header={<Text>{`代理（${PLUGINS.find(p => p[0] === (active.plugin ?? "openclash"))?.[1] ?? "Clash"}${cv?.version ? " · " + cv.version : ""}）`}</Text>}>
-        {cerr ? <Text font={13} foregroundStyle="systemRed">{cerr}</Text> : null}
-        {row("↑ 上传", cv ? fmtSpeed(cv.traffic.up) : "-")}
-        {row("↓ 下载", cv ? fmtSpeed(cv.traffic.down) : "-")}
-        {row("累计上传", cv ? fmtBytes(cv.upTotal) : "-")}
-        {row("累计下载", cv ? fmtBytes(cv.downTotal) : "-")}
-        {row("活动连接", cv ? String(cv.connCount) : "-")}
-      </Section>
-      {cv ? <Section header={<Text>运行模式</Text>}>
+      </Card> : null}
+      {err ? <Text font={13} foregroundStyle="systemRed">{err}</Text> : null}
+      {cerr ? <Text font={13} foregroundStyle="systemRed">{`代理：${cerr}`}</Text> : null}
+
+      <Card>
+        <HStack>
+          <Badge icon="laptopcomputer" color="#6366F1" />
+          <Text fontWeight="semibold" font={18}>OpenWrt 状态</Text>
+          <Spacer />
+          <Text font={13} foregroundStyle={err ? "systemRed" : "systemGreen"}>{err ? "● 连接失败" : ov ? "● 运行正常" : "● 连接中"}</Text>
+        </HStack>
+        <HStack alignment="top">
+          <InfoItem icon="clock" color="#3B82F6" title="运行时间" value={w ? fmtUptime(w.uptime) : "-"} />
+          <InfoItem icon="waveform.path.ecg" color="#F59E0B" title="系统负载" value={w ? w.load.map(v => v.toFixed(2)).join(" ") : "-"} />
+        </HStack>
+        <InfoItem icon="chart.pie" color="#A855F7" title="内存使用" value={memText} />
+        <ProgressView value={memRatio} total={1} tint="#A855F7" />
+      </Card>
+
+      <HStack spacing={12}>
+        <StatCard icon="arrow.down.circle.fill" color="#3B82F6" title="下载速率" parts={src ? fmtParts(src.traffic.down, true) : null} />
+        <StatCard icon="arrow.up.circle.fill" color="#34C759" title="上传速率" parts={src ? fmtParts(src.traffic.up, true) : null} />
+      </HStack>
+      <HStack spacing={12}>
+        <StatCard icon="icloud.and.arrow.down.fill" color="#3B82F6" title="下载总量" parts={src ? fmtParts(src.downTotal) : null} />
+        <StatCard icon="icloud.and.arrow.up.fill" color="#34C759" title="上传总量" parts={src ? fmtParts(src.upTotal) : null} />
+      </HStack>
+      <HStack spacing={12}>
+        <StatCard icon="link" color="#A855F7" title="活动连接" parts={src ? [String(src.connCount), ""] : null} />
+        <StatCard icon="square.stack.3d.up.fill" color="#F59E0B" title="内存使用" parts={cv?.mem != null ? fmtParts(cv.mem) : null} />
+      </HStack>
+
+      <RateChart down={dn} up={upH} />
+
+      {cv ? <Card>
+        <Text fontWeight="semibold">{`运行模式${cv.version ? " · " + cv.version : ""}`}</Text>
         <Picker title="模式" pickerStyle="segmented" value={cv.mode} onChanged={changeMode} disabled={busy}>
           {CLASH_MODES.map(([v, l]) => <Text key={v} tag={v}>{l}</Text>)}
         </Picker>
-      </Section> : null}
-    </>}
-    {active ? <Section header={<Text>代理</Text>}>
-      <NavigationLink destination={<ProxiesPage active={active} version={version} />}><Label title="策略组" systemImage="point.3.connected.trianglepath.dotted" /></NavigationLink>
-      <NavigationLink destination={<ConnectionsPage active={active} version={version} />}><Label title="连接" systemImage="arrow.up.arrow.down" /></NavigationLink>
-      <NavigationLink destination={<RulesPage active={active} version={version} />}><Label title="规则" systemImage="list.bullet.rectangle" /></NavigationLink>
-    </Section> : null}
-  </Form>
+      </Card> : null}
+
+      <Card>
+        <NavigationLink destination={<ProxiesPage active={active} version={version} />}><Label title="策略组" systemImage="point.3.connected.trianglepath.dotted" /></NavigationLink>
+        <NavigationLink destination={<ConnectionsPage active={active} version={version} />}><Label title="连接" systemImage="arrow.up.arrow.down" /></NavigationLink>
+        <NavigationLink destination={<RulesPage active={active} version={version} />}><Label title="规则" systemImage="list.bullet.rectangle" /></NavigationLink>
+      </Card>
+    </VStack>
+  </ScrollView>
 }
 
 // ---------- 策略组 ----------

@@ -1,5 +1,5 @@
 // dashboard 数据层：Clash 外部控制 API 与 OpenWrt（LuCI ubus JSON-RPC）
-export const VERSION = "1.2.2"
+export const VERSION = "1.3.0"
 
 export type Kind = "clash" | "openwrt"
 export type Plugin = "openclash" | "nikki" | "mihomo"
@@ -14,7 +14,7 @@ export interface Conn { id: string; host: string; src: string; dst: string; netw
 export interface Rule { type: string; payload: string; proxy: string }
 export interface Traffic { up: number; down: number }
 export interface WrtInfo { model: string; release: string; uptime: number; load: number[]; memTotal: number; memFree: number; wan: string }
-export interface Overview { version: string; mode: string; traffic: Traffic; upTotal: number; downTotal: number; connCount: number; wrt?: WrtInfo }
+export interface Overview { version: string; mode: string; traffic: Traffic; upTotal: number; downTotal: number; connCount: number; wrt?: WrtInfo; mem?: number }
 export interface WrtIface { name: string; proto: string; up: boolean; ip: string; device: string; uptime: number }
 export interface WrtLease { host: string; ip: string; mac: string; expires: number }
 
@@ -205,16 +205,14 @@ function wsUrl(c: Controller, path: string): string {
   const base = c.url.replace(/^http/i, "ws")
   return base + path + (s ? (path.includes("?") ? "&" : "?") + "token=" + enc(s) : "")
 }
-// 读取 Clash /traffic 的第一条消息（B/s）
-function clashTrafficOnce(c: Controller, timeoutMs = 3000): Promise<Traffic | null> {
+// 读取 Clash WebSocket 的第一条 JSON 消息
+function clashWsOnce(c: Controller, path: string, timeoutMs = 3000): Promise<any | null> {
   return new Promise(resolve => {
     let done = false, ws: WebSocket | null = null
-    const finish = (t: Traffic | null) => { if (done) return; done = true; try { ws?.close(1000) } catch { } resolve(t) }
+    const finish = (t: any | null) => { if (done) return; done = true; try { ws?.close(1000) } catch { } resolve(t) }
     try {
-      ws = new WebSocket(wsUrl(c, "/traffic"))
-      ws.addEventListener("message", (m: any) => {
-        try { const j = JSON.parse(typeof m === "string" ? m : String(m)); finish({ up: num(j.up), down: num(j.down) }) } catch { finish(null) }
-      })
+      ws = new WebSocket(wsUrl(c, path))
+      ws.addEventListener("message", (m: any) => { try { finish(JSON.parse(typeof m === "string" ? m : String(m))) } catch { finish(null) } })
       ws.addEventListener("error", () => finish(null))
       ws.addEventListener("close", () => finish(null))
     } catch { finish(null) }
@@ -230,11 +228,11 @@ export async function loadOverview(c: Controller): Promise<Overview> {
 export async function loadClashOverview(c0: Controller): Promise<Overview> {
   const c = await cc(c0)
   {
-    const [ver, cfg, conns, tr] = await Promise.all([
-      http(c, "/version").catch(() => ({})), http(c, "/configs"), http(c, "/connections"), clashTrafficOnce(c),
+    const [ver, cfg, conns, tr, mem] = await Promise.all([
+      http(c, "/version").catch(() => ({})), http(c, "/configs"), http(c, "/connections"), clashWsOnce(c, "/traffic"), clashWsOnce(c, "/memory"),
     ])
     return {
-      version: String(ver.version ?? ""), mode: String(cfg.mode ?? ""), traffic: tr ?? { up: 0, down: 0 },
+      version: String(ver.version ?? ""), mode: String(cfg.mode ?? ""), traffic: tr ? { up: num(tr.up), down: num(tr.down) } : { up: 0, down: 0 }, mem: mem ? num(mem.inuse) : undefined,
       upTotal: num(conns.uploadTotal), downTotal: num(conns.downloadTotal), connCount: (conns.connections ?? []).length,
     }
   }
@@ -332,6 +330,14 @@ export function fmtBytes(n: number): string {
 export function fmtUptime(sec: number): string {
   const d = Math.floor(sec / 86400), h = Math.floor(sec % 86400 / 3600), m = Math.floor(sec % 3600 / 60)
   return d ? `${d}天${h}时` : h ? `${h}时${m}分` : `${m}分`
+}
+// 拆成 [数值, 单位]，用于大号数字 + 小号单位的显示
+export function fmtParts(n: number, perSec = false): [string, string] {
+  const v = Math.max(0, n || 0)
+  const u = ["B", "KB", "MB", "GB", "TB"]
+  let i = perSec ? 1 : 0, x = perSec ? v / 1024 : v
+  while (x >= 1024 && i < u.length - 1) { x /= 1024; i++ }
+  return [i === 0 ? x.toFixed(0) : x.toFixed(perSec && i === 1 ? 1 : 2), u[i] + (perSec ? "/s" : "")]
 }
 export const fmtSpeed = (n: number) => fmtBytes(n) + "/s"
 export function fmtDuration(startMs: number): string {
