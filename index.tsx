@@ -3,8 +3,8 @@ import {
   Image, Menu, RoundedRectangle, Circle, ScrollView, SVG, Text, ZStack, modifiers, TextField, Toggle, VStack, useEffect, useState,
 } from "scripting"
 import {
-  VERSION, Controller, Group, Conn, Rule, Overview, Traffic, Plugin, PLUGINS, listControllers, saveController, removeController, getActive, setActive, getSecret, getClashSecret,
-  loadOverview, loadClashOverview, subscribeTraffic, subscribeMemory, subscribeConnCount, loadWrtInterfaces, loadWrtLeases, WrtIface, WrtLease, loadGroups, selectProxy, testGroup, loadConnections, closeConnection,
+  VERSION, Controller, Group, Conn, Rule, Overview, Plugin, PLUGINS, listControllers, saveController, removeController, getActive, setActive, getSecret, getClashSecret,
+  loadOverview, loadClashOverview, loadWrtInterfaces, loadWrtLeases, WrtIface, WrtLease, loadGroups, selectProxy, testGroup, loadConnections, closeConnection,
   closeAllConnections, loadRules, loadConfig, patchConfig, setMode, CLASH_MODES, fmtBytes, fmtSpeed, fmtParts, fmtUptime, fmtDuration, delayColor, LOG_LEVELS,
 } from "./api"
 
@@ -121,48 +121,41 @@ function OverviewPage({ active, version, onSwitch }: { active: Controller | null
   const [busy, setBusy] = useState(false)
   const [dn, setDn] = useState<number[]>([])
   const [upH, setUpH] = useState<number[]>([])
-  const [live, setLive] = useState<Traffic | null>(null)
   const [connH, setConnH] = useState<number[]>([])
   const [memH, setMemH] = useState<number[]>([])
-  const [liveConn, setLiveConn] = useState<number | null>(null)
-  const [liveMem, setLiveMem] = useState<number | null>(null)
-  const [st] = useState({ live: false, refreshing: false })
+  const [st] = useState({ refreshing: false })
   const all = listControllers()
   const dismiss = Navigation.useDismiss()
   const [page, setPage] = useState<"" | "interfaces" | "leases" | "settings">("")
   async function refresh() {
     if (!active || st.refreshing) return
     st.refreshing = true
-    // 两路结果各自显示，路由器不再等待代理 WebSocket 的超时。
-    await Promise.all([
-      loadOverview(active).then(o => { setOv(o); setErr("") }).catch(e => setErr(msg(e))),
-      loadClashOverview(active).then(o => {
-        setCv(o); setCerr("")
-        if (!st.live) { setDn(h => [...h, o.traffic.down].slice(-HIST)); setUpH(h => [...h, o.traffic.up].slice(-HIST)) }
-      }).catch(e => setCerr(msg(e))),
-    ])
-    st.refreshing = false
+    try {
+      const o = await loadOverview(active)
+      setOv(o); setErr("")
+      setDn(h => [...h, o.traffic.down].slice(-HIST))
+      setUpH(h => [...h, o.traffic.up].slice(-HIST))
+      setConnH(h => [...h, o.connCount].slice(-HIST))
+      if (o.wrt) setMemH(h => [...h, Math.max(0, o.wrt!.memTotal - o.wrt!.memFree)].slice(-HIST))
+    } catch (e) { setErr(msg(e)) }
+    finally { st.refreshing = false }
   }
-  useEffect(() => { setDn([]); setUpH([]); setOv(null); setCv(null); setLive(null); setConnH([]); setMemH([]); setLiveConn(null); setLiveMem(null); st.live = false }, [active?.id])
+  useEffect(() => { setDn([]); setUpH([]); setOv(null); setCv(null); setConnH([]); setMemH([]) }, [active?.id])
+  // 代理状态只供下面的运行模式控制，不参与 OpenWrt 概览。
   useEffect(() => {
     if (!active) return
-    const stop = subscribeTraffic(active, t => {
-      st.live = true
-      setLive(t)
-      setDn(h => [...h, t.down].slice(-HIST)); setUpH(h => [...h, t.up].slice(-HIST))
-    })
-    const stopM = subscribeMemory(active, n => { setLiveMem(n); setMemH(h => [...h, n].slice(-HIST)) })
-    const stopC = subscribeConnCount(active, n => { setLiveConn(n); setConnH(h => [...h, n].slice(-HIST)) })
-    return () => { stop(); stopM(); stopC(); st.live = false }
+    let alive = true
+    loadClashOverview(active).then(o => { if (alive) { setCv(o); setCerr("") } }).catch(e => { if (alive) setCerr(msg(e)) })
+    return () => { alive = false }
   }, [active?.id, version])
-  useInterval(refresh, 3000, [active?.id, version])
+  useInterval(refresh, 1000, [active?.id, version])
   async function changeMode(m: string) {
     if (!active || busy) return
     setBusy(true)
-    try { await setMode(active, m); await refresh() } catch (e) { setCerr(msg(e)) } finally { setBusy(false) }
+    try { await setMode(active, m); setCv(await loadClashOverview(active)) } catch (e) { setCerr(msg(e)) } finally { setBusy(false) }
   }
-  const src = cv ?? ov            // 代理数据优先，没有则用 WAN 数据
-  const rate = live ?? src?.traffic ?? null
+  const src = ov                 // OpenWrt 概览只使用路由器数据
+  const rate = ov?.traffic ?? null
   const w = ov?.wrt
   const memUsed = w ? Math.max(0, w.memTotal - w.memFree) : 0
   const memText = w ? `${fmtBytes(memUsed)} / ${fmtBytes(w.memTotal)}` : "-"
@@ -209,12 +202,12 @@ function OverviewPage({ active, version, onSwitch }: { active: Controller | null
         <StatCard icon="arrow.up.circle.fill" color="#34C759" title="上传速率" parts={rate ? fmtParts(rate.up, true) : null} spark={upH} />
       </HStack>
       <HStack spacing={12}>
-        <StatCard icon="icloud.and.arrow.down.fill" color="#3B82F6" title="下载总量" parts={live?.downTotal != null ? fmtParts(live.downTotal) : src ? fmtParts(src.downTotal) : null} />
-        <StatCard icon="icloud.and.arrow.up.fill" color="#34C759" title="上传总量" parts={live?.upTotal != null ? fmtParts(live.upTotal) : src ? fmtParts(src.upTotal) : null} />
+        <StatCard icon="icloud.and.arrow.down.fill" color="#3B82F6" title="下载总量" parts={ov ? fmtParts(ov.downTotal) : null} />
+        <StatCard icon="icloud.and.arrow.up.fill" color="#34C759" title="上传总量" parts={ov ? fmtParts(ov.upTotal) : null} />
       </HStack>
       <HStack spacing={12}>
-        <StatCard icon="link" color="#A855F7" title="活动连接" parts={liveConn != null ? [String(liveConn), ""] : src ? [String(src.connCount), ""] : null} spark={connH} floor={10} />
-        <StatCard icon="square.stack.3d.up.fill" color="#F59E0B" title="内存使用" parts={liveMem != null ? fmtParts(liveMem) : cv?.mem != null ? fmtParts(cv.mem) : null} spark={memH} floor={1024 * 1024} />
+        <StatCard icon="link" color="#A855F7" title="活动连接" parts={ov ? [String(ov.connCount), ""] : null} spark={connH} floor={10} />
+        <StatCard icon="square.stack.3d.up.fill" color="#F59E0B" title="内存使用" parts={w ? fmtParts(memUsed) : null} spark={memH} floor={1024 * 1024} />
       </HStack>
 
       <RateChart down={dn} up={upH} />
