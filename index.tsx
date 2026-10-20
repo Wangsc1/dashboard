@@ -4,7 +4,7 @@ import {
 } from "scripting"
 import {
   VERSION, Controller, Group, Conn, Rule, Overview, Plugin, PLUGINS, listControllers, saveController, removeController, getActive, setActive, getSecret, getClashSecret,
-  loadOverview, loadClashOverview, subscribeTraffic, loadWrtInterfaces, loadWrtLeases, WrtIface, WrtLease, loadGroups, selectProxy, testGroup, loadConnections, closeConnection,
+  loadOverview, loadClashOverview, subscribeTraffic, subscribeMemory, subscribeConnCount, loadWrtInterfaces, loadWrtLeases, WrtIface, WrtLease, loadGroups, selectProxy, testGroup, loadConnections, closeConnection,
   closeAllConnections, loadRules, loadConfig, patchConfig, setMode, CLASH_MODES, fmtBytes, fmtSpeed, fmtParts, fmtUptime, fmtDuration, delayColor, LOG_LEVELS,
 } from "./api"
 
@@ -41,22 +41,22 @@ function Big({ parts }: { parts: [string, string] | null }) {
   </HStack>
 }
 const HIST = 60
-function Spark({ data, color }: { data: number[]; color: string }) {
+function Spark({ data, color, floor = 1024 }: { data: number[]; color: string; floor?: number }) {
   const W = 100, H = 40
   if (data.length < 2) return <Spacer />
-  const max = Math.max(1024, ...data)
+  const max = Math.max(floor, ...data)
   const pts = data.map((v, i) => `${((i + (HIST - data.length)) / (HIST - 1) * W).toFixed(1)},${(H - 2 - v / max * (H - 4)).toFixed(1)}`)
   const area = `0,${H} ${pts.join(" ")} ${W},${H}`
   const code = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"><polygon points="${area}" fill="${color}" fill-opacity="0.18"/><polyline points="${pts.join(" ")}" fill="none" stroke="${color}" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/></svg>`
   return <SVG code={code} resizable frame={{ width: 90, height: 36 }} />
 }
-function StatCard({ icon, color, title, parts, spark }: { icon: string; color: string; title: string; parts: [string, string] | null; spark?: number[] }) {
+function StatCard({ icon, color, title, parts, spark, floor }: { icon: string; color: string; title: string; parts: [string, string] | null; spark?: number[]; floor?: number }) {
   return <Card>
     <HStack spacing={8}><Badge icon={icon} color={color} /><Text font={14} foregroundStyle="secondaryLabel">{title}</Text></HStack>
     <HStack alignment="bottom">
       <Big parts={parts} />
       <Spacer />
-      {spark ? <Spark data={spark} color={color} /> : null}
+      {spark ? <Spark data={spark} color={color} floor={floor} /> : null}
     </HStack>
   </Card>
 }
@@ -100,6 +100,10 @@ function OverviewPage({ active, version, onSwitch }: { active: Controller | null
   const [dn, setDn] = useState<number[]>([])
   const [upH, setUpH] = useState<number[]>([])
   const [live, setLive] = useState<{ up: number; down: number } | null>(null)
+  const [connH, setConnH] = useState<number[]>([])
+  const [memH, setMemH] = useState<number[]>([])
+  const [liveConn, setLiveConn] = useState<number | null>(null)
+  const [liveMem, setLiveMem] = useState<number | null>(null)
   const [st] = useState({ live: false })
   const all = listControllers()
   const dismiss = Navigation.useDismiss()
@@ -114,7 +118,7 @@ function OverviewPage({ active, version, onSwitch }: { active: Controller | null
       setDn(h => [...h, src.traffic.down].slice(-HIST)); setUpH(h => [...h, src.traffic.up].slice(-HIST))
     }
   }
-  useEffect(() => { setDn([]); setUpH([]); setOv(null); setCv(null); setLive(null); st.live = false }, [active?.id])
+  useEffect(() => { setDn([]); setUpH([]); setOv(null); setCv(null); setLive(null); setConnH([]); setMemH([]); setLiveConn(null); setLiveMem(null); st.live = false }, [active?.id])
   useEffect(() => {
     if (!active) return
     const stop = subscribeTraffic(active, t => {
@@ -122,7 +126,9 @@ function OverviewPage({ active, version, onSwitch }: { active: Controller | null
       setLive(t)
       setDn(h => [...h, t.down].slice(-HIST)); setUpH(h => [...h, t.up].slice(-HIST))
     })
-    return () => { stop(); st.live = false }
+    const stopM = subscribeMemory(active, n => { setLiveMem(n); setMemH(h => [...h, n].slice(-HIST)) })
+    const stopC = subscribeConnCount(active, n => { setLiveConn(n); setConnH(h => [...h, n].slice(-HIST)) })
+    return () => { stop(); stopM(); stopC(); st.live = false }
   }, [active?.id, version])
   useInterval(refresh, 3000, [active?.id, version])
   async function changeMode(m: string) {
@@ -186,8 +192,8 @@ function OverviewPage({ active, version, onSwitch }: { active: Controller | null
         <StatCard icon="icloud.and.arrow.up.fill" color="#34C759" title="上传总量" parts={src ? fmtParts(src.upTotal) : null} />
       </HStack>
       <HStack spacing={12}>
-        <StatCard icon="link" color="#A855F7" title="活动连接" parts={src ? [String(src.connCount), ""] : null} />
-        <StatCard icon="square.stack.3d.up.fill" color="#F59E0B" title="内存使用" parts={cv?.mem != null ? fmtParts(cv.mem) : null} />
+        <StatCard icon="link" color="#A855F7" title="活动连接" parts={liveConn != null ? [String(liveConn), ""] : src ? [String(src.connCount), ""] : null} spark={connH} floor={10} />
+        <StatCard icon="square.stack.3d.up.fill" color="#F59E0B" title="内存使用" parts={liveMem != null ? fmtParts(liveMem) : cv?.mem != null ? fmtParts(cv.mem) : null} spark={memH} floor={1024 * 1024} />
       </HStack>
 
       <RateChart down={dn} up={upH} />

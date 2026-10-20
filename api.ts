@@ -1,5 +1,5 @@
 // dashboard 数据层：Clash 外部控制 API 与 OpenWrt（LuCI ubus JSON-RPC）
-export const VERSION = "1.3.1"
+export const VERSION = "1.3.2"
 
 export type Kind = "clash" | "openwrt"
 export type Plugin = "openclash" | "nikki" | "mihomo"
@@ -220,23 +220,29 @@ function clashWsOnce(c: Controller, path: string, timeoutMs = 3000): Promise<any
   })
 }
 
-// 长连接订阅 Clash /traffic（约每秒一条），断线自动重连；返回关闭函数
-export function subscribeTraffic(c0: Controller, onData: (t: Traffic) => void): () => void {
+// 长连接订阅 Clash 的 WebSocket 推送（约每秒一条），断线自动重连；返回关闭函数
+export function subscribeClash(c0: Controller, path: string, onMsg: (j: any) => void): () => void {
   let closed = false, ws: WebSocket | null = null, timer: any = null
+  const later = (ms: number) => { if (!closed && !timer) timer = setTimeout(() => { timer = null; connect() }, ms) }
   const connect = async () => {
     if (closed) return
     try {
       const c = await cc(c0)
       if (closed) return
-      ws = new WebSocket(wsUrl(c, "/traffic"))
-      ws.addEventListener("message", (m: any) => { try { const j = JSON.parse(typeof m === "string" ? m : String(m)); onData({ up: num(j.up), down: num(j.down) }) } catch { } })
-      const retry = () => { if (!closed && !timer) timer = setTimeout(() => { timer = null; connect() }, 2000) }
-      ws.addEventListener("close", retry); ws.addEventListener("error", retry)
-    } catch { if (!closed && !timer) timer = setTimeout(() => { timer = null; connect() }, 3000) }
+      ws = new WebSocket(wsUrl(c, path))
+      ws.addEventListener("message", (m: any) => { try { onMsg(JSON.parse(typeof m === "string" ? m : String(m))) } catch { } })
+      ws.addEventListener("close", () => later(2000)); ws.addEventListener("error", () => later(2000))
+    } catch { later(3000) }
   }
   connect()
   return () => { closed = true; if (timer) clearTimeout(timer); try { ws?.close(1000) } catch { } }
 }
+export const subscribeTraffic = (c: Controller, onData: (t: Traffic) => void) =>
+  subscribeClash(c, "/traffic", j => onData({ up: num(j.up), down: num(j.down) }))
+export const subscribeMemory = (c: Controller, onData: (inuse: number) => void) =>
+  subscribeClash(c, "/memory", j => onData(num(j.inuse)))
+export const subscribeConnCount = (c: Controller, onData: (n: number) => void) =>
+  subscribeClash(c, "/connections?interval=1000", j => onData(Array.isArray(j.connections) ? j.connections.length : 0))
 
 // ---------- 概览 ----------
 export async function loadOverview(c: Controller): Promise<Overview> {
