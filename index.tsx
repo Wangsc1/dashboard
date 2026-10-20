@@ -62,18 +62,24 @@ function Big({ parts }: { parts: [string, string] | null }) {
 const HIST = 60
 function Spark({ data, color, floor = 1024 }: { data: number[]; color: string; floor?: number }) {
   const W = 100, H = 40
-  if (data.length < 2) return <Spacer />
+  if (data.length < 2) return <SVG code='<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' frame={{ width: 64, height: 24 }} />
   const max = Math.max(floor, ...data)
   const pts = data.map((v, i) => `${((i + (HIST - data.length)) / (HIST - 1) * W).toFixed(1)},${(H - 2 - v / max * (H - 4)).toFixed(1)}`)
-  const area = `0,${H} ${pts.join(" ")} ${W},${H}`
+  const firstX = ((HIST - data.length) / (HIST - 1) * W).toFixed(1)
+  const area = `${firstX},${H} ${pts.join(" ")} ${W},${H}`
   const code = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"><polygon points="${area}" fill="${color}" fill-opacity="0.18"/><polyline points="${pts.join(" ")}" fill="none" stroke="${color}" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/></svg>`
-  return <SVG code={code} resizable frame={{ width: 90, height: 36 }} />
+  return <SVG code={code} resizable frame={{ width: 64, height: 24 }} />
 }
 function StatCard({ icon, color, title, parts, spark, floor }: { icon: string; color: string; title: string; parts: [string, string] | null; spark?: number[]; floor?: number }) {
   return <Card>
     <HStack spacing={8}><Badge icon={icon} color={color} /><Text font={13} foregroundStyle="secondaryLabel">{title}</Text></HStack>
-    <Big parts={parts} />
-    {spark ? <HStack><Spacer /><Spark data={spark} color={color} floor={floor} /></HStack> : null}
+    <ZStack alignment="bottomTrailing" frame={{ maxWidth: "infinity", height: 52 }}>
+      {spark ? <Spark data={spark} color={color} floor={floor} /> : null}
+      <VStack alignment="leading" spacing={0} frame={{ maxWidth: "infinity", height: 52 }}>
+        <Big parts={parts} />
+        <Spacer />
+      </VStack>
+    </ZStack>
   </Card>
 }
 function InfoItem({ icon, color, title, value }: { icon: string; color: string; title: string; value: string }) {
