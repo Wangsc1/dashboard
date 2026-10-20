@@ -1,12 +1,17 @@
 import {
-  Button, ForEach, Form, HStack, Label, Navigation, NavigationLink, NavigationStack, Picker, Script, Section, SecureField, Spacer,
+  Animation, Transition, Button, ForEach, Form, HStack, Label, Navigation, NavigationLink, NavigationStack, Picker, Script, Section, SecureField, Spacer,
   Image, Menu, RoundedRectangle, Circle, ScrollView, SVG, Text, ZStack, modifiers, TextField, Toggle, VStack, useEffect, useState,
 } from "scripting"
 import {
   VERSION, Controller, Group, Conn, Rule, Overview, Plugin, PLUGINS, listControllers, saveController, removeController, getActive, setActive, getSecret, getClashSecret,
   loadOverview, loadClashOverview, loadWrtInterfaces, loadWrtLeases, WrtIface, WrtLease, loadGroups, selectProxy, testGroup, loadConnections, closeConnection,
-  closeAllConnections, loadRules, loadConfig, patchConfig, setMode, CLASH_MODES, fmtBytes, fmtSpeed, fmtParts, fmtUptime, fmtDuration, delayColor, LOG_LEVELS,
+  closeAllConnections, loadRules, fmtBytes, fmtSpeed, fmtParts, fmtUptime, fmtDuration, delayColor,
 } from "./api"
+
+import { useSmoothPlot } from "./chart-ui"
+import { CHART_HISTORY } from "./chart"
+import { AppearancePage, GlobalConfigPage, LogsPage, KernelConfigPage, usePreferences } from "./settings-ui"
+import { getPreferences, controllerHealth, cachedIcon, feedback, recordEvent } from "./preferences"
 
 const msg = (e: any) => String(e?.message ?? e ?? "未知错误")
 
@@ -59,24 +64,45 @@ function Big({ parts }: { parts: [string, string] | null }) {
     {`${shown}${unit ? " " + unit : ""}`}
   </Text>
 }
-const HIST = 60
-function Spark({ data, color, floor = 1024 }: { data: number[]; color: string; floor?: number }) {
-  const W = 100, H = 40
-  if (data.length < 2) return <SVG code='<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' frame={{ maxWidth: "infinity", height: 48 }} />
-  const max = Math.max(floor, ...data)
-  const pts = data.map((v, i) => `${((i + (HIST - data.length)) / (HIST - 1) * W).toFixed(1)},${(H - 2 - v / max * (H - 4)).toFixed(1)}`)
-  const firstX = ((HIST - data.length) / (HIST - 1) * W).toFixed(1)
-  const area = `${firstX},${H} ${pts.join(" ")} ${W},${H}`
-  const code = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"><polygon points="${area}" fill="${color}" fill-opacity="0.18"/><polyline points="${pts.join(" ")}" fill="none" stroke="${color}" stroke-opacity="0.65" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round"/></svg>`
-  return <SVG code={code} resizable frame={{ maxWidth: "infinity", height: 48 }} />
+const HIST = CHART_HISTORY
+const STAT_HEIGHT = 104
+function Spark({ data, color, floor = 1024, enabled = true }: { data: number[]; color: string; floor?: number; enabled?: boolean }) {
+  const W = 100, H = STAT_HEIGHT
+  const plot = useSmoothPlot(data, undefined, enabled, W, H, floor, 2)
+  const line = plot.paths[0]
+  const firstX = plot.points[0][0]?.x ?? W
+  const area = line ? `${line} L ${W},${H} L ${firstX},${H} Z` : ""
+  const code = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"><path d="${area}" fill="${color}" fill-opacity="0.10"/><path d="${line}" fill="none" stroke="${color}" stroke-opacity="0.28" stroke-width="1.4" stroke-linecap="round"/></svg>`
+  return <SVG code={code} resizable frame={{ maxWidth: "infinity", height: STAT_HEIGHT }} />
 }
-function StatCard({ icon, color, title, parts, spark, floor }: { icon: string; color: string; title: string; parts: [string, string] | null; spark?: number[]; floor?: number }) {
-  return <ZStack alignment="bottom" frame={{ maxWidth: "infinity", height: 116 }}
+function StatCard({ icon, color, title, parts, spark, floor, droplets, connectionHosts, enabled = true }: { icon: string; color: string; title: string; parts: [string, string] | null; spark?: number[]; floor?: number; droplets?: boolean; connectionHosts?: string[]; enabled?: boolean }) {
+  const p = usePreferences()
+  const [phase, setPhase] = useState(0), [rippleAt, setRippleAt] = useState(0), [wave, setWave] = useState(0)
+  useEffect(() => {
+    if (!enabled || (!(p.droplets && droplets) && !(p.connectionBackground && connectionHosts?.length))) return
+    const t = setInterval(() => setPhase(v => (v + 1) % 7200), 120)
+    return () => clearInterval(t)
+  }, [p.droplets, p.connectionBackground, droplets, connectionHosts?.length, enabled])
+  useEffect(() => {
+    if (!enabled || !rippleAt || !p.ripple) return
+    const t = setInterval(() => {
+      const age = Date.now() - rippleAt
+      if (age > 650) { setRippleAt(0); setWave(0); clearInterval(t) } else setWave(age / 650)
+    }, 35)
+    return () => clearInterval(t)
+  }, [rippleAt, p.ripple, enabled])
+  const dropletSVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 100">${[0, 1, 2, 3].map(i => `<path d="M ${24+i*34} ${(phase*3+i*24)%115-12} q -9 12 0 14 q 9 -2 0 -14" fill="${color}" opacity="0.10"/>`).join("")}</svg>`
+  const rippleSVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 104"><circle cx="80" cy="52" r="${wave * 100}" stroke="${color}" fill="none" stroke-width="3" opacity="${(1-wave)*0.25}"/></svg>`
+  return <ZStack alignment="bottom" frame={{ maxWidth: "infinity", height: STAT_HEIGHT }}
+    onTapGesture={() => { if (p.ripple) { setRippleAt(Date.now()); feedback() } }}
     clipShape={{ type: "rect", cornerRadius: 22 }}>
     <RoundedRectangle cornerRadius={22} fill={CARD_BG} />
-    {spark ? <Spark data={spark} color={color} floor={floor} /> : null}
+    {spark ? <Spark data={spark} color={color} floor={floor} enabled={enabled} /> : null}
+    {p.droplets && droplets ? <SVG code={dropletSVG} resizable frame={{ maxWidth: "infinity", height: 100 }} /> : null}
+    {p.connectionBackground && connectionHosts?.length ? <Text font={10} foregroundStyle="tertiaryLabel" lineLimit={1} padding={{ bottom: 5 }} offset={{ x: 60 - (phase % 60) * 3, y: 0 }}>{connectionHosts[Math.floor(phase / 60) % connectionHosts.length]}</Text> : null}
+    {p.ripple && rippleAt ? <SVG code={rippleSVG} resizable frame={{ maxWidth: "infinity", height: STAT_HEIGHT }} /> : null}
     <VStack alignment="leading" spacing={10} foregroundStyle={MAIN_FG}
-      modifiers={modifiers().frame({ maxWidth: "infinity", height: 88, alignment: "topLeading" }).padding({ horizontal: 16, vertical: 14 })}>
+      modifiers={modifiers().frame({ maxWidth: "infinity", height: 78, alignment: "topLeading" }).padding({ horizontal: 14, vertical: 11 })}>
       <HStack spacing={8}><Badge icon={icon} color={color} /><Text font={13} foregroundStyle="secondaryLabel">{title}</Text></HStack>
       <Big parts={parts} />
       <Spacer />
@@ -89,12 +115,12 @@ function InfoItem({ icon, color, title, value }: { icon: string; color: string; 
     <VStack alignment="leading" spacing={1}><Text font={13} foregroundStyle="secondaryLabel">{title}</Text><Text fontWeight="semibold">{value}</Text></VStack>
   </HStack>
 }
-function RateChart({ down, up }: { down: number[]; up: number[] }) {
+function RateChart({ down, up, enabled = true }: { down: number[]; up: number[]; enabled?: boolean }) {
   const W = 300, H = 120
-  const max = Math.max(1024, ...down, ...up) * 1.0
-  const pts = (arr: number[]) => arr.map((v, i) => `${((i + (HIST - arr.length)) / (HIST - 1) * W).toFixed(1)},${(H - v / max * H).toFixed(1)}`).join(" ")
-  const line = (arr: number[], color: string) => arr.length > 1 ? `<polyline points="${pts(arr)}" fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>` : ""
-  const code = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}">${line(down, "#3B82F6")}${line(up, "#34C759")}</svg>`
+  const plot = useSmoothPlot(down, up, enabled, W, H)
+  const max = plot.scale
+  const line = (i: number, color: string) => plot.paths[i] ? `<path d="${plot.paths[i]}" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round"/>` : ""
+  const code = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}">${line(0, "#3B82F6")}${line(1, "#34C759")}</svg>`
   const label = (f: number) => fmtSpeed(max * f)
   return <Card>
     <HStack>
@@ -115,63 +141,63 @@ function RateChart({ down, up }: { down: number[]; up: number[] }) {
 }
 
 function OverviewPage({ active, version, onSwitch }: { active: Controller | null; version: number; onSwitch: () => void }) {
+  const prefs = usePreferences()
+  const [hosts, setHosts] = useState<string[]>([])
   const [ov, setOv] = useState<Overview | null>(null)
-  const [cv, setCv] = useState<Overview | null>(null)
   const [err, setErr] = useState("")
-  const [cerr, setCerr] = useState("")
-  const [busy, setBusy] = useState(false)
   const [dn, setDn] = useState<number[]>([])
   const [upH, setUpH] = useState<number[]>([])
-  const [st] = useState({ refreshing: false })
+  const [visible, setVisible] = useState(true)
   const all = listControllers()
-  const dismiss = Navigation.useDismiss()
-  const [page, setPage] = useState<"" | "interfaces" | "leases" | "settings">("")
-  async function refresh() {
-    if (!active || st.refreshing) return
-    st.refreshing = true
-    try {
-      const o = await loadOverview(active)
-      setOv(o); setErr("")
-      setDn(h => [...h, o.traffic.down].slice(-HIST))
-      setUpH(h => [...h, o.traffic.up].slice(-HIST))
-    } catch (e) { setErr(msg(e)) }
-    finally { st.refreshing = false }
-  }
-  useEffect(() => { setDn([]); setUpH([]); setOv(null); setCv(null) }, [active?.id])
-  // 代理状态只供下面的运行模式控制，不参与 OpenWrt 概览。
+  const [page, setPage] = useState<"" | "settings" | "appearance" | "global" | "logs">("")
+  const showCharts = visible && page === ""
+  useEffect(() => { setDn([]); setUpH([]); setOv(null) }, [active?.id, active?.url])
   useEffect(() => {
-    if (!active) return
+    if (!active || !showCharts) return
+    if (active.kind !== "openwrt") { setErr("主页仅支持 OpenWrt 路由器数据，请在设置添加 OpenWrt"); return }
+    let alive = true, refreshing = false
+    async function refresh() {
+      if (!alive || refreshing) return
+      refreshing = true
+      try {
+        const o = await loadOverview(active!)
+        if (alive) { setOv(o); setErr(""); setDn(h => [...h, o.traffic.down].slice(-HIST)); setUpH(h => [...h, o.traffic.up].slice(-HIST)) }
+      } catch (e) { if (alive) setErr(msg(e)) }
+      finally { refreshing = false }
+    }
+    void refresh(); const t = setInterval(refresh, 1000)
+    return () => { alive = false; clearInterval(t) }
+  }, [active?.id, active?.url, version, showCharts])
+  useEffect(() => {
+    setHosts([])
+    if (!active || !prefs.connectionBackground || !showCharts) return
     let alive = true
-    loadClashOverview(active).then(o => { if (alive) { setCv(o); setCerr("") } }).catch(e => { if (alive) setCerr(msg(e)) })
-    return () => { alive = false }
-  }, [active?.id, version])
-  useInterval(refresh, 1000, [active?.id, version])
-  async function changeMode(m: string) {
-    if (!active || busy) return
-    setBusy(true)
-    try { await setMode(active, m); setCv(await loadClashOverview(active)) } catch (e) { setCerr(msg(e)) } finally { setBusy(false) }
-  }
-  const src = ov                 // OpenWrt 概览只使用路由器数据
+    const read = () => loadConnections(active).then(xs => { if (alive) setHosts(xs.map(x => x.host).filter(Boolean).slice(0, 20)) }).catch(() => { if (alive) setHosts([]) })
+    void read(); const t = setInterval(read, 10000)
+    return () => { alive = false; clearInterval(t) }
+  }, [active?.id, prefs.connectionBackground, showCharts])
   const rate = ov?.traffic ?? null
   const w = ov?.wrt
   const memUsed = w ? Math.max(0, w.memTotal - w.memFree) : 0
   const toolbar = {
-    topBarLeading: <Button title="" systemImage="xmark" action={dismiss} />,
     topBarTrailing: <Menu label={<Image systemName="ellipsis.circle" />}>
-      <Button title="网络接口" systemImage="network" action={() => setPage("interfaces")} />
-      <Button title="在线设备" systemImage="laptopcomputer.and.iphone" action={() => setPage("leases")} />
       <Button title="设置" systemImage="gearshape" action={() => setPage("settings")} />
+      <Button title="运行日志" systemImage="doc.text" action={() => setPage("logs")} />
+      <Button title="外观设置" systemImage="paintpalette" action={() => setPage("appearance")} />
+      <Button title="全局配置" systemImage="slider.horizontal.3" action={() => setPage("global")} />
     </Menu>,
   }
   const destination = {
     isPresented: page !== "",
     onChanged: (v: boolean) => { if (!v) setPage("") },
-    content: page === "interfaces" && active ? <WrtInterfacesPage active={active} version={version} />
-      : page === "leases" && active ? <WrtLeasesPage active={active} version={version} />
-      : page === "settings" ? <SettingsPage active={active} onChanged={onSwitch} /> : <Text>-</Text>,
+    content: page === "settings" ? <SettingsPage active={active} onChanged={onSwitch} />
+      : page === "appearance" ? <AppearancePage />
+      : page === "global" ? <GlobalConfigPage active={active} />
+      : page === "logs" ? <LogsPage />
+      : <Text>-</Text>,
   }
   if (!active) return <Form navigationTitle="dashboard" navigationBarTitleDisplayMode="inline" toolbar={toolbar} navigationDestination={destination}><NoController /></Form>
-  return <ScrollView navigationTitle={active.name} navigationBarTitleDisplayMode="inline" toolbar={toolbar} navigationDestination={destination}>
+  return <ScrollView onAppear={() => setVisible(true)} onDisappear={() => setVisible(false)} navigationTitle={active.name} navigationBarTitleDisplayMode="inline" toolbar={toolbar} navigationDestination={destination}>
     <VStack spacing={12} padding={{ horizontal: 14, vertical: 8 }}>
       {all.length > 1 ? <Card>
         <Picker title="当前路由器" pickerStyle="menu" value={active.id} onChanged={(v: string) => { setActive(v); onSwitch() }}>
@@ -179,9 +205,8 @@ function OverviewPage({ active, version, onSwitch }: { active: Controller | null
         </Picker>
       </Card> : null}
       {err ? <Text font={13} foregroundStyle="systemRed">{err}</Text> : null}
-      {cerr ? <Text font={13} foregroundStyle="systemRed">{`代理：${cerr}`}</Text> : null}
 
-      <Card>
+      {prefs.showWrt ? <Card>
         <HStack>
           <Badge icon="laptopcomputer" color="#6366F1" />
           <Text fontWeight="semibold" font={15}>OpenWrt 状态</Text>
@@ -190,42 +215,44 @@ function OverviewPage({ active, version, onSwitch }: { active: Controller | null
         </HStack>
         <InfoItem icon="clock" color="#3B82F6" title="运行时间" value={w ? fmtUptime(w.uptime, true) : "-"} />
         <InfoItem icon="waveform.path.ecg" color="#F59E0B" title="系统负载" value={w ? w.load.map(v => v.toFixed(2)).join(" ") : "-"} />
-      </Card>
-
-      <HStack spacing={12}>
-        <StatCard icon="arrow.down.circle.fill" color="#3B82F6" title="下载速率" parts={rate ? fmtParts(rate.down, true) : null} spark={dn} />
-        <StatCard icon="arrow.up.circle.fill" color="#34C759" title="上传速率" parts={rate ? fmtParts(rate.up, true) : null} spark={upH} />
-      </HStack>
-      <HStack spacing={12}>
-        <StatCard icon="icloud.and.arrow.down.fill" color="#3B82F6" title="下载总量" parts={ov ? fmtParts(ov.downTotal) : null} />
-        <StatCard icon="icloud.and.arrow.up.fill" color="#34C759" title="上传总量" parts={ov ? fmtParts(ov.upTotal) : null} />
-      </HStack>
-      <HStack spacing={12}>
-        <StatCard icon="link" color="#A855F7" title="活动连接" parts={ov ? [String(ov.connCount), ""] : null} />
-        <StatCard icon="square.stack.3d.up.fill" color="#F59E0B" title="内存使用" parts={w ? fmtParts(memUsed) : null} />
-      </HStack>
-
-      <RateChart down={dn} up={upH} />
-
-      {cv ? <Card>
-        <Text fontWeight="semibold">{`运行模式${cv.version ? " · " + cv.version : ""}`}</Text>
-        <Picker title="模式" pickerStyle="segmented" value={cv.mode} onChanged={changeMode} disabled={busy}>
-          {CLASH_MODES.map(([v, l]) => <Text key={v} tag={v}>{l}</Text>)}
-        </Picker>
       </Card> : null}
 
-      <Card>
-        <NavigationLink destination={<ProxiesPage active={active} version={version} />}><Label title="策略组" systemImage="point.3.connected.trianglepath.dotted" /></NavigationLink>
-        <NavigationLink destination={<ConnectionsPage active={active} version={version} />}><Label title="连接" systemImage="arrow.up.arrow.down" /></NavigationLink>
-        <NavigationLink destination={<RulesPage active={active} version={version} />}><Label title="规则" systemImage="list.bullet.rectangle" /></NavigationLink>
-      </Card>
+      <HStack spacing={12}>
+        <StatCard enabled={showCharts} icon="arrow.down.circle.fill" color="#3B82F6" title="下载速率" parts={rate ? fmtParts(rate.down, true) : null} spark={dn} />
+        <StatCard enabled={showCharts} icon="arrow.up.circle.fill" color="#34C759" title="上传速率" parts={rate ? fmtParts(rate.up, true) : null} spark={upH} />
+      </HStack>
+      <HStack spacing={12}>
+        <StatCard enabled={showCharts} icon="icloud.and.arrow.down.fill" color="#3B82F6" title="下载总量" droplets parts={ov ? fmtParts(ov.downTotal) : null} />
+        <StatCard enabled={showCharts} icon="icloud.and.arrow.up.fill" color="#34C759" title="上传总量" droplets parts={ov ? fmtParts(ov.upTotal) : null} />
+      </HStack>
+      <HStack spacing={12}>
+        <StatCard enabled={showCharts} icon="link" color="#A855F7" title="活动连接" connectionHosts={hosts} parts={ov ? [String(ov.connCount), ""] : null} />
+        <StatCard enabled={showCharts} icon="square.stack.3d.up.fill" color="#F59E0B" title="内存使用" parts={w ? fmtParts(memUsed) : null} />
+      </HStack>
+
+      <RateChart down={dn} up={upH} enabled={showCharts} />
+
+
     </VStack>
   </ScrollView>
 }
 
 // ---------- 策略组 ----------
+function GroupIcon({ g }: { g: Group }) {
+  const p = usePreferences(), [image, setImage] = useState<any>(null)
+  const symbol = p.groupIcons[g.name]
+  useEffect(() => {
+    let alive = true; setImage(null)
+    if (p.customIcons && !symbol && g.icon) cachedIcon(g.icon).then(img => { if (alive) setImage(img) }).catch(() => {})
+    return () => { alive = false }
+  }, [p.customIcons, symbol, g.icon])
+  if (!p.customIcons) return null
+  return image ? <Image image={image} resizable scaleToFit frame={{ width: 20, height: 20 }} /> : <Image systemName={symbol || "point.3.connected.trianglepath.dotted"} frame={{ width: 20, height: 20 }} />
+}
 function GroupSection({ c, g, onChanged }: { c: Controller; g: Group; onChanged: () => void }) {
+  const prefs = usePreferences()
   const [delays, setDelays] = useState<Record<string, number>>(g.delays)
+  useEffect(() => setDelays(g.delays), [g.delays])
   const [testing, setTesting] = useState(false)
   const [open, setOpen] = useState(false)
   async function test() {
@@ -236,16 +263,19 @@ function GroupSection({ c, g, onChanged }: { c: Controller; g: Group; onChanged:
     if (n === g.now) return
     try { await selectProxy(c, g.name, n); onChanged() } catch (e) { await Dialog.alert({ message: msg(e) }) }
   }
-  return <Section header={<HStack><Text>{g.name}</Text><Spacer /><Text>{g.type}</Text></HStack>}
-    footer={<Text>{`当前：${g.now || "-"}`}</Text>}>
+  const nodes = [...g.all]
+  if (prefs.nodeSort === "name") nodes.sort((a, b) => a.localeCompare(b))
+  if (prefs.nodeSort === "delay") nodes.sort((a, b) => (delays[a] > 0 ? delays[a] : Infinity) - (delays[b] > 0 ? delays[b] : Infinity))
+  return <Section header={<HStack onLongPressGesture={() => { if (prefs.collapseGesture) { setOpen(!open); feedback() } }}><GroupIcon g={g} /><Text>{g.name}</Text><Spacer />{prefs.proxyStyle === "list" ? <Text>{g.type}</Text> : null}</HStack>}
+    footer={prefs.proxyStyle === "list" ? <Text>{`当前：${g.now || "-"}`}</Text> : undefined}>
     <HStack>
-      <Button title={open ? "收起节点" : `展开节点（${g.all.length}）`} action={() => setOpen(!open)} />
+      <Button title={open ? "收起节点" : `展开节点（${g.all.length}）`} action={() => { setOpen(!open); feedback() }} />
       <Spacer />
       <Button title={testing ? "测速中…" : "测速"} systemImage="bolt.fill" disabled={testing} action={test} />
     </HStack>
-    {open ? g.all.map(n => <Button key={n} action={() => pick(n)}>
+    {open ? nodes.map(n => <Button key={n} action={() => pick(n)}>
       <HStack>
-        <Text foregroundStyle={n === g.now ? "systemBlue" : "label"}>{`${n === g.now ? "✓ " : ""}${n}`}</Text>
+        <Text font={prefs.proxyStyle === "compact" ? 12 : 15} foregroundStyle={n === g.now ? "systemBlue" : "label"}>{`${n === g.now ? "✓ " : ""}${n}`}</Text>
         <Spacer />
         {delays[n] !== undefined ? <Text font={13} foregroundStyle={delayColor(delays[n]) as any}>{delays[n] > 0 ? `${delays[n]} ms` : "超时"}</Text> : null}
       </HStack>
@@ -253,6 +283,7 @@ function GroupSection({ c, g, onChanged }: { c: Controller; g: Group; onChanged:
   </Section>
 }
 function ProxiesPage({ active, version }: { active: Controller | null; version: number }) {
+  const prefs = usePreferences()
   const [groups, setGroups] = useState<Group[]>([])
   const [err, setErr] = useState("")
   const [tick, setTick] = useState(0)
@@ -261,7 +292,7 @@ function ProxiesPage({ active, version }: { active: Controller | null; version: 
     let alive = true
     loadGroups(active).then(g => { if (alive) { setGroups(g); setErr("") } }).catch(e => { if (alive) setErr(msg(e)) })
     return () => { alive = false }
-  }, [active?.id, version, tick])
+  }, [active?.id, version, tick, prefs.nestedDelay, prefs.showHidden, prefs.showGlobal])
   return <Form navigationTitle="策略组" navigationBarTitleDisplayMode="inline"
     toolbar={{ primaryAction: <Button title="刷新" systemImage="arrow.clockwise" action={() => setTick(tick + 1)} /> }}>
     {!active ? <NoController /> : <>
@@ -273,6 +304,7 @@ function ProxiesPage({ active, version }: { active: Controller | null; version: 
 
 // ---------- 连接 ----------
 function ConnectionsPage({ active, version }: { active: Controller | null; version: number }) {
+  const prefs = usePreferences()
   const [conns, setConns] = useState<Conn[]>([])
   const [err, setErr] = useState("")
   const [q, setQ] = useState("")
@@ -300,12 +332,12 @@ function ConnectionsPage({ active, version }: { active: Controller | null; versi
     {!active ? <NoController /> : <>
       <Section><TextField title="筛选" value={q} onChanged={setQ} prompt="域名 / 规则 / 节点 / 源地址" /></Section>
       {err ? <Section><Text foregroundStyle="systemRed">{err}</Text></Section> : null}
-      <Section footer={conns.length > shown.length ? <Text>仅显示最新 200 条；点击条目可断开</Text> : <Text>点击条目可断开</Text>}>
-        {shown.map(x => <Button key={x.id} action={() => close(x)}>
+      <Section animation={prefs.removalFade ? { animation: Animation.easeOut(0.3), value: shown.map(x => x.id).join(",") } : undefined} footer={conns.length > shown.length ? <Text>仅显示最新 200 条；点击条目可断开</Text> : <Text>点击条目可断开</Text>}>
+        {shown.map(x => <Button key={x.id} transition={prefs.removalFade ? Transition.opacity().combined(Transition.scale(0.85)) : undefined} action={() => close(x)}>
           <VStack alignment="leading" spacing={2}>
             <Text font={15}>{x.host}</Text>
-            <Text font={12} foregroundStyle="secondaryLabel">{`${x.network} ${x.src} → ${x.dst}`}</Text>
-            <Text font={12} foregroundStyle="secondaryLabel">{`${x.chain || "-"} | ${x.rule || "-"}`}</Text>
+            {prefs.connectionStyle === "standard" ? <Text font={12} foregroundStyle="secondaryLabel">{`${x.network} ${x.src} → ${x.dst}`}</Text> : null}
+            {prefs.connectionStyle === "standard" ? <Text font={12} foregroundStyle="secondaryLabel">{`${x.chain || "-"} | ${x.rule || "-"}`}</Text> : null}
             <Text font={12} foregroundStyle="secondaryLabel">{`↑${fmtBytes(x.up)} ↓${fmtBytes(x.down)} · ${fmtDuration(x.start)}`}</Text>
           </VStack>
         </Button>)}
@@ -447,31 +479,9 @@ function EditController({ initial, onDone }: { initial?: Controller; onDone: () 
   </Form>
 }
 
-function ClashConfigSection({ c }: { c: Controller }) {
-  const [cfg, setCfg] = useState<any>(null)
-  const [err, setErr] = useState("")
-  useEffect(() => { loadConfig(c).then(setCfg).catch(e => setErr(msg(e))) }, [c.id])
-  async function patch(p: any) {
-    try { await patchConfig(c, p); setCfg({ ...cfg, ...p }); setErr("") } catch (e) { setErr(msg(e)) }
-  }
-  const [ports, setPorts] = useState<Record<string, string>>({})
-  const portField = (key: string, label: string) => <TextField key={key} title={label} value={ports[key] ?? String(cfg?.[key] ?? 0)}
-    onChanged={(v: string) => setPorts({ ...ports, [key]: v })}
-    onSubmit={{ triggers: "text", action: () => { const n = Number(ports[key]); if (Number.isInteger(n) && n >= 0 && n < 65536) patch({ [key]: n }) } } as any} />
-  if (err && !cfg) return <Section header={<Text>内核配置</Text>}><Text foregroundStyle="systemRed">{err}</Text></Section>
-  if (!cfg) return null
-  return <Section header={<Text>内核配置（{c.name}）</Text>} footer={<Text>端口修改后按键盘“完成”提交。{err}</Text>}>
-    <Picker title="日志级别" pickerStyle="menu" value={String(cfg["log-level"] ?? "info")} onChanged={(v: string) => patch({ "log-level": v })}>
-      {LOG_LEVELS.map(l => <Text key={l} tag={l}>{l}</Text>)}
-    </Picker>
-    <Toggle title="允许局域网连接" value={!!cfg["allow-lan"]} onChanged={(v: boolean) => patch({ "allow-lan": v })} />
-    {portField("port", "HTTP 端口")}
-    {portField("socks-port", "SOCKS 端口")}
-    {portField("mixed-port", "混合端口")}
-  </Section>
-}
-
 function SettingsPage({ active, onChanged }: { active: Controller | null; onChanged: () => void }) {
+  const prefs = usePreferences()
+  const [revealed, setRevealed] = useState<string[]>([])
   const [list, setList] = useState(listControllers())
   const reload = () => { setList(listControllers()); onChanged() }
   // 系统滑动删除：回调触发时该行已被移除，只同步数据源；其余刷新延后，避免与删除动画冲突
@@ -485,29 +495,77 @@ function SettingsPage({ active, onChanged }: { active: Controller | null; onChan
     <Section header={<Text>OpenWrt</Text>}>
       <ForEach count={list.length}
         itemBuilder={i => <NavigationLink key={list[i].id} destination={<EditController initial={list[i]} onDone={reload} />}>
-          <VStack alignment="leading"><Text>{list[i].name}</Text><Text font={12} foregroundStyle="secondaryLabel">{list[i].url}</Text></VStack>
+          <VStack alignment="leading" onLongPressGesture={() => setRevealed([...revealed, list[i].id])}><Text>{list[i].name}</Text>{prefs.foldOffline && controllerHealth[list[i].id] === false && !revealed.includes(list[i].id)
+            ? <Text font={12} foregroundStyle="secondaryLabel">连接失败 · 长按展开地址</Text>
+            : <Text font={12} foregroundStyle="secondaryLabel">{list[i].url}</Text>}</VStack>
         </NavigationLink>}
         onDelete={onDelete} />
       <NavigationLink destination={<EditController onDone={reload} />}><Label title="添加 OpenWrt" systemImage="plus" /></NavigationLink>
     </Section>
-    {active ? <ClashConfigSection c={active} /> : null}
+    {active ? <Section header={<Text>路由器详情</Text>}>
+      <NavigationLink destination={<WrtInterfacesPage active={active} version={0} />}><Label title="网络接口" systemImage="network" /></NavigationLink>
+      <NavigationLink destination={<WrtLeasesPage active={active} version={0} />}><Label title="在线设备" systemImage="laptopcomputer.and.iphone" /></NavigationLink>
+      <NavigationLink destination={<KernelConfigPage c={active} />}><Label title="代理内核配置" systemImage="gearshape.2" /></NavigationLink>
+    </Section> : null}
     <Section footer={<Text>密码和密钥保存在 Keychain，不会上传或写入脚本文件。</Text>}>
       <Text foregroundStyle="secondaryLabel">{`dashboard v${VERSION}（非官方实现）`}</Text>
     </Section>
   </Form>
 }
 
-// ---------- 根：单一 NavigationStack，子页面左右推入，系统返回按钮 ----------
+// ---------- 根：单一 NavigationStack + 自绘五项悬浮导航；无系统 TabView ----------
+type RootTab = "home" | "proxies" | "rules" | "connections" | "more"
+const ROOT_TABS: [RootTab, string, string][] = [["home", "主页", "house.fill"], ["proxies", "代理", "point.3.connected.trianglepath.dotted"], ["rules", "规则", "list.bullet.rectangle"], ["connections", "连接", "arrow.up.arrow.down"], ["more", "更多", "ellipsis.circle"]]
+function FloatingBar({ tab, onChanged }: { tab: RootTab; onChanged: (tab: RootTab) => void }) {
+  return <HStack spacing={3} padding={7}
+    background={<RoundedRectangle cornerRadius={32} fill={{ light: "#F6F6F7", dark: "#252526" }} />}
+    shadow={{ color: "rgba(0,0,0,0.12)", radius: 12, x: 0, y: 3 }}>
+    {ROOT_TABS.map(([id, title, icon]) => <Button key={id} buttonStyle="plain" accessibilityLabel={title}
+      accessibilityAddTraits={tab === id ? "isSelected" : undefined}
+      frame={{ maxWidth: "infinity" }} action={() => { if (tab !== id) { feedback(); onChanged(id) } }}>
+      <VStack spacing={3} padding={{ vertical: 7 }} frame={{ maxWidth: "infinity", minHeight: 45 }}
+        foregroundStyle={tab === id ? "systemBlue" : "secondaryLabel"}
+        background={tab === id ? { style: { light: "#E2E3E5", dark: "#48484A" }, shape: { type: "rect", cornerRadius: 24 } } : undefined}>
+        <Image systemName={icon} font={18} /><Text font={10} fontWeight={tab === id ? "semibold" : "regular"}>{title}</Text>
+      </VStack>
+    </Button>)}
+  </HStack>
+}
+function MorePage({ active, onChanged }: { active: Controller | null; onChanged: () => void }) {
+  return <Form navigationTitle="更多" navigationBarTitleDisplayMode="inline">
+    <Section header={<Text>当前代理控制器</Text>} footer={<Text>代理 / 规则 / 连接及内核配置使用当前 OpenWrt 的插件自动获取结果（或手动填写的控制器），与主页路由器统计独立。</Text>}>
+      {active ? <><Text>{active.name}</Text><NavigationLink destination={<KernelConfigPage c={active} />}><Label title="运行模式与内核配置" systemImage="gearshape.2" /></NavigationLink></> : <Text>请先在设置添加控制器</Text>}
+    </Section>
+    <Section header={<Text>应用设置（本地）</Text>}>
+      <NavigationLink destination={<LogsPage />}><Label title="运行日志" systemImage="doc.text" /></NavigationLink>
+      <NavigationLink destination={<AppearancePage />}><Label title="外观设置" systemImage="paintpalette" /></NavigationLink>
+      <NavigationLink destination={<GlobalConfigPage active={active} />}><Label title="全局配置" systemImage="slider.horizontal.3" /></NavigationLink>
+      <NavigationLink destination={<SettingsPage active={active} onChanged={onChanged} />}><Label title="设置（控制器管理）" systemImage="gearshape" /></NavigationLink>
+    </Section>
+  </Form>
+}
 function Root() {
+  const prefs = usePreferences(), dismiss = Navigation.useDismiss()
   const [version, setVersion] = useState(0)
-  const [active, setActiveState] = useState<Controller | null>(getActive())
-  const bump = () => { setActiveState(getActive()); setVersion(v => v + 1) }
-  return <NavigationStack font={14} foregroundStyle={MAIN_FG}>
-    <OverviewPage active={active} version={version} onSwitch={bump} />
+  const [tab, setTab] = useState<RootTab>(() => { const p = getPreferences().defaultPage; return p === "overview" ? "home" : p })
+  const active = getActive(), bump = () => { setVersion(v => v + 1) }
+  // 只挂载所选页：换 tab 即卸载首页、释放采样和曲线订阅，不做隐藏页后台请求。
+  const content = tab === "home" ? <OverviewPage key={active?.id ?? "empty"} active={active} version={version} onSwitch={bump} />
+    : tab === "proxies" ? <ProxiesPage key={active?.id ?? "empty"} active={active} version={version} />
+    : tab === "rules" ? <RulesPage key={active?.id ?? "empty"} active={active} version={version} />
+    : tab === "connections" ? <ConnectionsPage key={active?.id ?? "empty"} active={active} version={version} />
+    : <MorePage active={active} onChanged={bump} />
+  return <NavigationStack preferredColorScheme={prefs.theme === "system" ? undefined : prefs.theme} font={14} foregroundStyle={MAIN_FG}>
+    <VStack spacing={0} frame={{ maxWidth: "infinity", maxHeight: "infinity" }}
+      toolbar={{ topBarLeading: <Button title="" systemImage="xmark" action={dismiss} /> }}
+      safeAreaInset={{ bottom: { spacing: 0, content: <VStack padding={{ horizontal: 16, top: 7, bottom: 8 }}><FloatingBar tab={tab} onChanged={setTab} /></VStack> } }}>
+      {content}
+    </VStack>
   </NavigationStack>
 }
 
 async function run() {
+  recordEvent("start", true)
   await Navigation.present({ element: <Root />, modalPresentationStyle: "fullScreen" })
   Script.exit()
 }

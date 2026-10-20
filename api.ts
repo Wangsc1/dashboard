@@ -1,5 +1,6 @@
 // dashboard 数据层：Clash 外部控制 API 与 OpenWrt（LuCI ubus JSON-RPC）
-export const VERSION = "1.3.11"
+import { getPreferences, customHeaders, recordEvent, controllerHealth, feedback } from "./preferences"
+export const VERSION = "1.4.0"
 
 export type Kind = "clash" | "openwrt"
 export type Plugin = "openclash" | "nikki" | "mihomo"
@@ -9,7 +10,7 @@ export interface Controller {
   host?: string; port?: number; https?: boolean; plugin?: Plugin; auto?: boolean; cport?: number
 }
 export interface ControllerInput { id?: string; name: string; host: string; port: number; https: boolean; username: string; plugin: Plugin; auto: boolean; cport: number }
-export interface Group { name: string; type: string; now: string; all: string[]; delays: Record<string, number> }
+export interface Group { name: string; type: string; now: string; all: string[]; delays: Record<string, number>; hidden?: boolean; icon?: string }
 export interface Conn { id: string; host: string; src: string; dst: string; network: string; rule: string; chain: string; up: number; down: number; start: number; upSpeed?: number; downSpeed?: number }
 export interface Rule { type: string; payload: string; proxy: string }
 export interface Traffic { up: number; down: number; upTotal?: number; downTotal?: number }
@@ -20,7 +21,6 @@ export interface WrtLease { host: string; ip: string; mac: string; expires: numb
 
 const K_LIST = "neko_controllers_v1"
 const K_ACTIVE = "neko_active_v1"
-const TEST_URL = "http://www.gstatic.com/generate_204"
 
 // ---------- 控制器存储：地址/名称在 Storage，密钥在 Keychain ----------
 export function listControllers(): Controller[] { return (Storage.get<Controller[]>(K_LIST) ?? []).filter(c => c.kind === "clash" || c.kind === "openwrt") }
@@ -49,9 +49,11 @@ export function saveController(c: ControllerInput, password: string, clashSecret
   Keychain.set("neko_csecret_" + id, clashSecret.trim())
   delete clashCache[id]; delete sessions[id]
   if (!getActive()) setActive(id)
+  recordEvent("controller", true)
   return item
 }
 export function removeController(id: string) {
+  recordEvent("remove", true)
   saveList(listControllers().filter(c => c.id !== id))
   for (const k of ["neko_secret_" + id, "neko_csecret_" + id, "neko_secret_" + id + "~clash"]) Keychain.remove(k)
   Storage.remove("neko_prev_" + id)
@@ -63,18 +65,18 @@ export function getActive(): Controller | null {
   const l = listControllers(); const id = Storage.get<string>(K_ACTIVE)
   return l.find(c => c.id === id) ?? l[0] ?? null
 }
-export function setActive(id: string) { Storage.set(K_ACTIVE, id) }
+export function setActive(id: string) { Storage.set(K_ACTIVE, id); feedback(); recordEvent("switch", true) }
 
 // ---------- HTTP ----------
 async function http(c: Controller, path: string, init: { method?: string; body?: any; timeout?: number } = {}): Promise<any> {
   const secret = getSecret(c.id)
-  const headers: Record<string, string> = {}
+  const headers: Record<string, string> = customHeaders()
   if (init.body !== undefined) headers["Content-Type"] = "application/json"
   if (secret) headers["Authorization"] = "Bearer " + secret
-  const r = await fetch(c.url + path, {
-    method: init.method ?? "GET", headers, allowInsecureRequest: true, timeout: init.timeout ?? 8,
+  const r = await apiFetch(c.url + path, {
+    method: init.method ?? "GET", headers, allowInsecureRequest: true, timeout: init.timeout ?? getPreferences().requestTimeout,
     body: init.body !== undefined ? JSON.stringify(init.body) : undefined,
-  } as any)
+  } as any, path)
   if (!r.ok) {
     if (r.status === 401 || r.status === 403) throw new Error("认证失败，请检查密钥")
     if (r.status === 404) throw new Error("HTTP 404：该地址不是 Clash 控制器接口，请检查端口（通常是 9090）")
@@ -84,6 +86,19 @@ async function http(c: Controller, path: string, init: { method?: string; body?:
   if (!text) return {}
   try { return JSON.parse(text) } catch { return {} }
 }
+function routeOf(path: string): "configs" | "connections" | "proxies" | "rules" | "version" | "delay" | "other" {
+  if (path.includes("/delay")) return "delay"
+  const first = path.split("/")[1]?.split("?")[0]
+  return ["configs", "connections", "proxies", "rules", "version"].includes(first) ? first as any : "other"
+}
+async function apiFetch(url: string, init: any, path: string): Promise<any> {
+  const at = Date.now(), operation = init.method ?? "GET", route = routeOf(path)
+  try {
+    const r = await fetch(url, init)
+    recordEvent("api", r.ok, { operation, route, status: r.status, duration: Date.now() - at })
+    return r
+  } catch (e) { recordEvent("api", false, { operation, route, duration: Date.now() - at }); throw e }
+}
 const enc = encodeURIComponent
 const num = (v: any) => typeof v === "number" && Number.isFinite(v) ? v : 0
 
@@ -91,8 +106,12 @@ const num = (v: any) => typeof v === "number" && Number.isFinite(v) ? v : 0
 const NULL_SID = "00000000000000000000000000000000"
 const sessions: Record<string, { sid: string; at: number }> = {}
 async function ubusRaw(c: Controller, sid: string, obj: string, method: string, params: any): Promise<any> {
+  try { return await ubusRequest(c, sid, obj, method, params) }
+  catch (e) { recordEvent("ubus", false); throw e }
+}
+async function ubusRequest(c: Controller, sid: string, obj: string, method: string, params: any): Promise<any> {
   const r = await fetch(c.url + "/ubus", {
-    method: "POST", headers: { "Content-Type": "application/json" }, allowInsecureRequest: true, timeout: 10,
+    method: "POST", headers: { ...customHeaders(), "Content-Type": "application/json" }, allowInsecureRequest: true, timeout: getPreferences().requestTimeout,
     body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "call", params: [sid, obj, method, params] }),
   } as any)
   if (r.status === 404) throw new Error("HTTP 404：该地址不是 OpenWrt 的 LuCI 地址，请检查端口")
@@ -104,6 +123,7 @@ async function ubusRaw(c: Controller, sid: string, obj: string, method: string, 
   if (!Array.isArray(res)) throw new Error("ubus 返回异常")
   if (res[0] === 6) throw new Error("ACCESS")
   if (res[0] !== 0) throw new Error("ubus 调用失败，代码 " + res[0])
+  recordEvent("ubus", true)
   return res[1] ?? {}
 }
 const loginPending: Record<string, Promise<string> | undefined> = {}
@@ -119,9 +139,11 @@ async function wrtLoginOnce(c: Controller): Promise<string> {
     const r = await ubusRaw(c, NULL_SID, "session", "login", { username: user, password: getSecret(c.id), timeout: 3600 })
     const sid = r.ubus_rpc_session
     if (!sid) throw new Error("登录失败")
+    recordEvent("login", true)
     sessions[c.id] = { sid, at: Date.now() }
     return sid
   } catch (e: any) {
+    recordEvent("login", false)
     if (String(e?.message) === "ACCESS") throw new Error("登录失败，请检查用户名和密码")
     throw e
   }
@@ -186,7 +208,7 @@ const UCI: Record<Plugin, { config: string; section: string; port: (v: any) => n
 const resolvePending: Record<string, Promise<Controller> | undefined> = {}
 export async function resolveClash(c: Controller): Promise<Controller> {
   if (resolvePending[c.id]) return resolvePending[c.id]!
-  const p = resolveClashOnce(c)
+  const p = resolveClashOnce(c).catch(e => { recordEvent(c.auto !== false ? "discovery" : "manual", false); throw e })
   resolvePending[c.id] = p
   try { return await p } finally { if (resolvePending[c.id] === p) delete resolvePending[c.id] }
 }
@@ -209,6 +231,7 @@ async function resolveClashOnce(c: Controller): Promise<Controller> {
   const id = c.id + "~clash"
   Keychain.set("neko_secret_" + id, secret)
   const cc: Controller = { id, name: c.name, kind: "clash", url: `http://${host.includes(":") ? "[" + host + "]" : host}:${port}` }
+  recordEvent(c.auto !== false ? "discovery" : "manual", true)
   clashCache[c.id] = { at: Date.now(), c: cc }
   return cc
 }
@@ -235,7 +258,7 @@ export function subscribeClash(c0: Controller, path: string, onMsg: (j: any) => 
         later(1500); return
       }
       controller = new AbortController()
-      const r = await fetch(c.url + path, { headers: { Authorization: "Bearer " + getSecret(c.id) }, allowInsecureRequest: true, signal: controller.signal } as any)
+      const r = await fetch(c.url + path, { headers: { ...customHeaders(), Authorization: "Bearer " + getSecret(c.id) }, allowInsecureRequest: true, signal: controller.signal, timeout: getPreferences().requestTimeout } as any)
       if (!r.ok) throw new Error("HTTP " + r.status)
       const reader = r.body.getReader(), decoder = new TextDecoder()
       let pending = ""
@@ -266,8 +289,10 @@ export const subscribeConnCount = (c: Controller, onData: (n: number) => void) =
 
 // ---------- 概览 ----------
 export async function loadOverview(c: Controller): Promise<Overview> {
-  if (c.kind === "openwrt") return wrtOverview(c)
-  return loadClashOverview(c)
+  try {
+    const o = c.kind === "openwrt" ? await wrtOverview(c) : await loadClashOverview(c)
+    controllerHealth[c.id] = true; return o
+  } catch (e) { controllerHealth[c.id] = false; throw e }
 }
 export async function loadClashOverview(c0: Controller): Promise<Overview> {
   const c = await cc(c0)
@@ -286,7 +311,7 @@ export async function loadClashOverview(c0: Controller): Promise<Overview> {
 // ---------- 模式 ----------
 export const CLASH_MODES = [["rule", "规则"], ["global", "全局"], ["direct", "直连"]]
 export const modesOf = (_k: Kind) => CLASH_MODES
-export async function setMode(c: Controller, mode: string) { await http(await cc(c), "/configs", { method: "PATCH", body: { mode } }) }
+export async function setMode(c: Controller, mode: string) { await patchConfig(c, { mode }); feedback() }
 
 // ---------- 策略组 ----------
 export async function loadGroups(c0: Controller): Promise<Group[]> {
@@ -296,34 +321,50 @@ export async function loadGroups(c0: Controller): Promise<Group[]> {
     const all: Record<string, any> = j.proxies ?? {}
     const order: string[] = all.GLOBAL?.all ?? Object.keys(all)
     const names = [...order.filter(n => all[n]?.all), ...Object.keys(all).filter(n => all[n]?.all && !order.includes(n))]
-    return names.filter(n => n !== "GLOBAL" || order.includes("GLOBAL")).map(n => {
+    const prefs = getPreferences()
+    function delayOf(name: string, seen = new Set<string>()): number | undefined {
+      if (seen.has(name)) return undefined
+      seen.add(name)
+      const node = all[name]
+      if (prefs.nestedDelay && node?.all && node?.now) return delayOf(node.now, seen)
+      const h = node?.history
+      return h?.length ? num(h[h.length - 1].delay) : undefined
+    }
+    return names.filter(n => (n !== "GLOBAL" || prefs.showGlobal || order.includes("GLOBAL")) && (prefs.showHidden || !all[n]?.hidden)).map(n => {
       const g = all[n]; const delays: Record<string, number> = {}
-      for (const m of g.all as string[]) { const h = all[m]?.history; if (h?.length) delays[m] = num(h[h.length - 1].delay) }
-      return { name: n, type: String(g.type ?? ""), now: String(g.now ?? ""), all: g.all, delays }
+      for (const m of g.all as string[]) { const delay = delayOf(m); if (delay !== undefined) delays[m] = delay }
+      return { name: n, type: String(g.type ?? ""), now: String(g.now ?? ""), all: g.all, delays, hidden: !!g.hidden, icon: typeof g.icon === "string" ? g.icon : undefined }
     })
   }
 }
 export async function selectProxy(c0: Controller, group: string, name: string) {
   const c = await cc(c0)
   await http(c, "/proxies/" + enc(group), { method: "PUT", body: { name } })
+  feedback()
+  if (getPreferences().disconnectOnSwitch) {
+    try { await closeAllConnections(c) } catch { throw new Error("代理已切换，但断开旧连接失败，请手动检查连接") }
+  }
 }
 // 测速整组，返回 节点→毫秒（0 表示超时/失败）
 export async function testGroup(c0: Controller, g: Group): Promise<Record<string, number>> {
   const c = await cc(c0)
   const res: Record<string, number> = {}
+  const prefs = getPreferences(), testURL = prefs.testURL, timeout = prefs.testTimeout
   {
     try {
-      const j = await http(c, `/group/${enc(g.name)}/delay?url=${enc(TEST_URL)}&timeout=5000`, { timeout: 15 })
+      const j = await http(c, `/group/${enc(g.name)}/delay?url=${enc(testURL)}&timeout=${timeout}`, { timeout: Math.ceil(timeout / 1000) + 2 })
       for (const [k, v] of Object.entries<any>(j)) res[k] = num(v)
+      recordEvent("test", Object.values(res).some(v => v > 0))
       return res
-    } catch { /* 非策略组端点或旧内核：逐个测 */ }
+    } catch { recordEvent("fallback", false, { warning: true }) /* 非策略组端点或旧内核：逐个测 */ }
     const queue = [...g.all]
     await Promise.all(Array.from({ length: 6 }, async () => {
       while (queue.length) {
         const n = queue.shift()!
-        try { const j = await http(c, `/proxies/${enc(n)}/delay?url=${enc(TEST_URL)}&timeout=5000`, { timeout: 8 }); res[n] = num(j.delay) } catch { res[n] = 0 }
+        try { const j = await http(c, `/proxies/${enc(n)}/delay?url=${enc(testURL)}&timeout=${timeout}`, { timeout: Math.ceil(timeout / 1000) + 2 }); res[n] = num(j.delay) } catch { res[n] = 0 }
       }
     }))
+    recordEvent("test", Object.values(res).some(v => v > 0))
     return res
   }
   return res
@@ -354,15 +395,33 @@ export async function closeAllConnections(c: Controller) {
 export async function loadRules(c0: Controller): Promise<Rule[]> {
   const c = await cc(c0)
   {
-    const j = await http(c, "/rules", { timeout: 15 })
+    const j = await http(c, "/rules")
     return (j.rules ?? []).map((r: any) => ({ type: String(r.type), payload: String(r.payload ?? ""), proxy: String(r.proxy ?? "") }))
   }
 }
 
 // ---------- 配置（仅 Clash） ----------
-export interface ClashConfig { mode: string; "log-level": string; port: number; "socks-port": number; "mixed-port": number; "allow-lan": boolean }
+export interface ClashConfig { mode?: string; "log-level"?: string; port?: number; "socks-port"?: number; "mixed-port"?: number; "allow-lan"?: boolean }
 export async function loadConfig(c: Controller): Promise<ClashConfig> { return await http(await cc(c), "/configs") }
-export async function patchConfig(c: Controller, patch: Partial<ClashConfig>) { await http(await cc(c), "/configs", { method: "PATCH", body: patch }) }
+export function validateConfigPatch(patch: Partial<ClashConfig>): Partial<ClashConfig> {
+  const out: any = {}
+  for (const [k, v] of Object.entries(patch)) {
+    if (["port", "socks-port", "mixed-port"].includes(k)) {
+      if (!Number.isInteger(v) || Number(v) < 0 || Number(v) > 65535) throw new Error("端口须为 0–65535 的整数")
+    } else if (k === "allow-lan") { if (typeof v !== "boolean") throw new Error("局域网开关无效") }
+    else if (k === "log-level") { if (!LOG_LEVELS.includes(String(v))) throw new Error("日志级别无效") }
+    else if (k === "mode") { if (!CLASH_MODES.some(x => x[0] === v)) throw new Error("模式无效") }
+    else throw new Error("不支持修改该配置字段")
+    out[k] = v
+  }
+  if (!Object.keys(out).length) throw new Error("没有待保存的配置")
+  return out
+}
+export async function patchConfig(c: Controller, patch: Partial<ClashConfig>) {
+  const body = validateConfigPatch(patch)
+  try { await http(await cc(c), "/configs", { method: "PATCH", body }); recordEvent("config", true) }
+  catch (e) { recordEvent("config", false); throw e }
+}
 export const LOG_LEVELS = ["silent", "error", "warning", "info", "debug"]
 
 // ---------- 格式化 ----------
@@ -396,6 +455,7 @@ export function fmtDuration(startMs: number): string {
 export function delayColor(ms: number | undefined): string {
   if (ms === undefined) return "secondaryLabel"
   if (ms <= 0) return "systemRed"
-  return ms < 300 ? "systemGreen" : ms < 800 ? "systemOrange" : "systemRed"
+  const p = getPreferences()
+  return ms < p.delayGreen ? "systemGreen" : ms <= p.delayRed ? "systemYellow" : "systemRed"
 }
 
