@@ -49,13 +49,14 @@ function Big({ parts }: { parts: [string, string] | null }) {
     if (!Number.isFinite(start) || !Number.isFinite(end) || track.unit !== unit) {
       track.value = target; track.unit = unit; setShown(target); return
     }
+    if (track.value === target) return
     const at = Date.now(), decimals = target.includes(".") ? target.split(".")[1].length : 0
     const t = setInterval(() => {
-      const p = Math.min(1, (Date.now() - at) / 280)
-      const next = (start + (end - start) * (1 - Math.pow(1 - p, 3))).toFixed(decimals)
-      track.value = next; setShown(next)
+      const p = Math.min(1, (Date.now() - at) / 950)
+      const next = (start + (end - start) * (p * p * (3 - 2 * p))).toFixed(decimals)
+      if (track.value !== next) { track.value = next; setShown(next) }
       if (p === 1) clearInterval(t)
-    }, 40)
+    }, 16)
     return () => clearInterval(t)
   }, [target, unit])
   // 普通 Text 保持可见，不再依赖原生 numericText 转场；数字以插值平滑更新。
