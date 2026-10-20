@@ -68,11 +68,9 @@ const HIST = CHART_HISTORY
 const STAT_HEIGHT = 104
 function Spark({ data, color, floor = 1024, enabled = true }: { data: number[]; color: string; floor?: number; enabled?: boolean }) {
   const W = 100, H = STAT_HEIGHT
-  const plot = useSmoothPlot(data, undefined, enabled, W, H, floor, 2)
+  const plot = useSmoothPlot(data, undefined, enabled, W, H, floor, 0)
   const line = plot.paths[0]
-  const firstX = plot.points[0][0]?.x ?? W
-  const area = line ? `${line} L ${W},${H} L ${firstX},${H} Z` : ""
-  const code = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"><path d="${area}" fill="${color}" fill-opacity="0.10"/><path d="${line}" fill="none" stroke="${color}" stroke-opacity="0.28" stroke-width="1.4" stroke-linecap="round"/></svg>`
+  const code = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"><path d="${line}" fill="none" stroke="${color}" stroke-opacity="0.28" stroke-width="1.4" stroke-linecap="round"/></svg>`
   return <SVG code={code} resizable frame={{ maxWidth: "infinity", height: STAT_HEIGHT }} />
 }
 function StatCard({ icon, color, title, parts, spark, floor, droplets, connectionHosts, enabled = true }: { icon: string; color: string; title: string; parts: [string, string] | null; spark?: number[]; floor?: number; droplets?: boolean; connectionHosts?: string[]; enabled?: boolean }) {
@@ -120,7 +118,7 @@ function RateChart({ down, up, enabled = true }: { down: number[]; up: number[];
   const plot = useSmoothPlot(down, up, enabled, W, H)
   const max = plot.scale
   const line = (i: number, color: string) => plot.paths[i] ? `<path d="${plot.paths[i]}" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round"/>` : ""
-  const code = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}">${line(0, "#3B82F6")}${line(1, "#34C759")}</svg>`
+  const code = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">${line(0, "#3B82F6")}${line(1, "#34C759")}</svg>`
   const label = (f: number) => fmtSpeed(max * f)
   return <Card>
     <HStack>
