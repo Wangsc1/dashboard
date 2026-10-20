@@ -1,5 +1,5 @@
 // dashboard 数据层：Clash 外部控制 API 与 OpenWrt（LuCI ubus JSON-RPC）
-export const VERSION = "1.3.3"
+export const VERSION = "1.3.4"
 
 export type Kind = "clash" | "openwrt"
 export type Plugin = "openclash" | "nikki" | "mihomo"
@@ -12,7 +12,7 @@ export interface ControllerInput { id?: string; name: string; host: string; port
 export interface Group { name: string; type: string; now: string; all: string[]; delays: Record<string, number> }
 export interface Conn { id: string; host: string; src: string; dst: string; network: string; rule: string; chain: string; up: number; down: number; start: number; upSpeed?: number; downSpeed?: number }
 export interface Rule { type: string; payload: string; proxy: string }
-export interface Traffic { up: number; down: number }
+export interface Traffic { up: number; down: number; upTotal?: number; downTotal?: number }
 export interface WrtInfo { model: string; release: string; uptime: number; load: number[]; memTotal: number; memFree: number; wan: string }
 export interface Overview { version: string; mode: string; traffic: Traffic; upTotal: number; downTotal: number; connCount: number; wrt?: WrtInfo; mem?: number }
 export interface WrtIface { name: string; proto: string; up: boolean; ip: string; device: string; uptime: number }
@@ -219,44 +219,50 @@ function wsUrl(c: Controller, path: string): string {
   const base = c.url.replace(/^http/i, "ws")
   return base + path + (s ? (path.includes("?") ? "&" : "?") + "token=" + enc(s) : "")
 }
-// 读取 Clash WebSocket 的第一条 JSON 消息
-function clashWsOnce(c: Controller, path: string, timeoutMs = 3000): Promise<any | null> {
-  return new Promise(resolve => {
-    let done = false, ws: WebSocket | null = null
-    const finish = (t: any | null) => { if (done) return; done = true; try { ws?.close(1000) } catch { } resolve(t) }
-    try {
-      ws = new WebSocket(wsUrl(c, path))
-      ws.addEventListener("message", (m: any) => { try { finish(JSON.parse(typeof m === "string" ? m : String(m))) } catch { finish(null) } })
-      ws.addEventListener("error", () => finish(null))
-      ws.addEventListener("close", () => finish(null))
-    } catch { finish(null) }
-    setTimeout(() => finish(null), timeoutMs)
-  })
-}
-
-// 长连接订阅 Clash 的 WebSocket 推送（约每秒一条），断线自动重连；返回关闭函数
+// Mihomo 的 traffic/memory 同时支持 HTTP NDJSON。使用带认证头的原生 HTTP 流，
+// 避免 WebSocket 失败被吞掉后显示假 0；connections 使用有限频率的 HTTP 快照。
 export function subscribeClash(c0: Controller, path: string, onMsg: (j: any) => void): () => void {
-  let closed = false, ws: WebSocket | null = null, timer: any = null
-  const later = (ms: number) => { if (!closed && !timer) timer = setTimeout(() => { timer = null; connect() }, ms) }
-  const connect = async () => {
+  let closed = false, controller: AbortController | null = null, timer: any = null
+  const later = (ms: number) => { if (!closed) timer = setTimeout(run, ms) }
+  async function run() {
     if (closed) return
     try {
       const c = await cc(c0)
       if (closed) return
-      ws = new WebSocket(wsUrl(c, path))
-      ws.addEventListener("message", (m: any) => { try { onMsg(JSON.parse(typeof m === "string" ? m : String(m))) } catch { } })
-      ws.addEventListener("close", () => later(2000)); ws.addEventListener("error", () => later(2000))
-    } catch { later(3000) }
+      if (path.startsWith("/connections")) {
+        const j = await http(c, "/connections")
+        if (!closed) onMsg(j)
+        later(1500); return
+      }
+      controller = new AbortController()
+      const r = await fetch(c.url + path, { headers: { Authorization: "Bearer " + getSecret(c.id) }, allowInsecureRequest: true, signal: controller.signal } as any)
+      if (!r.ok) throw new Error("HTTP " + r.status)
+      const reader = r.body.getReader(), decoder = new TextDecoder()
+      let pending = ""
+      try {
+        while (!closed) {
+          const { done, value } = await reader.read()
+          if (done) break
+          pending += decoder.decode(value, { stream: true })
+          let n: number
+          while ((n = pending.indexOf("\n")) >= 0) {
+            const line = pending.slice(0,n).trim(); pending = pending.slice(n+1)
+            if (line && !closed) onMsg(JSON.parse(line))
+          }
+        }
+      } finally { try { await reader.cancel() } catch {} }
+      later(2000)
+    } catch { later(2000) }
   }
-  connect()
-  return () => { closed = true; if (timer) clearTimeout(timer); try { ws?.close(1000) } catch { } }
+  run()
+  return () => { closed = true; if (timer) clearTimeout(timer); controller?.abort() }
 }
 export const subscribeTraffic = (c: Controller, onData: (t: Traffic) => void) =>
-  subscribeClash(c, "/traffic", j => onData({ up: num(j.up), down: num(j.down) }))
+  subscribeClash(c, "/traffic", j => onData({ up: num(j.up), down: num(j.down), upTotal: typeof j.upTotal === "number" ? j.upTotal : undefined, downTotal: typeof j.downTotal === "number" ? j.downTotal : undefined }))
 export const subscribeMemory = (c: Controller, onData: (inuse: number) => void) =>
-  subscribeClash(c, "/memory", j => onData(num(j.inuse)))
+  subscribeClash(c, "/memory", j => { if (typeof j.inuse === "number") onData(j.inuse) })
 export const subscribeConnCount = (c: Controller, onData: (n: number) => void) =>
-  subscribeClash(c, "/connections?interval=1000", j => onData(Array.isArray(j.connections) ? j.connections.length : 0))
+  subscribeClash(c, "/connections", j => { if (Array.isArray(j.connections)) onData(j.connections.length) })
 
 // ---------- 概览 ----------
 export async function loadOverview(c: Controller): Promise<Overview> {
@@ -266,11 +272,12 @@ export async function loadOverview(c: Controller): Promise<Overview> {
 export async function loadClashOverview(c0: Controller): Promise<Overview> {
   const c = await cc(c0)
   {
-    const [ver, cfg, conns, tr, mem] = await Promise.all([
-      http(c, "/version").catch(() => ({})), http(c, "/configs"), http(c, "/connections"), clashWsOnce(c, "/traffic"), clashWsOnce(c, "/memory"),
+    const [ver, cfg, conns] = await Promise.all([
+      http(c, "/version").catch(() => ({})), http(c, "/configs"), http(c, "/connections"),
     ])
     return {
-      version: String(ver.version ?? ""), mode: String(cfg.mode ?? ""), traffic: tr ? { up: num(tr.up), down: num(tr.down) } : { up: 0, down: 0 }, mem: mem ? num(mem.inuse) : undefined,
+      version: String(ver.version ?? ""), mode: String(cfg.mode ?? ""), traffic: { up: 0, down: 0 },
+      mem: typeof conns.memory === "number" ? conns.memory : undefined,
       upTotal: num(conns.uploadTotal), downTotal: num(conns.downloadTotal), connCount: (conns.connections ?? []).length,
     }
   }

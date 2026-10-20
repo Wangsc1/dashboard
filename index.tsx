@@ -1,9 +1,9 @@
 import {
   Animation, Button, ForEach, Form, HStack, Label, Navigation, NavigationLink, NavigationStack, Picker, Script, Section, SecureField, Spacer,
-  Image, Menu, ProgressView, RoundedRectangle, ScrollView, SVG, Text, ZStack, modifiers, TextField, Toggle, VStack, useEffect, useState,
+  Image, Menu, ProgressView, RoundedRectangle, Circle, ScrollView, SVG, Text, ZStack, modifiers, TextField, Toggle, VStack, useEffect, useState,
 } from "scripting"
 import {
-  VERSION, Controller, Group, Conn, Rule, Overview, Plugin, PLUGINS, listControllers, saveController, removeController, getActive, setActive, getSecret, getClashSecret,
+  VERSION, Controller, Group, Conn, Rule, Overview, Traffic, Plugin, PLUGINS, listControllers, saveController, removeController, getActive, setActive, getSecret, getClashSecret,
   loadOverview, loadClashOverview, subscribeTraffic, subscribeMemory, subscribeConnCount, loadWrtInterfaces, loadWrtLeases, WrtIface, WrtLease, loadGroups, selectProxy, testGroup, loadConnections, closeConnection,
   closeAllConnections, loadRules, loadConfig, patchConfig, setMode, CLASH_MODES, fmtBytes, fmtSpeed, fmtParts, fmtUptime, fmtDuration, delayColor, LOG_LEVELS,
 } from "./api"
@@ -24,10 +24,11 @@ function NoController() {
 }
 
 // ---------- 概览 ----------
+const MAIN_FG = { light: "#41434B", dark: "#CFD0D7" }
 const CARD_BG = "secondarySystemBackground"
 const cardMods = () => modifiers().frame({ maxWidth: "infinity", alignment: "leading" as any }).padding({ horizontal: 16, vertical: 14 }).background(<RoundedRectangle cornerRadius={22} fill={CARD_BG} />)
 function Card({ children }: { children?: any }) {
-  return <VStack alignment="leading" spacing={10} modifiers={cardMods()}>{children}</VStack>
+  return <VStack alignment="leading" spacing={10} foregroundStyle={MAIN_FG} font={14} modifiers={cardMods()}>{children}</VStack>
 }
 function Badge({ icon, color }: { icon: string; color: string }) {
   return <ZStack modifiers={modifiers().frame({ width: 20, height: 20 }).background(<RoundedRectangle cornerRadius={6} fill={`rgba(${parseInt(color.slice(1,3),16)},${parseInt(color.slice(3,5),16)},${parseInt(color.slice(5,7),16)},0.15)`} />)}>
@@ -36,7 +37,7 @@ function Badge({ icon, color }: { icon: string; color: string }) {
 }
 function Big({ parts }: { parts: [string, string] | null }) {
   return <HStack alignment="lastTextBaseline" spacing={4}>
-    <Text font={26} fontWeight="bold" lineLimit={1} minimumScaleFactor={0.65} contentTransition="numericText" animation={{ animation: Animation.easeOut(0.35), value: parts?.[0] ?? "-" }}>{parts ? parts[0] : "-"}</Text>
+    <Text font={24} fontWeight="bold" lineLimit={1} minimumScaleFactor={0.65} contentTransition="numericText" animation={{ animation: Animation.easeOut(0.35), value: parts?.[0] ?? "-" }}>{parts ? parts[0] : "-"}</Text>
     <Text font={13} lineLimit={1} fixedSize={{ horizontal: true, vertical: false }} foregroundStyle="secondaryLabel">{parts ? parts[1] : ""}</Text>
   </HStack>
 }
@@ -52,7 +53,7 @@ function Spark({ data, color, floor = 1024 }: { data: number[]; color: string; f
 }
 function StatCard({ icon, color, title, parts, spark, floor }: { icon: string; color: string; title: string; parts: [string, string] | null; spark?: number[]; floor?: number }) {
   return <Card>
-    <HStack spacing={8}><Badge icon={icon} color={color} /><Text font={14} foregroundStyle="secondaryLabel">{title}</Text></HStack>
+    <HStack spacing={8}><Badge icon={icon} color={color} /><Text font={13} foregroundStyle="secondaryLabel">{title}</Text></HStack>
     <Big parts={parts} />
     {spark ? <HStack><Spacer /><Spark data={spark} color={color} floor={floor} /></HStack> : null}
   </Card>
@@ -72,12 +73,12 @@ function RateChart({ down, up }: { down: number[]; up: number[] }) {
   const label = (f: number) => fmtSpeed(max * f)
   return <Card>
     <HStack>
-      <HStack spacing={8}><Badge icon="chart.xyaxis.line" color="#6366F1" /><Text fontWeight="semibold" font={17}>速率图表</Text></HStack>
+      <HStack spacing={8}><Badge icon="chart.xyaxis.line" color="#6366F1" /><Text fontWeight="semibold" font={15}>速率图表</Text></HStack>
       <Spacer />
-      <Text font={13} foregroundStyle="#3B82F6">● 下载</Text><Text font={13} foregroundStyle="#34C759">● 上传</Text>
+      <HStack spacing={4}><Circle fill="#3B82F6" frame={{ width: 5, height: 5 }} /><Text font={12} foregroundStyle="secondaryLabel">下载</Text></HStack><HStack spacing={4}><Circle fill="#34C759" frame={{ width: 5, height: 5 }} /><Text font={12} foregroundStyle="secondaryLabel">上传</Text></HStack>
     </HStack>
     <ZStack>
-      <VStack alignment="leading" spacing={0} frame={{ height: H }}>
+      <VStack alignment="trailing" spacing={0} frame={{ maxWidth: "infinity", height: H, alignment: "trailing" }}>
         <Text font={12} foregroundStyle="secondaryLabel">{label(1)}</Text><Spacer />
         <Text font={12} foregroundStyle="secondaryLabel">{label(0.75)}</Text><Spacer />
         <Text font={12} foregroundStyle="secondaryLabel">{label(0.5)}</Text><Spacer />
@@ -96,7 +97,7 @@ function OverviewPage({ active, version, onSwitch }: { active: Controller | null
   const [busy, setBusy] = useState(false)
   const [dn, setDn] = useState<number[]>([])
   const [upH, setUpH] = useState<number[]>([])
-  const [live, setLive] = useState<{ up: number; down: number } | null>(null)
+  const [live, setLive] = useState<Traffic | null>(null)
   const [connH, setConnH] = useState<number[]>([])
   const [memH, setMemH] = useState<number[]>([])
   const [liveConn, setLiveConn] = useState<number | null>(null)
@@ -171,16 +172,14 @@ function OverviewPage({ active, version, onSwitch }: { active: Controller | null
       <Card>
         <HStack>
           <Badge icon="laptopcomputer" color="#6366F1" />
-          <Text fontWeight="semibold" font={16}>OpenWrt 状态</Text>
+          <Text fontWeight="semibold" font={15}>OpenWrt 状态</Text>
           <Spacer />
-          <Text font={13} foregroundStyle={err ? "systemRed" : "systemGreen"}>{err ? "● 连接失败" : ov ? "● 运行正常" : "● 连接中"}</Text>
+          <HStack spacing={4}><Circle fill={err ? "systemRed" : "systemGreen"} frame={{ width: 5, height: 5 }} /><Text font={12} foregroundStyle={err ? "systemRed" : "systemGreen"}>{err ? "连接失败" : ov ? "运行正常" : "连接中"}</Text></HStack>
         </HStack>
-        <HStack alignment="top">
-          <InfoItem icon="clock" color="#3B82F6" title="运行时间" value={w ? fmtUptime(w.uptime) : "-"} />
-          <InfoItem icon="waveform.path.ecg" color="#F59E0B" title="系统负载" value={w ? w.load.map(v => v.toFixed(2)).join(" ") : "-"} />
-        </HStack>
+        <InfoItem icon="clock" color="#3B82F6" title="运行时间" value={w ? fmtUptime(w.uptime) : "-"} />
         <InfoItem icon="chart.pie" color="#A855F7" title="内存使用" value={memText} />
         <ProgressView value={memRatio} total={1} tint="#A855F7" />
+        <InfoItem icon="waveform.path.ecg" color="#F59E0B" title="系统负载" value={w ? w.load.map(v => v.toFixed(2)).join(" ") : "-"} />
       </Card>
 
       <HStack spacing={12}>
@@ -188,8 +187,8 @@ function OverviewPage({ active, version, onSwitch }: { active: Controller | null
         <StatCard icon="arrow.up.circle.fill" color="#34C759" title="上传速率" parts={rate ? fmtParts(rate.up, true) : null} spark={upH} />
       </HStack>
       <HStack spacing={12}>
-        <StatCard icon="icloud.and.arrow.down.fill" color="#3B82F6" title="下载总量" parts={src ? fmtParts(src.downTotal) : null} />
-        <StatCard icon="icloud.and.arrow.up.fill" color="#34C759" title="上传总量" parts={src ? fmtParts(src.upTotal) : null} />
+        <StatCard icon="icloud.and.arrow.down.fill" color="#3B82F6" title="下载总量" parts={live?.downTotal != null ? fmtParts(live.downTotal) : src ? fmtParts(src.downTotal) : null} />
+        <StatCard icon="icloud.and.arrow.up.fill" color="#34C759" title="上传总量" parts={live?.upTotal != null ? fmtParts(live.upTotal) : src ? fmtParts(src.upTotal) : null} />
       </HStack>
       <HStack spacing={12}>
         <StatCard icon="link" color="#A855F7" title="活动连接" parts={liveConn != null ? [String(liveConn), ""] : src ? [String(src.connCount), ""] : null} spark={connH} floor={10} />
@@ -493,7 +492,7 @@ function Root() {
   const [version, setVersion] = useState(0)
   const [active, setActiveState] = useState<Controller | null>(getActive())
   const bump = () => { setActiveState(getActive()); setVersion(v => v + 1) }
-  return <NavigationStack>
+  return <NavigationStack font={14} foregroundStyle={MAIN_FG}>
     <OverviewPage active={active} version={version} onSwitch={bump} />
   </NavigationStack>
 }
