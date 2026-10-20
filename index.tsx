@@ -247,22 +247,35 @@ function ClashConfigSection({ c }: { c: Controller }) {
   </Section>
 }
 
+function DeleteControllers({ onDone }: { onDone: () => void }) {
+  const [list, setList] = useState(listControllers())
+  async function del(c: Controller) {
+    if (!(await Dialog.confirm({ title: "删除控制器", message: c.name, confirmLabel: "删除" }))) return
+    removeController(c.id)
+    setList(listControllers())
+    onDone()
+  }
+  return <Form navigationTitle="删除控制器" navigationBarTitleDisplayMode="inline">
+    <Section footer={<Text>点击控制器并确认后删除，密钥与缓存一并清除。</Text>}>
+      {list.map(c => <Button key={c.id} role="destructive" action={() => del(c)}>
+        <VStack alignment="leading"><Text>{c.name}</Text><Text font={12} foregroundStyle="secondaryLabel">{c.url}</Text></VStack>
+      </Button>)}
+      {!list.length ? <Text foregroundStyle="secondaryLabel">没有控制器</Text> : null}
+    </Section>
+  </Form>
+}
+
 function SettingsPage({ active, onChanged }: { active: Controller | null; onChanged: () => void }) {
   const [list, setList] = useState(listControllers())
   const [refreshMin, setRefreshMin] = useState(String(getRefreshMinutes()))
   const reload = () => { setList(listControllers()); onChanged() }
-  async function del(c: Controller) {
-    if (!(await Dialog.confirm({ title: "删除控制器", message: c.name, confirmLabel: "删除" }))) return
-    try { removeController(c.id) } catch { return }
-    setTimeout(reload, 400)
-  }
   return <Form navigationTitle="设置" navigationBarTitleDisplayMode="inline">
     <Section header={<Text>控制器</Text>}>
-      {list.map(c => <NavigationLink key={c.id} destination={<EditController initial={c} onDone={reload} />}
-        trailingSwipeActions={{ allowsFullSwipe: false, actions: [<Button title="删除" role="destructive" action={() => del(c)} />] }}>
+      {list.map(c => <NavigationLink key={c.id} destination={<EditController initial={c} onDone={reload} />}>
         <VStack alignment="leading"><Text>{c.name}</Text><Text font={12} foregroundStyle="secondaryLabel">{`${c.kind === "clash" ? "Clash" : "Surge"} · ${c.url}`}</Text></VStack>
       </NavigationLink>)}
       <NavigationLink destination={<EditController onDone={reload} />}><Label title="添加控制器" systemImage="plus" /></NavigationLink>
+      {list.length ? <NavigationLink destination={<DeleteControllers onDone={reload} />}><Label title="删除控制器" systemImage="trash" /></NavigationLink> : null}
     </Section>
     {active?.kind === "clash" ? <ClashConfigSection c={active} /> : null}
     <Section header={<Text>小组件</Text>} footer={<Text>小组件显示当前所选控制器的实时速度与连接数；实际刷新间隔由 iOS 决定。</Text>}>
