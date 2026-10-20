@@ -15,6 +15,7 @@ const scripting = new Proxy({
   modifiers: () => new Proxy({}, { get: () => () => scripting.modifiers() }),
 }, { get: (o, k) => k in o ? o[k] : k })
 const context = {
+  Device: { systemVersion: "26.0" }, UIGlass: { regular: () => ({ interactive() { return this }, tint() { return this } }) },
   h, React: { Fragment: 'Fragment' }, console, Date: class extends Date { static now() { return now } },
   Storage: { get: k => clone(store.get(k) ?? null), set: (k, v) => { if (failStorage) return false; store.set(k, clone(v)); return true }, remove: k => store.delete(k), getData: k => store.get(k), setData: (k, v) => store.set(k, v) },
   Keychain: { get: k => secrets.get(k) ?? null, set: (k, v) => { secrets.set(k, v); return true }, remove: k => secrets.delete(k) },

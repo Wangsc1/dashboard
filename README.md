@@ -1,4 +1,4 @@
-# dashboard · v1.4.0
+# dashboard · v1.4.1
 
 在 iPhone「Scripting」中管理 OpenWrt，并通过 LuCI ubus 自动读取 OpenClash / Nikki / MihomoTProxy 的代理控制器地址和密钥。非官方实现。
 
@@ -7,7 +7,7 @@
 运行脚本 → 主页右上 `ellipsis.circle` → 设置 → 添加 OpenWrt。地址/端口是 LuCI 后台，账号是 LuCI 登录账号；开启“自动获取配置”后读取所选插件的控制器端口和密钥，也可关闭后手填。
 
 - 全屏根页保留 **X**；统一一个 `NavigationStack`，所有详情页使用系统推入/返回，不用设置弹层。
-- 自绘底部悬浮胶囊栏固定 **主页 / 代理 / 规则 / 连接 / 更多**，不是系统 TabView。参考本机 scriptgit 的胶囊选中视觉（浅灰底、蓝字），使用官方 `safeAreaInset` 放置。
+- 自绘底部悬浮胶囊栏固定 **主页 / 代理 / 规则 / 连接 / 更多**，不是系统 TabView。采用系统原生材质：iOS 26+ 使用 `UIGlass.regular()` 与 `GlassEffectContainer`，旧系统使用 Material；使用官方 `safeAreaInset` 放置，左右留白26pt，比上一版各增加10pt。
 - 主页菜单只保留 **设置（控制器管理）/ 运行日志 / 外观设置 / 全局配置**。网络接口、在线设备移至设置中的路由器详情，页面没有删除。
 - 代理、规则、连接读取**当前路由器自动发现或手动配置的 Clash/Mihomo 控制器**；“更多”提供当前代理的运行模式/内核配置，以及现有应用设置入口，不添加新业务。
 - 控制器保留原 `ForEach.onDelete` 左滑删除和延迟刷新逻辑；本轮没有改写删除回调，没有给控制器添加替代删除动画。

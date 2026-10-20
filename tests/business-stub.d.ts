@@ -1,7 +1,7 @@
 // 业务检查桩，不是完整 Scripting UI 类型；新增签名按官方文档核对。
 declare module "scripting" {
   const x: any
-  export const Slider: any, Transition: any, Circle: any, Animation: any, ProgressView: any, RoundedRectangle: any, ScrollView: any, SVG: any, ZStack: any, modifiers: any, Image: any, Menu: any, Button: any, ForEach: any, Form: any, HStack: any, Label: any, Navigation: any, NavigationLink: any, NavigationStack: any, Picker: any, Script: any, Section: any, SecureField: any, Spacer: any, Text: any, TextField: any, Toggle: any, VStack: any
+  export const GlassEffectContainer: any, Slider: any, Transition: any, Circle: any, Animation: any, ProgressView: any, RoundedRectangle: any, ScrollView: any, SVG: any, ZStack: any, modifiers: any, Image: any, Menu: any, Button: any, ForEach: any, Form: any, HStack: any, Label: any, Navigation: any, NavigationLink: any, NavigationStack: any, Picker: any, Script: any, Section: any, SecureField: any, Spacer: any, Text: any, TextField: any, Toggle: any, VStack: any
   export function useEffect(f: any, d?: any): void
   export function useState<T>(v: T | (() => T)): [T, (v: T | ((p: T) => T)) => void]
 }
@@ -18,3 +18,6 @@ declare var HapticFeedback: { selection(): void };
 declare var Pasteboard: { setString(s: string): Promise<void> };
 declare var UIImage: { fromData(d: any): any };
 declare var FileManager: { isiCloudEnabled: boolean; iCloudDocumentsDirectory: string; downloadFileFromiCloud(p: string): Promise<boolean>; readAsString(p: string): Promise<string>; writeAsString(p: string, text: string): Promise<void> };
+
+declare var Device: { systemVersion: string };
+declare var UIGlass: any;

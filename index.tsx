@@ -1,5 +1,5 @@
 import {
-  Animation, Transition, Button, ForEach, Form, HStack, Label, Navigation, NavigationLink, NavigationStack, Picker, Script, Section, SecureField, Spacer,
+  Animation, Transition, Button, ForEach, Form, GlassEffectContainer, HStack, Label, Navigation, NavigationLink, NavigationStack, Picker, Script, Section, SecureField, Spacer,
   Image, Menu, RoundedRectangle, Circle, ScrollView, SVG, Text, ZStack, modifiers, TextField, Toggle, VStack, useEffect, useState,
 } from "scripting"
 import {
@@ -517,19 +517,27 @@ function SettingsPage({ active, onChanged }: { active: Controller | null; onChan
 type RootTab = "home" | "proxies" | "rules" | "connections" | "more"
 const ROOT_TABS: [RootTab, string, string][] = [["home", "主页", "house.fill"], ["proxies", "代理", "point.3.connected.trianglepath.dotted"], ["rules", "规则", "list.bullet.rectangle"], ["connections", "连接", "arrow.up.arrow.down"], ["more", "更多", "ellipsis.circle"]]
 function FloatingBar({ tab, onChanged }: { tab: RootTab; onChanged: (tab: RootTab) => void }) {
-  return <HStack spacing={3} padding={7}
-    background={<RoundedRectangle cornerRadius={32} fill={{ light: "#F6F6F7", dark: "#252526" }} />}
+  // 与 scriptgit 的原生材质路径一致：iOS 26+ Liquid Glass，旧系统 Material。
+  // 不用不透明/半透明色块仿造玻璃；只有支持系统才创建 UIGlass 和容器。
+  const major = Number.parseInt(String(Device.systemVersion).split(".")[0], 10)
+  const liquidGlass = Number.isFinite(major) && major >= 26 && typeof UIGlass !== "undefined"
+  const bar = <HStack spacing={3} padding={7}
+    glassEffect={liquidGlass ? { glass: UIGlass.regular().interactive(false), shape: "capsule" } : undefined}
+    background={liquidGlass ? undefined : { style: "ultraThinMaterial", shape: "capsule" }}
+    clipShape={liquidGlass ? undefined : "capsule"}
     shadow={{ color: "rgba(0,0,0,0.12)", radius: 12, x: 0, y: 3 }}>
     {ROOT_TABS.map(([id, title, icon]) => <Button key={id} buttonStyle="plain" accessibilityLabel={title}
       accessibilityAddTraits={tab === id ? "isSelected" : undefined}
       frame={{ maxWidth: "infinity" }} action={() => { if (tab !== id) { feedback(); onChanged(id) } }}>
       <VStack spacing={3} padding={{ vertical: 7 }} frame={{ maxWidth: "infinity", minHeight: 45 }}
         foregroundStyle={tab === id ? "systemBlue" : "secondaryLabel"}
-        background={tab === id ? { style: { light: "#E2E3E5", dark: "#48484A" }, shape: { type: "rect", cornerRadius: 24 } } : undefined}>
+        glassEffect={liquidGlass && tab === id ? { glass: UIGlass.regular().interactive(true).tint("systemBlue"), shape: "capsule" } : undefined}
+        background={!liquidGlass && tab === id ? { style: "regularMaterial", shape: "capsule" } : undefined}>
         <Image systemName={icon} font={18} /><Text font={10} fontWeight={tab === id ? "semibold" : "regular"}>{title}</Text>
       </VStack>
     </Button>)}
   </HStack>
+  return liquidGlass ? <GlassEffectContainer>{bar}</GlassEffectContainer> : bar
 }
 function MorePage({ active, onChanged }: { active: Controller | null; onChanged: () => void }) {
   return <Form navigationTitle="更多" navigationBarTitleDisplayMode="inline">
@@ -558,7 +566,7 @@ function Root() {
   return <NavigationStack preferredColorScheme={prefs.theme === "system" ? undefined : prefs.theme} font={14} foregroundStyle={MAIN_FG}>
     <VStack spacing={0} frame={{ maxWidth: "infinity", maxHeight: "infinity" }}
       toolbar={{ topBarLeading: <Button title="" systemImage="xmark" action={dismiss} /> }}
-      safeAreaInset={{ bottom: { spacing: 0, content: <VStack padding={{ horizontal: 16, top: 7, bottom: 8 }}><FloatingBar tab={tab} onChanged={setTab} /></VStack> } }}>
+      safeAreaInset={{ bottom: { spacing: 0, content: <VStack padding={{ horizontal: 26, top: 7, bottom: 8 }}><FloatingBar tab={tab} onChanged={setTab} /></VStack> } }}>
       {content}
     </VStack>
   </NavigationStack>
