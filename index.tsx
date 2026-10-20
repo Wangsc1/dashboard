@@ -1,5 +1,5 @@
 import {
-  Animation, Button, ForEach, Form, HStack, Label, Navigation, NavigationLink, NavigationStack, Picker, Script, Section, SecureField, Spacer,
+  Button, ForEach, Form, HStack, Label, Navigation, NavigationLink, NavigationStack, Picker, Script, Section, SecureField, Spacer,
   Image, Menu, RoundedRectangle, Circle, ScrollView, SVG, Text, ZStack, modifiers, TextField, Toggle, VStack, useEffect, useState,
 } from "scripting"
 import {
@@ -36,10 +36,28 @@ function Badge({ icon, color }: { icon: string; color: string }) {
   </ZStack>
 }
 function Big({ parts }: { parts: [string, string] | null }) {
-  return <HStack alignment="lastTextBaseline" spacing={4}>
-    <Text font={24} fontWeight="bold" lineLimit={1} minimumScaleFactor={0.65} contentTransition="numericText" animation={{ animation: Animation.easeOut(0.35), value: parts?.[0] ?? "-" }}>{parts ? parts[0] : "-"}</Text>
-    <Text font={13} lineLimit={1} fixedSize={{ horizontal: true, vertical: false }} foregroundStyle="secondaryLabel">{parts ? parts[1] : ""}</Text>
-  </HStack>
+  const target = parts?.[0] ?? "-", unit = parts?.[1] ?? ""
+  const [shown, setShown] = useState(target)
+  const [track] = useState({ value: target, unit })
+  useEffect(() => {
+    const start = Number(track.value), end = Number(target)
+    if (!Number.isFinite(start) || !Number.isFinite(end) || track.unit !== unit) {
+      track.value = target; track.unit = unit; setShown(target); return
+    }
+    const at = Date.now(), decimals = target.includes(".") ? target.split(".")[1].length : 0
+    const t = setInterval(() => {
+      const p = Math.min(1, (Date.now() - at) / 280)
+      const next = (start + (end - start) * (1 - Math.pow(1 - p, 3))).toFixed(decimals)
+      track.value = next; setShown(next)
+      if (p === 1) clearInterval(t)
+    }, 40)
+    return () => clearInterval(t)
+  }, [target, unit])
+  // 普通 Text 保持可见，不再依赖原生 numericText 转场；数字以插值平滑更新。
+  return <Text font={24} fontWeight="bold" foregroundStyle={MAIN_FG} lineLimit={1}
+    frame={{ maxWidth: "infinity", minHeight: 34, alignment: "leading" }}>
+    {`${shown}${unit ? " " + unit : ""}`}
+  </Text>
 }
 const HIST = 60
 function Spark({ data, color, floor = 1024 }: { data: number[]; color: string; floor?: number }) {
@@ -78,13 +96,13 @@ function RateChart({ down, up }: { down: number[]; up: number[] }) {
       <HStack spacing={4}><Circle fill="#3B82F6" frame={{ width: 5, height: 5 }} /><Text font={12} foregroundStyle="secondaryLabel">下载</Text></HStack><HStack spacing={4}><Circle fill="#34C759" frame={{ width: 5, height: 5 }} /><Text font={12} foregroundStyle="secondaryLabel">上传</Text></HStack>
     </HStack>
     <HStack alignment="top" spacing={8} frame={{ maxWidth: "infinity" }}>
-      <SVG code={code} resizable frame={{ maxWidth: "infinity", height: H }} />
-      <VStack alignment="trailing" spacing={0} frame={{ width: 76, height: H }}>
-        {[1, 0.75, 0.5, 0.25].map((f, i) => <VStack key={String(f)} spacing={0}>
-          <HStack spacing={0}><Spacer /><Text font={11} lineLimit={1} fixedSize={{ horizontal: true, vertical: false }} foregroundStyle="secondaryLabel">{label(f)}</Text></HStack>
+      <VStack alignment="leading" spacing={0} frame={{ width: 72, height: H }}>
+        {[1, 0.75, 0.5, 0.25].map(f => <VStack key={String(f)} spacing={0}>
+          <HStack spacing={0}><Text font={11} lineLimit={1} fixedSize={{ horizontal: true, vertical: false }} foregroundStyle="secondaryLabel">{label(f)}</Text><Spacer /></HStack>
           <Spacer />
         </VStack>)}
       </VStack>
+      <SVG code={code} resizable frame={{ maxWidth: "infinity", height: H }} />
     </HStack>
   </Card>
 }
