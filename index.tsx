@@ -220,6 +220,9 @@ function EditController({ initial, onDone }: { initial?: Controller; onDone: () 
     </Section>
     {err ? <Section><Text foregroundStyle="systemRed">{err}</Text></Section> : null}
     <Section><Button title="保存并测试" action={save} /></Section>
+    {initial ? <Section><Button title="删除此控制器" role="destructive" action={async () => {
+      if (await Dialog.confirm({ title: "删除控制器", message: initial.name, confirmLabel: "删除" })) { removeController(initial.id); onDone(); dismiss() }
+    }} /></Section> : null}
   </Form>
 }
 
@@ -256,13 +259,10 @@ function SettingsPage({ active, onChanged }: { active: Controller | null; onChan
   }
   return <Form navigationTitle="设置" navigationBarTitleDisplayMode="inline">
     <Section header={<Text>控制器</Text>}>
-      {list.map(c => <HStack key={c.id}>
-        <Button action={() => Navigation.present({ element: <NavigationStack><EditController initial={c} onDone={reload} /></NavigationStack> })}>
-          <VStack alignment="leading"><Text>{c.name}</Text><Text font={12} foregroundStyle="secondaryLabel">{`${c.kind === "clash" ? "Clash" : "Surge"} · ${c.url}`}</Text></VStack>
-        </Button>
-        <Spacer />
-        <Button title="删除" role="destructive" action={() => del(c)} />
-      </HStack>)}
+      {list.map(c => <NavigationLink key={c.id} destination={<EditController initial={c} onDone={reload} />}
+        trailingSwipeActions={{ allowsFullSwipe: false, actions: [<Button title="删除" role="destructive" action={() => del(c)} />] }}>
+        <VStack alignment="leading"><Text>{c.name}</Text><Text font={12} foregroundStyle="secondaryLabel">{`${c.kind === "clash" ? "Clash" : "Surge"} · ${c.url}`}</Text></VStack>
+      </NavigationLink>)}
       <NavigationLink destination={<EditController onDone={reload} />}><Label title="添加控制器" systemImage="plus" /></NavigationLink>
     </Section>
     {active?.kind === "clash" ? <ClashConfigSection c={active} /> : null}
