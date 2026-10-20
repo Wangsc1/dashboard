@@ -1,5 +1,5 @@
 // Neko Dash for Scripting - 数据层：Clash(Mihomo/OpenClash/OpenWrt 的 Clash API) 与 Surge HTTP API
-export const VERSION = "1.0.0"
+export const VERSION = "1.0.1"
 
 export type Kind = "clash" | "surge"
 export interface Controller { id: string; name: string; kind: Kind; url: string }

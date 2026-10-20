@@ -1,4 +1,4 @@
-# Neko Dash for Scripting
+# dashboard
 
 非官方实现：在 iPhone「Scripting」中管理 Clash（Mihomo / OpenClash / OpenWrt）与 Surge 控制器。
 

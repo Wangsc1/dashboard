@@ -1,6 +1,6 @@
 import {
-  Button, ForEach, Form, HStack, List, Navigation, NavigationStack, Picker, Script, Section, SecureField, Spacer, Tab, TabView,
-  Text, TextField, Toggle, VStack, Widget, useEffect, useObservable, useState, Dialog,
+  Button, Form, HStack, Label, Navigation, NavigationLink, NavigationStack, Picker, Script, Section, SecureField, Spacer,
+  Text, TextField, Toggle, VStack, Widget, useEffect, useState, Dialog,
 } from "scripting"
 import {
   VERSION, Controller, Group, Conn, Rule, Overview, Kind, listControllers, saveController, removeController, getActive, setActive, getSecret,
@@ -39,8 +39,7 @@ function OverviewPage({ active, version, onSwitch }: { active: Controller | null
     setBusy(true)
     try { await setMode(active, m); await refresh() } catch (e) { setErr(msg(e)) } finally { setBusy(false) }
   }
-  return <NavigationStack>
-    <Form navigationTitle="Neko Dash" navigationBarTitleDisplayMode="inline">
+  return <Form navigationTitle="Neko Dash" navigationBarTitleDisplayMode="inline">
       {!active ? <NoController /> : <>
         {all.length > 1 ? <Section header={<Text>控制器</Text>}>
           <Picker title="当前" pickerStyle="menu" value={active.id} onChanged={(v: string) => { setActive(v); setOv(null); onSwitch() }}>
@@ -61,8 +60,13 @@ function OverviewPage({ active, version, onSwitch }: { active: Controller | null
           </Picker>
         </Section>
       </>}
+      <Section header={<Text>功能</Text>}>
+        <NavigationLink destination={<ProxiesPage active={active} version={version} />}><Label title="策略组" systemImage="point.3.connected.trianglepath.dotted" /></NavigationLink>
+        <NavigationLink destination={<ConnectionsPage active={active} version={version} />}><Label title="连接" systemImage="arrow.up.arrow.down" /></NavigationLink>
+        <NavigationLink destination={<RulesPage active={active} version={version} />}><Label title="规则" systemImage="list.bullet.rectangle" /></NavigationLink>
+        <NavigationLink destination={<SettingsPage active={active} onChanged={onSwitch} />}><Label title="设置" systemImage="gearshape" /></NavigationLink>
+      </Section>
     </Form>
-  </NavigationStack>
 }
 
 // ---------- 策略组 ----------
@@ -104,15 +108,13 @@ function ProxiesPage({ active, version }: { active: Controller | null; version: 
     loadGroups(active).then(g => { if (alive) { setGroups(g); setErr("") } }).catch(e => { if (alive) setErr(msg(e)) })
     return () => { alive = false }
   }, [active?.id, version, tick])
-  return <NavigationStack>
-    <Form navigationTitle="策略组" navigationBarTitleDisplayMode="inline"
-      toolbar={{ primaryAction: <Button title="刷新" systemImage="arrow.clockwise" action={() => setTick(tick + 1)} /> }}>
-      {!active ? <NoController /> : <>
-        {err ? <Section><Text foregroundStyle="systemRed">{err}</Text></Section> : null}
-        {groups.map(g => <GroupSection key={g.name + tick + (active?.id ?? "")} c={active} g={g} onChanged={() => setTick(tick + 1)} />)}
-      </>}
-    </Form>
-  </NavigationStack>
+  return <Form navigationTitle="策略组" navigationBarTitleDisplayMode="inline"
+    toolbar={{ primaryAction: <Button title="刷新" systemImage="arrow.clockwise" action={() => setTick(tick + 1)} /> }}>
+    {!active ? <NoController /> : <>
+      {err ? <Section><Text foregroundStyle="systemRed">{err}</Text></Section> : null}
+      {groups.map(g => <GroupSection key={g.name + tick + (active?.id ?? "")} c={active} g={g} onChanged={() => setTick(tick + 1)} />)}
+    </>}
+  </Form>
 }
 
 // ---------- 连接 ----------
@@ -139,25 +141,23 @@ function ConnectionsPage({ active, version }: { active: Controller | null; versi
       try { await closeAllConnections(active); await refresh() } catch (e) { await Dialog.alert({ message: msg(e) }) }
     }
   }
-  return <NavigationStack>
-    <Form navigationTitle={`连接 (${conns.length})`} navigationBarTitleDisplayMode="inline"
-      toolbar={{ primaryAction: <Button title="全部断开" systemImage="xmark.circle" action={closeAll} /> }}>
-      {!active ? <NoController /> : <>
-        <Section><TextField title="筛选" value={q} onChanged={setQ} prompt="域名 / 规则 / 节点 / 源地址" /></Section>
-        {err ? <Section><Text foregroundStyle="systemRed">{err}</Text></Section> : null}
-        <Section footer={conns.length > shown.length ? <Text>仅显示最新 200 条；点击条目可断开</Text> : <Text>点击条目可断开</Text>}>
-          {shown.map(x => <Button key={x.id} action={() => close(x)}>
-            <VStack alignment="leading" spacing={2}>
-              <Text font={15}>{x.host}</Text>
-              <Text font={12} foregroundStyle="secondaryLabel">{`${x.network} ${x.src} → ${x.dst}`}</Text>
-              <Text font={12} foregroundStyle="secondaryLabel">{`${x.chain || "-"} | ${x.rule || "-"}`}</Text>
-              <Text font={12} foregroundStyle="secondaryLabel">{`↑${fmtBytes(x.up)} ↓${fmtBytes(x.down)} · ${fmtDuration(x.start)}`}</Text>
-            </VStack>
-          </Button>)}
-        </Section>
-      </>}
-    </Form>
-  </NavigationStack>
+  return <Form navigationTitle={`连接 (${conns.length})`} navigationBarTitleDisplayMode="inline"
+    toolbar={{ primaryAction: <Button title="全部断开" systemImage="xmark.circle" action={closeAll} /> }}>
+    {!active ? <NoController /> : <>
+      <Section><TextField title="筛选" value={q} onChanged={setQ} prompt="域名 / 规则 / 节点 / 源地址" /></Section>
+      {err ? <Section><Text foregroundStyle="systemRed">{err}</Text></Section> : null}
+      <Section footer={conns.length > shown.length ? <Text>仅显示最新 200 条；点击条目可断开</Text> : <Text>点击条目可断开</Text>}>
+        {shown.map(x => <Button key={x.id} action={() => close(x)}>
+          <VStack alignment="leading" spacing={2}>
+            <Text font={15}>{x.host}</Text>
+            <Text font={12} foregroundStyle="secondaryLabel">{`${x.network} ${x.src} → ${x.dst}`}</Text>
+            <Text font={12} foregroundStyle="secondaryLabel">{`${x.chain || "-"} | ${x.rule || "-"}`}</Text>
+            <Text font={12} foregroundStyle="secondaryLabel">{`↑${fmtBytes(x.up)} ↓${fmtBytes(x.down)} · ${fmtDuration(x.start)}`}</Text>
+          </VStack>
+        </Button>)}
+      </Section>
+    </>}
+  </Form>
 }
 
 // ---------- 规则 ----------
@@ -174,20 +174,18 @@ function RulesPage({ active, version }: { active: Controller | null; version: nu
     return () => { alive = false }
   }, [active?.id, version])
   const shown = rules.filter(r => !q || (r.type + r.payload + r.proxy).toLowerCase().includes(q.toLowerCase()))
-  return <NavigationStack>
-    <Form navigationTitle={`规则 (${rules.length})`} navigationBarTitleDisplayMode="inline">
-      {!active ? <NoController /> : <>
-        <Section><TextField title="筛选" value={q} onChanged={setQ} prompt="类型 / 内容 / 策略" /></Section>
-        {err ? <Section><Text foregroundStyle="systemRed">{err}</Text></Section> : null}
-        <Section footer={shown.length > 300 ? <Text>仅显示前 300 条，请用筛选缩小范围</Text> : loading ? <Text>加载中…</Text> : undefined}>
-          {shown.slice(0, 300).map((r, i) => <VStack key={String(i)} alignment="leading" spacing={2}>
-            <Text font={15}>{r.payload || r.type}</Text>
-            <Text font={12} foregroundStyle="secondaryLabel">{`${r.type} → ${r.proxy}`}</Text>
-          </VStack>)}
-        </Section>
-      </>}
-    </Form>
-  </NavigationStack>
+  return <Form navigationTitle={`规则 (${rules.length})`} navigationBarTitleDisplayMode="inline">
+    {!active ? <NoController /> : <>
+      <Section><TextField title="筛选" value={q} onChanged={setQ} prompt="类型 / 内容 / 策略" /></Section>
+      {err ? <Section><Text foregroundStyle="systemRed">{err}</Text></Section> : null}
+      <Section footer={shown.length > 300 ? <Text>仅显示前 300 条，请用筛选缩小范围</Text> : loading ? <Text>加载中…</Text> : undefined}>
+        {shown.slice(0, 300).map((r, i) => <VStack key={String(i)} alignment="leading" spacing={2}>
+          <Text font={15}>{r.payload || r.type}</Text>
+          <Text font={12} foregroundStyle="secondaryLabel">{`${r.type} → ${r.proxy}`}</Text>
+        </VStack>)}
+      </Section>
+    </>}
+  </Form>
 }
 
 // ---------- 设置 ----------
@@ -254,45 +252,38 @@ function SettingsPage({ active, onChanged }: { active: Controller | null; onChan
   async function del(c: Controller) {
     if (await Dialog.confirm({ title: "删除控制器", message: c.name, confirmLabel: "删除" })) { removeController(c.id); reload() }
   }
-  return <NavigationStack>
-    <Form navigationTitle="设置" navigationBarTitleDisplayMode="inline">
-      <Section header={<Text>控制器</Text>}>
-        {list.map(c => <HStack key={c.id}>
-          <Button action={() => Navigation.present({ element: <NavigationStack><EditController initial={c} onDone={reload} /></NavigationStack> })}>
-            <VStack alignment="leading"><Text>{c.name}</Text><Text font={12} foregroundStyle="secondaryLabel">{`${c.kind === "clash" ? "Clash" : "Surge"} · ${c.url}`}</Text></VStack>
-          </Button>
-          <Spacer />
-          <Button title="删除" role="destructive" action={() => del(c)} />
-        </HStack>)}
-        <Button title="添加控制器" systemImage="plus" action={() => Navigation.present({ element: <NavigationStack><EditController onDone={reload} /></NavigationStack> })} />
-      </Section>
-      {active?.kind === "clash" ? <ClashConfigSection c={active} /> : null}
-      <Section header={<Text>小组件</Text>} footer={<Text>小组件显示当前所选控制器的实时速度与连接数；实际刷新间隔由 iOS 决定。</Text>}>
-        <Picker title="刷新间隔" value={refreshMin} onChanged={async (v: string) => { setRefreshMin(v); saveRefreshMinutes(Number(v)); await Widget.reloadAll() }}>
-          {REFRESH_OPTIONS.map(m => <Text key={m} tag={String(m)}>{m}分钟</Text>)}
-        </Picker>
-        <Button title="预览小组件" action={() => Widget.preview({ family: "systemSmall" })} />
-      </Section>
-      <Section footer={<Text>密钥保存在 Keychain，不会上传或写入脚本文件。</Text>}>
-        <Text foregroundStyle="secondaryLabel">{`Neko Dash for Scripting v${VERSION}（非官方实现）`}</Text>
-      </Section>
-    </Form>
-  </NavigationStack>
+  return <Form navigationTitle="设置" navigationBarTitleDisplayMode="inline">
+    <Section header={<Text>控制器</Text>}>
+      {list.map(c => <HStack key={c.id}>
+        <Button action={() => Navigation.present({ element: <NavigationStack><EditController initial={c} onDone={reload} /></NavigationStack> })}>
+          <VStack alignment="leading"><Text>{c.name}</Text><Text font={12} foregroundStyle="secondaryLabel">{`${c.kind === "clash" ? "Clash" : "Surge"} · ${c.url}`}</Text></VStack>
+        </Button>
+        <Spacer />
+        <Button title="删除" role="destructive" action={() => del(c)} />
+      </HStack>)}
+      <NavigationLink destination={<EditController onDone={reload} />}><Label title="添加控制器" systemImage="plus" /></NavigationLink>
+    </Section>
+    {active?.kind === "clash" ? <ClashConfigSection c={active} /> : null}
+    <Section header={<Text>小组件</Text>} footer={<Text>小组件显示当前所选控制器的实时速度与连接数；实际刷新间隔由 iOS 决定。</Text>}>
+      <Picker title="刷新间隔" value={refreshMin} onChanged={async (v: string) => { setRefreshMin(v); saveRefreshMinutes(Number(v)); await Widget.reloadAll() }}>
+        {REFRESH_OPTIONS.map(m => <Text key={m} tag={String(m)}>{m}分钟</Text>)}
+      </Picker>
+      <Button title="预览小组件" action={() => Widget.preview({ family: "systemSmall" })} />
+    </Section>
+    <Section footer={<Text>密钥保存在 Keychain，不会上传或写入脚本文件。</Text>}>
+      <Text foregroundStyle="secondaryLabel">{`Neko Dash for Scripting v${VERSION}（非官方实现）`}</Text>
+    </Section>
+  </Form>
 }
 
-// ---------- 根 ----------
+// ---------- 根：单一 NavigationStack，子页面左右推入，系统返回按钮 ----------
 function Root() {
-  const tab = useObservable<number>(0)
   const [version, setVersion] = useState(0)
   const [active, setActiveState] = useState<Controller | null>(getActive())
   const bump = () => { setActiveState(getActive()); setVersion(v => v + 1); void Widget.reloadAll() }
-  return <TabView selection={tab}>
-    <Tab title="概览" systemImage="gauge.with.dots.needle.50percent" value={0}><OverviewPage active={active} version={version} onSwitch={bump} /></Tab>
-    <Tab title="策略组" systemImage="point.3.connected.trianglepath.dotted" value={1}><ProxiesPage active={active} version={version} /></Tab>
-    <Tab title="连接" systemImage="arrow.up.arrow.down" value={2}><ConnectionsPage active={active} version={version} /></Tab>
-    <Tab title="规则" systemImage="list.bullet.rectangle" value={3}><RulesPage active={active} version={version} /></Tab>
-    <Tab title="设置" systemImage="gearshape" value={4}><SettingsPage active={active} onChanged={bump} /></Tab>
-  </TabView>
+  return <NavigationStack>
+    <OverviewPage active={active} version={version} onSwitch={bump} />
+  </NavigationStack>
 }
 
 async function run() {

@@ -2,7 +2,7 @@
   "name": "Neko Dash",
   "icon": "pawprint.fill",
   "color": "rgba(88, 130, 255,1)",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "entry": "index.tsx",
   "runInApp": false,
   "description": "Clash / OpenWrt / Surge 控制器仪表盘：实时速度、策略组切换与测速、连接管理、规则预览、内核配置与小组件。",
