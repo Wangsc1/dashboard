@@ -32,7 +32,7 @@ function OverviewPage({ active, version, onSwitch }: { active: Controller | null
   const [busy, setBusy] = useState(false)
   const all = listControllers()
   const dismiss = Navigation.useDismiss()
-  const [page, setPage] = useState<"" | "proxies" | "connections" | "rules">("")
+  const [page, setPage] = useState<"" | "interfaces" | "leases" | "settings">("")
   async function refresh() {
     if (!active) return
     const [a, b] = await Promise.allSettled([loadOverview(active), loadClashOverview(active)])
@@ -50,17 +50,17 @@ function OverviewPage({ active, version, onSwitch }: { active: Controller | null
     toolbar={{
       topBarLeading: <Button title="" systemImage="xmark" action={dismiss} />,
       topBarTrailing: <Menu label={<Image systemName="ellipsis.circle" />}>
-        <Button title="策略组" systemImage="point.3.connected.trianglepath.dotted" action={() => setPage("proxies")} />
-        <Button title="连接" systemImage="arrow.up.arrow.down" action={() => setPage("connections")} />
-        <Button title="规则" systemImage="list.bullet.rectangle" action={() => setPage("rules")} />
+        <Button title="网络接口" systemImage="network" action={() => setPage("interfaces")} />
+        <Button title="在线设备" systemImage="laptopcomputer.and.iphone" action={() => setPage("leases")} />
+        <Button title="设置" systemImage="gearshape" action={() => setPage("settings")} />
       </Menu>,
     }}
     navigationDestination={{
       isPresented: page !== "",
       onChanged: (v: boolean) => { if (!v) setPage("") },
-      content: page === "proxies" ? <ProxiesPage active={active} version={version} />
-        : page === "connections" ? <ConnectionsPage active={active} version={version} />
-        : page === "rules" ? <RulesPage active={active} version={version} /> : <Text>-</Text>,
+      content: page === "interfaces" && active ? <WrtInterfacesPage active={active} version={version} />
+        : page === "leases" && active ? <WrtLeasesPage active={active} version={version} />
+        : page === "settings" ? <SettingsPage active={active} onChanged={onSwitch} /> : <Text>-</Text>,
     }}>
     {!active ? <NoController /> : <>
       {all.length > 1 ? <Section header={<Text>路由器</Text>}>
@@ -97,11 +97,11 @@ function OverviewPage({ active, version, onSwitch }: { active: Controller | null
         </Picker>
       </Section> : null}
     </>}
-    <Section header={<Text>功能</Text>}>
-      <NavigationLink destination={<WrtInterfacesPage active={active} version={version} />}><Label title="网络接口" systemImage="network" /></NavigationLink>
-      <NavigationLink destination={<WrtLeasesPage active={active} version={version} />}><Label title="在线设备" systemImage="laptopcomputer.and.iphone" /></NavigationLink>
-      <NavigationLink destination={<SettingsPage active={active} onChanged={onSwitch} />}><Label title="设置" systemImage="gearshape" /></NavigationLink>
-    </Section>
+    {active ? <Section header={<Text>代理</Text>}>
+      <NavigationLink destination={<ProxiesPage active={active} version={version} />}><Label title="策略组" systemImage="point.3.connected.trianglepath.dotted" /></NavigationLink>
+      <NavigationLink destination={<ConnectionsPage active={active} version={version} />}><Label title="连接" systemImage="arrow.up.arrow.down" /></NavigationLink>
+      <NavigationLink destination={<RulesPage active={active} version={version} />}><Label title="规则" systemImage="list.bullet.rectangle" /></NavigationLink>
+    </Section> : null}
   </Form>
 }
 
