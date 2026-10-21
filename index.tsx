@@ -143,7 +143,8 @@ function RateChart({ down, up, enabled = true }: { down: number[]; up: number[];
 }
 
 function OverviewPage({ active, version, onSwitch, onClose }: { active: Controller | null; version: number; onSwitch: () => void; onClose?: () => void }) {
-  const prefs = usePreferences(["showWrt", "connectionBackground"])
+  const [page, setPage] = useState<"" | "settings">("")
+  const prefs = usePreferences(["showWrt", "connectionBackground"], page === "")
   const [hosts, setHosts] = useState<string[]>([])
   const [ov, setOv] = useState<Overview | null>(null)
   const [err, setErr] = useState("")
@@ -151,7 +152,6 @@ function OverviewPage({ active, version, onSwitch, onClose }: { active: Controll
   const [upH, setUpH] = useState<number[]>([])
   const [visible, setVisible] = useState(true)
   const all = listControllers()
-  const [page, setPage] = useState<"" | "settings">("")
   const showCharts = visible && page === ""
   useEffect(() => { setDn([]); setUpH([]); setOv(null) }, [active?.id, active?.url])
   useEffect(() => {
@@ -188,7 +188,7 @@ function OverviewPage({ active, version, onSwitch, onClose }: { active: Controll
   const toolbar = rootToolbar("home", onClose, <Button title="" systemImage="ellipsis.circle" action={() => setPage("settings")} />)
   const destination = {
     isPresented: page !== "",
-    onChanged: (v: boolean) => { if (!v) setPage("") },
+    onChanged: (v: boolean) => { if (!v) { setPage(""); onSwitch() } },
     content: page === "settings" ? <SettingsPage active={active} onChanged={onSwitch} />
       : <Text>-</Text>,
   }
@@ -605,7 +605,7 @@ function EditController({ initial, onDone }: { initial?: Controller; onDone: () 
 }
 
 function SettingsPage({ active, onChanged }: { active: Controller | null; onChanged: () => void }) {
-  const prefs = usePreferences(["foldOffline"])
+  const [prefs, setPrefs] = useState(getPreferences())
   const [revealed, setRevealed] = useState<string[]>([])
   const [list, setList] = useState(listControllers())
   const reload = () => { setList(listControllers()); onChanged() }
@@ -615,7 +615,7 @@ function SettingsPage({ active, onChanged }: { active: Controller | null; onChan
     setList(listControllers())
     setTimeout(onChanged, 500)
   }
-  return <Form navigationTitle="面板设置" navigationBarTitleDisplayMode="inline">
+  return <Form navigationTitle="面板设置" navigationBarTitleDisplayMode="inline" onAppear={() => setPrefs(getPreferences())}>
     <Section header={<HStack><Text>OpenWrt</Text><Spacer /><Text font={12} foregroundStyle="secondaryLabel">{`v${VERSION}`}</Text></HStack>}>
       {list.map(c => <NavigationLink key={c.id} destination={<EditController initial={c} onDone={reload} />}
           trailingSwipeActions={{ allowsFullSwipe: false, actions: [<Button title="删除" tint="systemRed" action={() => remove(c.id)} />] }}>
@@ -651,7 +651,7 @@ function MorePage({ active, onChanged, onClose }: { active: Controller | null; o
   </Card>} />
 }
 function Root() {
-  const prefs = usePreferences(["theme"]), dismiss = Navigation.useDismiss()
+  const prefs = getPreferences(), dismiss = Navigation.useDismiss()
   const [version, setVersion] = useState(0)
   const selection = useObservable<RootTab>(() => { const p = getPreferences().defaultPage; return p === "overview" ? "home" : p })
   const tab = selection.value

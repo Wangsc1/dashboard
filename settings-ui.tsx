@@ -4,17 +4,22 @@ import { NODE_SORT_OPTIONS, Preferences, AppLog, LogLevel, getPreferences, saveP
 
 import { makeBackup, restoreBackup, validateBackup } from "./cloud-backup"
 
-export function usePreferences(keys?: (keyof Preferences)[]) {
+export function usePreferences(keys?: (keyof Preferences)[], enabled = true) {
   const [p, setP] = useState(getPreferences())
   const [track] = useState({ value: p })
   const signature = keys?.join(",") ?? "*"
-  useEffect(() => subscribePreferences(() => {
-    const next = getPreferences()
-    const watched = keys ?? Object.keys(next) as (keyof Preferences)[]
-    if (!watched.some(k => JSON.stringify(track.value[k]) !== JSON.stringify(next[k]))) return
-    track.value = next
-    setP(next)
-  }), [signature])
+  useEffect(() => {
+    if (!enabled) return
+    const refresh = () => {
+      const next = getPreferences()
+      const watched = keys ?? Object.keys(next) as (keyof Preferences)[]
+      if (!watched.some(k => JSON.stringify(track.value[k]) !== JSON.stringify(next[k]))) return
+      track.value = next
+      setP(next)
+    }
+    refresh()
+    return subscribePreferences(refresh)
+  }, [signature, enabled])
   return p
 }
 function update(patch: Partial<Preferences>) { try { savePreferences(patch); feedback() } catch { void Dialog.alert({ message: "本地设置保存失败，请重试" }) } }
@@ -63,7 +68,7 @@ export function AppearancePage() {
       {toggle("collapseGesture", "卡片折叠菜单手势")}{toggle("removalFade", "碎片化移除特效")}
     </Section>
     <Section header={<Text>延迟阈值设置</Text>}><NavigationLink destination={<ThresholdPage />}><Text>{`延迟阈值范围　${p.delayGreen}–${p.delayRed} ms`}</Text></NavigationLink></Section>
-    <Section header={<Text>代理组</Text>}>{toggle("showHidden", "显示隐藏代理组")}{toggle("customIcons", "自定义代理组图标")}<NavigationLink destination={<IconsPage />}><Label title="编辑组图标" systemImage="paintbrush" /></NavigationLink></Section>
+    <Section header={<Text>代理组</Text>}>{toggle("showHidden", "显示隐藏代理组")}{toggle("customIcons", "自定义代理组图标")}</Section>
     <Section header={<Text>概览页面</Text>}>{toggle("showWrt", "显示 OpenWrt 状态")}{toggle("droplets", "水滴动画效果")}{toggle("connectionBackground", "连接信息背景")}{toggle("ripple", "概览卡片水波纹特效")}</Section>
     <Section header={<Text>缓存管理</Text>}><Button title="清除图片缓存" action={clear} /></Section>
   </Form>
