@@ -65,10 +65,10 @@ const pref = load('preferences'), api = load('api'), ui = load('settings-ui'), a
 function unmount() { for (const fn of cleanups.values()) fn(); cleanups.clear(); hooks = []; effects = [] }
 function render(fn, props, reset = false) { if (reset) unmount(); hookIndex = 0; effects = []; return fn(props) }
 async function flush() { const es = effects; effects = []; es.forEach(f => f()); for (let i = 0; i < 60; i++) await Promise.resolve() }
-function unwrap(tree) { if (!tree || typeof tree !== 'object') return tree; if (typeof tree.type === 'function' && ['Card','Shell','Hint','Chip','Pages'].includes(tree.type.name)) return unwrap(tree.type(tree.props)); return { ...tree, props: { ...tree.props, children: (tree.props?.children ?? []).map(unwrap) } } }
+function unwrap(tree) { if (!tree || typeof tree !== 'object') return tree; if (typeof tree.type === 'function' && ['Card','Shell','Hint','Chip','Pages','MorePanel','MoreHeading','MoreLine','MoreSeparator','MoreTile'].includes(tree.type.name)) return unwrap(tree.type(tree.props)); return { ...tree, props: { ...tree.props, children: (tree.props?.children ?? []).map(unwrap) } } }
 function nodes(tree, type) { const out = []; function visit(n) { if (!n || typeof n !== 'object') return; if (n.type === type) out.push(n); for (const x of n.props?.children ?? []) visit(x) } visit(unwrap(tree)); return out }
 function trailing(toolbar) { return toolbar?.type === 'Toolbar' ? nodes(toolbar,'ToolbarItem').find(n=>n.props.placement==='topBarTrailing')?.props.children[0] : toolbar?.topBarTrailing }
-function button(tree, title) { const b = nodes(tree, 'Button').find(b => b.props.title === title || nodes(b,'Label').some(l => l.props.title === title)); assert.ok(b, 'button: ' + title); return b }
+function button(tree, title) { const b = nodes(tree, 'Button').find(b => b.props.title === title || nodes(b,'Label').some(l => l.props.title === title) || nodes(b,'Text').some(t=>text(t).replace(/ /g,'')===title.replace(/ /g,''))); assert.ok(b, 'button: ' + title); return b }
 function text(tree) { tree = unwrap(tree); if (typeof tree === 'string' || typeof tree === 'number') return String(tree); return (tree?.props?.children ?? []).map(text).join(' ') }
 let count = 0
 async function test(title, fn) { await fn(); count++; console.log('PASS', title) }
@@ -432,7 +432,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) { const lazy = ['proxies','rules','connections'].includes(ids[i]) && ids[i] !== id; assert.equal(nodes(tree, types[i]).length, lazy ? 0 : 1); if (!lazy) assert.equal(nodes(tree, types[i])[0].props.selected, ids[i] === id) }
     }
-    assert.equal(api.VERSION, '1.5.120'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.5.121'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('独立导航栈保留业务owner和身份，只有选中页提供可见工具栏', () => {
     pref.savePreferences({ defaultPage: 'overview' })
@@ -802,6 +802,22 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     responder=()=>({body:{Status:0,Answer:[{data:'answer-value',TTL:60,type:1}]}});calls.length=0;const r=await api.queryDNS(c,'example.invalid','A');assert.equal(r.answers[0].ttl,60);assert.ok(calls[0].url.endsWith('/dns/query?name=example.invalid&type=A'));await assert.rejects(()=>api.queryDNS(c,'bad/path','A'))
     pref.clearLogs();responder=()=>({throw:'https://secret.invalid/?token=private-token body=session-private'});await assert.rejects(()=>api.loadProviders(c,'proxies'));const logs=pref.exportLogs();assert.ok(!logs.includes('private-token'));assert.ok(!logs.includes('session-private'));assert.ok(!logs.includes('secret.invalid'));assert.ok(!pages.safeError().includes('http'))
     context.confirmResult=false;calls.length=0;for(const a of ['restart','reload','geo','dns','fakeip'])await model.confirmed(c.name,a,()=>api.coreAction(c,a));assert.equal(calls.length,0);context.confirmResult=true
+  })
+  await test('非主页四页标题使用基本信息名称，更多分组与图示入口完整', () => {
+    for(const name of ['P320','另一个设备']) for(const Page of [pages.ProxiesPage,pages.RulesPage,pages.ConnectionsPage,pages.MorePage]) {
+      const tree=render(Page,{active:{...c,name},version:0,selected:false,onChanged(){}},true)
+      assert.equal(tree.props.navigationTitle,name)
+    }
+    const tree=render(pages.MorePage,{active:{...c,name:'P320'},selected:false,onChanged(){}},true)
+    assert.equal(tree.props.background,'systemGroupedBackground')
+    for(const title of ['运行信息','内核版本','插件版本','核心配置','代理配置','快捷管理','网页访问','运行日志','配置管理','订阅管理','附加规则','服务管理','核心操作','DNS 工具','域名查询'])assert.ok(text(tree).includes(title),title)
+    const tiles=nodes(tree,'VStack').filter(n=>n.props.background?.props?.cornerRadius===9)
+    assert.equal(tiles.length,5);assert.ok(tiles.every(n=>n.props.frame.maxWidth==='infinity'))
+    const service=nodes(tree,'Button').filter(b=>['启动','停止','重启','重载'].includes(text(b).trim()))
+    assert.equal(service.length,4);assert.ok(service.every(b=>b.props.disabled));assert.ok(service.every(b=>nodes(b,'Image')[0].props.background.type==='Circle'))
+    assert.ok(nodes(tree,'Divider').length>=5)
+    const links=nodes(tree,'NavigationLink');assert.ok(links.some(l=>l.props.destination.type===ui.KernelConfigPage));assert.ok(links.some(l=>l.props.destination.type===pages.DNSPage))
+    assert.equal(nodes(tree,'Tab').length,0);unmount()
   })
   await test('1.5更多实际动作：运行时间未知不冒充，取消操作不请求，网页无密钥', async () => {
     const n={...c,id:'more-nikki',kind:'openwrt',plugin:'nikki',url:'http://current-device.invalid'}
@@ -1182,7 +1198,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       const diagnostic = logs.filter(x => x.startsWith('[preferences-icon]'))
       for (const stage of ['change','accepted','proxies-render','group-render']) assert.ok(diagnostic.some(x => x.includes('stage=' + stage) && x.includes('enabled=false')))
       assert.ok(diagnostic.every(x => !x.includes('private.invalid') && !x.includes('private-group-name') && !x.includes('secret-')))
-      assert.ok(diagnostic.every(x => x.includes('build=1.5.120') && /instance=[a-z0-9]+/.test(x)))
+      assert.ok(diagnostic.every(x => x.includes('build=1.5.121') && /instance=[a-z0-9]+/.test(x)))
       assert.equal(new Set(diagnostic.map(x => x.match(/instance=([^ ]+)/)[1])).size, 1)
     } finally { context.console = originalConsole; unmount(); pref.savePreferences({ customIcons: true, testURL: 'https://www.gstatic.com/generate_204' }) }
   })
