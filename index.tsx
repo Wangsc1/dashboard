@@ -153,7 +153,7 @@ function OverviewPage({ active, version, onSwitch, onClose }: { active: Controll
   const [upH, setUpH] = useState<number[]>([])
   const [visible, setVisible] = useState(true)
   const all = listControllers()
-  const [page, setPage] = useState<"" | "settings" | "appearance" | "global" | "logs">("")
+  const [page, setPage] = useState<"" | "settings" | "appearance" | "global">("")
   const showCharts = visible && page === ""
   useEffect(() => { setDn([]); setUpH([]); setOv(null) }, [active?.id, active?.url])
   useEffect(() => {
@@ -189,7 +189,6 @@ function OverviewPage({ active, version, onSwitch, onClose }: { active: Controll
   const memUsed = w ? Math.max(0, w.memTotal - w.memFree) : 0
   const toolbar = rootToolbar("home", onClose, <Menu label={<Image systemName="ellipsis.circle" />}>
       <Button title="面板管理" systemImage="gearshape" action={() => setPage("settings")} />
-      <Button title="运行日志" systemImage="doc.text" action={() => setPage("logs")} />
       <Button title="外观设置" systemImage="paintpalette" action={() => setPage("appearance")} />
       <Button title="全局配置" systemImage="slider.horizontal.3" action={() => setPage("global")} />
     </Menu>)
@@ -199,7 +198,6 @@ function OverviewPage({ active, version, onSwitch, onClose }: { active: Controll
     content: page === "settings" ? <SettingsPage active={active} onChanged={onSwitch} />
       : page === "appearance" ? <AppearancePage />
       : page === "global" ? <GlobalConfigPage active={active} />
-      : page === "logs" ? <LogsPage />
       : <Text>-</Text>,
   }
   if (!active) return <Form navigationTitle="dashboard" navigationBarTitleDisplayMode="inline" toolbar={toolbar} navigationDestination={destination}><NoController /></Form>
@@ -640,6 +638,7 @@ function SettingsPage({ active, onChanged }: { active: Controller | null; onChan
             : <Text font={12} foregroundStyle="secondaryLabel">{maskUrl(c.url)}</Text>}</VStack>
         </NavigationLink>)}
       <NavigationLink destination={<EditController onDone={reload} />}><Label title="添加 OpenWrt" systemImage="plus" /></NavigationLink>
+      <NavigationLink destination={<LogsPage />}><Label title="运行日志" systemImage="doc.text" /></NavigationLink>
     </Section>
     {active ? <Section header={<Text>路由器详情</Text>}>
       <NavigationLink destination={<WrtInterfacesPage active={active} version={0} />}><Label title="网络接口" systemImage="network" /></NavigationLink>
