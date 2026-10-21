@@ -57,14 +57,14 @@ export function AppearancePage() {
   }
   return <Form navigationTitle="外观设置" navigationBarTitleDisplayMode="inline">
     <Section header={<Text>主题</Text>}><Choice title="外观模式" value={p.theme} values={[["system", "跟随系统"], ["light", "浅色"], ["dark", "深色"]]} onChanged={v => update({ theme: v as any })} /></Section>
-    <Section header={<Text>列表与动画</Text>} footer={<Text>截图未展开代理卡片样式选项：此处简约为本地替代。碎片化移除原生粒子效果无官方接口，以系统淡出/缩小替代，仅用于连接移除，不改变控制器左滑删除。</Text>}>
+    <Section header={<Text>列表与动画</Text>}>
       <Choice title="连接列表样式" value={p.connectionStyle} values={[["standard", "标准"], ["compact", "简约"]]} onChanged={v => update({ connectionStyle: v as any })} />
-      <Choice title="代理卡片样式" value={p.proxyStyle} values={[["list", "列表"], ["compact", "简约（本地替代）"]]} onChanged={v => update({ proxyStyle: v as any })} />
-      {toggle("collapseGesture", "卡片折叠菜单手势（长按组标题）")}{toggle("removalFade", "碎片化移除特效（淡出替代）")}
+      <Choice title="代理卡片样式" value={p.proxyStyle} values={[["list", "列表"], ["compact", "简约"]]} onChanged={v => update({ proxyStyle: v as any })} />
+      {toggle("collapseGesture", "卡片折叠菜单手势")}{toggle("removalFade", "碎片化移除特效")}
     </Section>
     <Section header={<Text>延迟阈值设置</Text>}><NavigationLink destination={<ThresholdPage />}><Text>{`延迟阈值范围　${p.delayGreen}–${p.delayRed} ms`}</Text></NavigationLink></Section>
     <Section header={<Text>代理组</Text>}>{toggle("showHidden", "显示隐藏代理组")}{toggle("customIcons", "自定义代理组图标")}<NavigationLink destination={<IconsPage />}><Label title="编辑组图标" systemImage="paintbrush" /></NavigationLink></Section>
-    <Section header={<Text>概览页面</Text>} footer={<Text>水滴显示在上传/下载总量卡片；活动连接背景滚动显示真实连接主机（读取失败不展示）；点击卡片显示水波纹。动画为脚本绘制替代，并非原应用着色器。</Text>}>{toggle("showWrt", "显示 OpenWrt 状态")}{toggle("droplets", "水滴动画效果")}{toggle("connectionBackground", "连接信息背景")}{toggle("ripple", "概览卡片水波纹特效")}</Section>
+    <Section header={<Text>概览页面</Text>}>{toggle("showWrt", "显示 OpenWrt 状态")}{toggle("droplets", "水滴动画效果")}{toggle("connectionBackground", "连接信息背景")}{toggle("ripple", "概览卡片水波纹特效")}</Section>
     <Section header={<Text>缓存管理</Text>}><Button title="清除图片缓存" action={clear} /></Section>
   </Form>
 }
