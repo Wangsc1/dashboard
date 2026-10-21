@@ -10,6 +10,7 @@ const emitScene = phase => { for (const fn of [...sceneListeners]) fn(phase) }
 const clone = v => v === undefined ? undefined : JSON.parse(JSON.stringify(v))
 const h = (type, props, ...children) => ({ type, props: { ...props, children: children.flat(Infinity).filter(x => x !== null && x !== undefined && x !== false) } })
 const scripting = new Proxy({
+  gradient: (kind, spec) => ({ kind, ...spec }),
   AppEvents: { scenePhase: { addListener: fn => sceneListeners.add(fn), removeListener: fn => sceneListeners.delete(fn) } },
   useMemo(fn, deps) { const i = hookIndex++, old = hooks[i]; if (!old || deps.some((v, j) => v !== old.deps[j])) hooks[i] = { deps, value: fn() }; return hooks[i].value },
   useState(v) { const i = hookIndex++; if (!(i in hooks)) hooks[i] = typeof v === 'function' ? v() : v; return [hooks[i], v => { if (failNextState) { failNextState = false; throw Error("mock native setter failed") }; hooks[i] = typeof v === 'function' ? v(hooks[i]) : v }] },
@@ -140,8 +141,48 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, ui.Range).find(n => n.props.title === '连接超时时间').props.value, timeout)
       assert.equal(pref.getPreferences().requestTimeout, timeout)
     }
-    const src = fs.readFileSync(path.join(root, 'settings-ui.tsx'), 'utf8'); assert.ok(src.includes('global-render'))
+    const src = fs.readFileSync(path.join(root, 'settings-ui.tsx'), 'utf8'); assert.ok(!src.includes('traceIconPreference("global-render"'))
     unmount(); pref.savePreferences({ customIcons: true, theme: 'system', requestTimeout: 8 })
+  })
+  await test('阈值双滑块：100–800、不能交叉、只在结束时持久化且失败回滚', async () => {
+    pref.savePreferences({ delayGreen: 240, delayRed: 500 })
+    function track(tree) { return nodes(tree, 'GeometryReader')[0].props.children[0]({ size: { width: 744 } }) }
+    const drag = (x, y = 0) => ({ translation: { width: x, height: y } })
+    let tree = render(ui.ThresholdRange, {}, true); await flush()
+    let handles = nodes(track(tree), 'ZStack').filter(x => x.props.onDragGesture)
+    assert.equal(handles.length, 2)
+    assert.equal(nodes(track(tree), 'RoundedRectangle')[0].props.fill.colors.join(','), 'systemGreen,systemYellow,systemOrange,systemRed')
+    handles[0].props.onDragGesture.onChanged(drag(100))
+    tree = render(ui.ThresholdRange, {}); await flush()
+    assert.ok(text(tree).includes('340–500 ms')); assert.equal(pref.getPreferences().delayGreen, 240)
+    handles = nodes(track(tree), 'ZStack').filter(x => x.props.onDragGesture)
+    handles[0].props.onDragGesture.onEnded(drag(100)); assert.equal(pref.getPreferences().delayGreen, 340)
+    tree = render(ui.ThresholdRange, {}); await flush()
+    handles = nodes(track(tree), 'ZStack').filter(x => x.props.onDragGesture)
+    handles[1].props.onDragGesture.onChanged(drag(500)); tree = render(ui.ThresholdRange, {}); await flush()
+    handles = nodes(track(tree), 'ZStack').filter(x => x.props.onDragGesture)
+    handles[1].props.onDragGesture.onEnded(drag(500)); assert.equal(pref.getPreferences().delayRed, 800)
+    tree = render(ui.ThresholdRange, {}); await flush()
+    handles = nodes(track(tree), 'ZStack').filter(x => x.props.onDragGesture)
+    handles[0].props.onDragGesture.onEnded(drag(0, 100)); assert.equal(pref.getPreferences().delayGreen, 340)
+    failStorage = true; handles[0].props.onDragGesture.onChanged(drag(-400)); handles[0].props.onDragGesture.onEnded(drag(-400)); failStorage = false
+    tree = render(ui.ThresholdRange, {}); await flush(); assert.ok(text(tree).includes('340–800 ms')); assert.equal(pref.getPreferences().delayGreen, 340)
+    for (const which of ['green','red']) for (const v of [-10000,100,240,500,800,10000]) {
+      const pair = ui.thresholdPair(240, 500, which, v)
+      assert.ok(pair.delayGreen >= 100 && pair.delayGreen < pair.delayRed && pair.delayRed <= 800)
+    }
+    unmount(); pref.savePreferences({ delayGreen: 240, delayRed: 500 })
+    const global = render(ui.GlobalConfigPage, { active: null }, true)
+    assert.equal(nodes(global, ui.ThresholdRange).length, 1)
+    assert.ok(!nodes(global, 'NavigationLink').some(x => text(x).includes('延迟阈值'))); unmount()
+  })
+  await test('设置普通滑块只更新局部草稿，结束拖动才通知保存', async () => {
+    const saved = [], props = { title: '测试', value: 8, min: 1, max: 30, onChanged: n => saved.push(n) }
+    let tree = render(ui.Range, props, true); await flush()
+    let slider = nodes(tree, 'Slider')[0]; slider.props.onEditingChanged(true)
+    for (const n of [9,10,11,12]) slider.props.onChanged(n)
+    tree = render(ui.Range, props); await flush(); assert.ok(text(tree).includes('12')); assert.equal(saved.length, 0)
+    nodes(tree, 'Slider')[0].props.onEditingChanged(false); assert.equal(saved.join(','), '12'); unmount()
   })
   await test('请求头 Keychain 保存与认证/传输覆盖、CRLF拒绝', () => {
     pref.saveHeaders('{"X-Client":"private-header-value"}')
@@ -330,7 +371,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) { assert.equal(nodes(tree, types[i]).length, 1); assert.equal(nodes(tree, types[i])[0].props.selected, ids[i] === id) }
     }
-    assert.equal(api.VERSION, '1.5.59'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.5.60'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('独立导航栈保留业务owner和身份，只有选中页提供可见工具栏', () => {
     pref.savePreferences({ defaultPage: 'overview' })
@@ -393,7 +434,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     const dns=render(pages.DNSPage,{c},true);assert.equal(dns.props.toolbar,undefined)
     const management=render(pages.ManagementPage,{c,kind:'profile'},true);assert.equal(management.props.toolbar,undefined)
   })
-  await test('主页设置覆盖期间持续ubus采样，卸载清理，重新进入恢复且不重复轮询', async () => {
+  await test('主页设置覆盖时暂停采样，返回恢复且不重复轮询', async () => {
     pref.savePreferences({ connectionBackground: false })
     const router = api.listControllers().find(x => x.kind === 'openwrt')
     let uptime = 1
@@ -410,7 +451,10 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     for (let i = 0; i < 3; i++) {
       const tree = render(app.OverviewPage, props); await flush()
       assert.equal(trailing(tree.props.toolbar).props.destination.type, app.SettingsPage)
-      assert.equal(tree.props.onDisappear, undefined); assert.equal(tree.props.onAppear, undefined)
+      assert.equal(typeof tree.props.onDisappear, 'function'); assert.equal(typeof tree.props.onAppear, 'function')
+      tree.props.onDisappear(); render(app.OverviewPage, props); await flush(); assert.equal(polling().length, 0)
+      const quiet = calls.length; render(app.OverviewPage, props); await flush(); assert.equal(calls.length, quiet)
+      tree.props.onAppear(); render(app.OverviewPage, props); await flush()
       assert.equal(polling().length, 1)
       const before = calls.length, beforeParts = nodes(tree, app.StatCard).find(n => n.props.title === '内存使用').props.parts
       const beforeUptime = nodes(tree, app.InfoItem).find(n => n.props.title === '运行时间').props.value
@@ -757,7 +801,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
   await test('外观选项移入全局配置，概览选项不移动', () => {
     const src = fs.readFileSync(path.join(root, 'settings-ui.tsx'), 'utf8'), body = src.slice(src.indexOf('export function GlobalConfigPage'), src.indexOf('function CloudSettingsPage'))
     assert.ok(!body.includes('（本地替代）')); assert.ok(!body.includes('（长按组标题）')); assert.ok(!body.includes('（淡出替代）'))
-    for (const k of ['theme','delayGreen','showHidden','customIcons','clearImageCache']) assert.ok(body.includes(k))
+    for (const k of ['theme','ThresholdRange','showHidden','customIcons','clearImageCache']) assert.ok(body.includes(k))
   })
   await test('设置子页打开时暂停主页偏好刷新，返回补齐；外观去掉编辑组图标', async () => {
     pref.savePreferences({ showWrt: true })
@@ -840,9 +884,9 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       render(pages.ProxiesPage, { active: null, version: 0 }, true); await flush(); unmount()
       render(pages.GroupSection, { c, g: { name: 'private-group-name', type: 'Selector', all: ['A'], now: 'A', delays: {}, icon: 'https://private.invalid/secret-image' }, onChanged() {} }, true); await flush(); unmount()
       const diagnostic = logs.filter(x => x.startsWith('[preferences-icon]'))
-      for (const stage of ['change','accepted','global-render','proxies-render','group-render']) assert.ok(diagnostic.some(x => x.includes('stage=' + stage) && x.includes('enabled=false')))
+      for (const stage of ['change','accepted','proxies-render','group-render']) assert.ok(diagnostic.some(x => x.includes('stage=' + stage) && x.includes('enabled=false')))
       assert.ok(diagnostic.every(x => !x.includes('private.invalid') && !x.includes('private-group-name') && !x.includes('secret-')))
-      assert.ok(diagnostic.every(x => x.includes('build=1.5.59') && /instance=[a-z0-9]+/.test(x)))
+      assert.ok(diagnostic.every(x => x.includes('build=1.5.60') && /instance=[a-z0-9]+/.test(x)))
       assert.equal(new Set(diagnostic.map(x => x.match(/instance=([^ ]+)/)[1])).size, 1)
     } finally { context.console = originalConsole; unmount(); pref.savePreferences({ customIcons: true, testURL: 'https://www.gstatic.com/generate_204' }) }
   })

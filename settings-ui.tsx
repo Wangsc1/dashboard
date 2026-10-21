@@ -1,11 +1,11 @@
-import { Button, Circle, Form, HStack, Image, Label, Menu, NavigationLink, Picker, Section, SecureField, Slider, Spacer, Text, TextField, Toggle, VStack, useEffect, useState } from "scripting"
+import { Button, Circle, GeometryReader, ZStack, RoundedRectangle, gradient, Form, HStack, Image, Label, Menu, NavigationLink, Picker, Section, SecureField, Slider, Spacer, Text, TextField, Toggle, VStack, useEffect, useState } from "scripting"
 import { Controller, ClashConfig, CLASH_MODES, LOG_LEVELS, loadConfig, patchConfig } from "./api"
 import { NODE_SORT_OPTIONS, Preferences, AppLog, LogLevel, getPreferences, savePreferences, subscribePreferences, preferenceTrace, traceIconPreference, feedback, getLogs, clearLogs, exportLogs, logTime, getHeaderText, saveHeaders, clearImageCache } from "./preferences"
 
 import { makeBackup, restoreBackup, validateBackup } from "./cloud-backup"
 
 export function usePreferences(keys?: (keyof Preferences)[], enabled = true, trace = false) {
-  const [p, setP] = useState(getPreferences())
+  const [p, setP] = useState(() => getPreferences())
   const [track] = useState({ value: p })
   const signature = keys?.join(",") ?? "*"
   useEffect(() => {
@@ -31,21 +31,74 @@ function Choice({ title, value, values, onChanged, disabled = false }: { title: 
   return <Picker title={title} pickerStyle="menu" value={value} onChanged={onChanged} disabled={disabled}>{values.map(([v, l]) => <Text key={v} tag={v}>{l}</Text>)}</Picker>
 }
 function Range({ title, value, min, max, step = 1, suffix = "", onChanged }: { title: string; value: number; min: number; max: number; step?: number; suffix?: string; onChanged: (n: number) => void }) {
-  return <VStack alignment="leading"><Text>{`${title}：${value}${suffix}`}</Text><Slider min={min} max={max} step={step} value={value} onChanged={onChanged} label={<Text>{title}</Text>} minValueLabel={<Text>{min}</Text>} maxValueLabel={<Text>{max}</Text>} /></VStack>
+  const [draft, setDraft] = useState(value)
+  const [editing] = useState({ active: false, value })
+  useEffect(() => { if (!editing.active) { editing.value = value; setDraft(value) } }, [value])
+  return <VStack alignment="leading"><Text>{`${title}：${draft}${suffix}`}</Text><Slider min={min} max={max} step={step} value={draft} onChanged={(n: number) => { editing.value = n; setDraft(n) }} onEditingChanged={(active: boolean) => {
+    editing.active = active
+    if (!active && editing.value !== value) {
+      // Parent supplies the accepted value; a failed save must not leave a false draft.
+      setDraft(value)
+      onChanged(editing.value)
+    }
+  }} label={<Text>{title}</Text>} minValueLabel={<Text>{min}</Text>} maxValueLabel={<Text>{max}</Text>} /></VStack>
 }
 
-function ThresholdPage() {
-  const p = usePreferences()
-  const [green, setGreen] = useState(String(p.delayGreen)), [red, setRed] = useState(String(p.delayRed))
-  async function save() {
-    const a = Number(green), b = Number(red)
-    if (!green.trim() || !red.trim() || !Number.isInteger(a) || !Number.isInteger(b) || a < 1 || b > 10000 || a >= b) return Dialog.alert({ message: "请输入 1–10000 ms 内递增的两个整数" })
-    try { savePreferences({ delayGreen: a, delayRed: b }); await Dialog.alert({ message: "延迟颜色阈值已保存" }) } catch { await Dialog.alert({ message: "保存失败" }) }
-  }
-  return <Form navigationTitle="延迟阈值范围" navigationBarTitleDisplayMode="inline">
-    <Section footer={<Text>低于下限为绿色，下限到上限（含）为黄色，高于上限或超时为红色。</Text>}><TextField title="绿色上限（ms）" value={green} onChanged={setGreen} /><TextField title="黄色上限（ms）" value={red} onChanged={setRed} /><Button title="保存阈值" action={save} /></Section>
-  </Form>
+export function thresholdPair(green: number, red: number, handle: "green" | "red", value: number) {
+  const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, Math.round(n)))
+  const g = clamp(green, 100, 799), r = clamp(red, g + 1, 800)
+  return handle === "green" ? { delayGreen: clamp(value, 100, r - 1), delayRed: r }
+    : { delayGreen: g, delayRed: clamp(value, g + 1, 800) }
 }
+export function ThresholdRange() {
+  const p = usePreferences(["delayGreen", "delayRed"])
+  const [draft, setDraft] = useState({ delayGreen: p.delayGreen, delayRed: p.delayRed })
+  const [drag] = useState<{ start: number | null; pair: typeof draft; changed: boolean }>({ start: null, pair: draft, changed: false })
+  useEffect(() => {
+    if (drag.start === null) {
+      const next = { delayGreen: p.delayGreen, delayRed: p.delayRed }
+      drag.pair = next; setDraft(next)
+    }
+  }, [p.delayGreen, p.delayRed])
+  function gesture(handle: "green" | "red", width: number) {
+    const key = handle === "green" ? "delayGreen" : "delayRed"
+    function move(e: { translation: { width: number; height: number } }) {
+      if (Math.abs(e.translation.height) > Math.abs(e.translation.width)) return
+      if (drag.start === null) drag.start = Math.max(100, Math.min(800, drag.pair[key]))
+      const next = thresholdPair(drag.pair.delayGreen, drag.pair.delayRed, handle, drag.start + e.translation.width / width * 700)
+      drag.changed = next.delayGreen !== p.delayGreen || next.delayRed !== p.delayRed
+      drag.pair = next; setDraft(next)
+    }
+    return { minDistance: 8, onChanged: move, onEnded: (e: { translation: { width: number; height: number } }) => {
+      move(e)
+      if (drag.changed) {
+        try { savePreferences(drag.pair); feedback() }
+        catch {
+          const old = { delayGreen: p.delayGreen, delayRed: p.delayRed }
+          drag.pair = old; setDraft(old)
+          void Dialog.alert({ message: "本地设置保存失败，请重试" })
+        }
+      }
+      drag.start = null; drag.changed = false
+    } }
+  }
+  return <VStack alignment="leading" spacing={18} padding={{ vertical: 8 }}>
+    <HStack><Text>延迟阈值范围</Text><Spacer /><Text foregroundStyle="secondaryLabel">{`${draft.delayGreen}–${draft.delayRed} ms`}</Text></HStack>
+    <GeometryReader frame={{ height: 56 }}>{(proxy: { size: { width: number } }) => {
+      const width = Math.max(1, proxy.size.width - 44)
+      const x = (n: number) => 22 + (Math.max(100, Math.min(800, n)) - 100) / 700 * width
+      return <ZStack alignment="leading" frame={{ width: proxy.size.width, height: 56 }}>
+        <RoundedRectangle cornerRadius={2} fill={gradient("linear", { colors: ["systemGreen", "systemYellow", "systemOrange", "systemRed"], startPoint: "leading", endPoint: "trailing" })} frame={{ width, height: 4 }} offset={{ x: 22, y: 0 }} />
+        {(["green", "red"] as const).map(handle => <ZStack key={handle} frame={{ width: 44, height: 56 }} offset={{ x: x(handle === "green" ? draft.delayGreen : draft.delayRed) - 22, y: 0 }} onDragGesture={gesture(handle, width)}>
+          <Circle fill="white" stroke={{ shapeStyle: "#DDDDDD", strokeStyle: { lineWidth: 0.5 } }} frame={{ width: 26, height: 26 }} shadow={{ color: "#00000022", radius: 3, y: 2 }} />
+        </ZStack>)}
+      </ZStack>
+    }}</GeometryReader>
+    <Text font={12} foregroundStyle="tertiaryLabel">{`低于${draft.delayGreen}ms显示为绿色，${draft.delayGreen}ms到${draft.delayRed}ms之间显示为黄色，高于${draft.delayRed}ms或超时显示为红色。`}</Text>
+    {p.delayGreen < 100 || p.delayRed > 800 ? <Text font={12} foregroundStyle="secondaryLabel">当前保留原阈值；首次拖动将调整到100–800 ms范围。</Text> : null}
+  </VStack>
+}
+
 function IconsPage() {
   const p = usePreferences(), [text, setText] = useState(JSON.stringify(p.groupIcons)), [err, setErr] = useState("")
   function save() {
@@ -121,9 +174,7 @@ export function KernelConfigPage({ c }: { c: Controller }) {
   </Form>
 }
 export function GlobalConfigPage({ active }: { active: Controller | null }) {
-  const p = usePreferences(undefined, true, true), [url, setURL] = useState(p.testURL)
-  preferenceTrace("global-render")
-  traceIconPreference("global-render", p.customIcons)
+  const p = usePreferences(), [url, setURL] = useState(() => p.testURL)
   const toggle = (key: keyof Preferences, title: string) => <Toggle key={key} title={title} value={!!p[key]} onChanged={(v: boolean) => update({ [key]: v })} />
   async function clear() {
     if (!await Dialog.confirm({ title: "清除图片缓存", message: "仅删除本脚本缓存的代理组图片；不会删除账号、密码、密钥、设置或日志。", confirmLabel: "清除" })) return
@@ -135,7 +186,7 @@ export function GlobalConfigPage({ active }: { active: Controller | null }) {
   }
   return <Form navigationTitle="全局配置" navigationBarTitleDisplayMode="inline">
     <Section header={<Text>主题</Text>}><Choice title="外观模式" value={p.theme} values={[["system", "跟随系统"], ["light", "浅色"], ["dark", "深色"]]} onChanged={v => update({ theme: v as any })} /></Section>
-    <Section header={<Text>延迟阈值设置</Text>}><NavigationLink destination={<ThresholdPage />}><Text>{`延迟阈值范围　${p.delayGreen}–${p.delayRed} ms`}</Text></NavigationLink></Section>
+    <Section header={<Text>延迟阈值设置</Text>}><ThresholdRange /></Section>
     <Section header={<Text>代理组</Text>}>{toggle("showHidden", "显示隐藏代理组")}{toggle("customIcons", "自定义代理组图标")}</Section>
     <Section header={<Text>缓存管理</Text>}><Button title="清除图片缓存" action={clear} /></Section>
     <Section header={<Text>控制器管理</Text>}>{toggle("foldOffline", "自动折叠离线控制器")}</Section>

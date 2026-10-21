@@ -1,6 +1,7 @@
 // 业务检查桩，不是完整 Scripting UI 类型；新增签名按官方文档核对。
 declare module "scripting" {
   const x: any
+  export const GeometryReader: any, gradient: any;
   export const AppEvents: { scenePhase: { addListener(fn: (phase: "active" | "inactive" | "background") => void): void; removeListener(fn: (phase: "active" | "inactive" | "background") => void): void } }, Safari: any, LazyVStack: any, TabView: any, Tab: any, Slider: any, Transition: any, Circle: any, Animation: any, ProgressView: any, RoundedRectangle: any, ScrollView: any, SVG: any, ZStack: any, modifiers: any, Image: any, Menu: any, Button: any, ForEach: any, Form: any, HStack: any, Label: any, Navigation: any, NavigationLink: any, NavigationStack: any, Picker: any, Script: any, Section: any, SecureField: any, Spacer: any, Text: any, TextField: any, Toggle: any, VStack: any
   export function useObservable<T>(v: T | (() => T)): { value: T; setValue(v: T): void }
   export function useMemo<T>(fn: () => T, deps: any[]): T
