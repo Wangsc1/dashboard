@@ -1,6 +1,6 @@
 // dashboard 数据层：Clash 外部控制 API 与 OpenWrt（LuCI ubus JSON-RPC）
 import { getPreferences, customHeaders, recordEvent, controllerHealth, feedback } from "./preferences"
-export const VERSION = "1.5.9"
+export const VERSION = "1.5.10"
 
 export type Kind = "clash" | "openwrt"
 export type Plugin = "openclash" | "nikki" | "mihomo"
@@ -14,7 +14,7 @@ export interface Group { name: string; type: string; now: string; all: string[];
 export interface Conn { id: string; host: string; src: string; dst: string; network: string; rule: string; chain: string; up: number; down: number; start: number; upSpeed?: number; downSpeed?: number; sourceIP?: string; inboundType?: string; chains?: string[]; closedAt?: number }
 export interface Rule { type: string; payload: string; proxy: string }
 export interface Traffic { up: number; down: number; upTotal?: number; downTotal?: number }
-export interface WrtInfo { model: string; release: string; uptime: number; load: number[]; memTotal: number; memFree: number; wan: string }
+export interface WrtInfo { model: string; release: string; uptime: number; load: number[]; memTotal: number; memFree: number; wan: string; target?: string; kernel?: string; cpu?: number }
 export interface Overview { version: string; mode: string; traffic: Traffic; upTotal: number; downTotal: number; connCount: number; wrt?: WrtInfo; mem?: number }
 export interface WrtIface { name: string; proto: string; up: boolean; ip: string; device: string; uptime: number }
 export interface WrtLease { host: string; ip: string; mac: string; expires: number }
@@ -165,11 +165,24 @@ function pickWan(dump: any): { name: string; device: string } {
   const w = list.find(hasDefault) ?? list.find(i => i.interface === "wan") ?? list.find(i => i.interface !== "loopback" && i.up)
   return { name: String(w?.interface ?? ""), device: String(w?.l3_device ?? w?.device ?? "") }
 }
+let lastCpu: Record<string, { total: number; idle: number }> = {}
+// 与 LuCI 一致：由 /proc/stat 总计行的两次采样差计算；首次采样或读取受限时不显示。
+function cpuPercent(id: string, raw: any): number | undefined {
+  const line = String(raw?.data ?? "").split("\n").find(l => /^cpu\s/.test(l))
+  if (!line) return undefined
+  const v = line.trim().split(/\s+/).slice(1).map(Number)
+  if (v.length < 4 || v.some(x => !Number.isFinite(x))) return undefined
+  const idle = v[3] + (v[4] ?? 0), total = v.slice(0, 8).reduce((a, b) => a + b, 0), prev = lastCpu[id]
+  lastCpu[id] = { total, idle }
+  if (!prev || total <= prev.total) return undefined
+  return Math.max(0, Math.min(100, (1 - (idle - prev.idle) / (total - prev.total)) * 100))
+}
 const MAX_RATE = 1.25e9 // 10 Gbps 字节/秒；超过视为计数跳变
 async function wrtOverview(c: Controller): Promise<Overview> {
-  const [board, info, dump, devs, ct] = await Promise.all([
+  const [board, info, dump, devs, ct, stat] = await Promise.all([
     ubus(c, "system", "board"), ubus(c, "system", "info"), ubus(c, "network.interface", "dump").catch(() => ({})),
     ubus(c, "network.device", "status").catch(() => ({})), ubus(c, "file", "read", { path: "/proc/sys/net/netfilter/nf_conntrack_count" }).catch(() => ({})),
+    ubus(c, "file", "read", { path: "/proc/stat" }).catch(() => ({})),
   ])
   const wan = pickWan(dump)
   const st = devs?.[wan.device]?.statistics ?? {}
@@ -190,7 +203,8 @@ async function wrtOverview(c: Controller): Promise<Overview> {
     version: String(board.release?.description ?? ""), mode: "", traffic: { up, down }, upTotal: tx, downTotal: rx,
     connCount: parseInt(String(ct.data ?? "0"), 10) || 0,
     wrt: { model: String(board.model ?? board.hostname ?? ""), release: String(board.release?.description ?? ""), uptime: num(info.uptime),
-      load: (info.load ?? []).map((v: number) => num(v) / 65536), memTotal: num(info.memory?.total), memFree: num(info.memory?.available ?? info.memory?.free), wan: wan.name },
+      load: (info.load ?? []).map((v: number) => num(v) / 65536), memTotal: num(info.memory?.total), memFree: num(info.memory?.available ?? info.memory?.free), wan: wan.name,
+      target: board.release?.target ? String(board.release.target) : undefined, kernel: board.kernel ? String(board.kernel) : undefined, cpu: cpuPercent(c.id, stat) },
   }
 }
 export async function loadWrtInterfaces(c: Controller): Promise<WrtIface[]> {

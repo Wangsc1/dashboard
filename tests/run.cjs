@@ -253,9 +253,9 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) assert.equal(nodes(tree, types[i]).length, ids[i] === id ? 1 : 0)
     }
-    assert.equal(api.VERSION, '1.5.9'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.5.10'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
-  await test('1.5.9 共享栈/简单ToolBarProps：唯一业务页owner、隐藏Tab无注册', () => {
+  await test('1.5.10 共享栈/简单ToolBarProps：唯一业务页owner、隐藏Tab无注册', () => {
     pref.savePreferences({ defaultPage: 'overview' })
     let rootTree = render(app.Root, {}, true)
     const pagesByTab = { home: app.OverviewPage, proxies: app.ProxiesPage, rules: app.RulesPage, connections: app.ConnectionsPage, more: app.MorePage }
@@ -299,7 +299,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     assert.ok(!source.includes('const content ='));assert.ok(!source.includes('ROOT_TABS.map'));assert.ok(!source.includes('toolbar={'));assert.ok(!source.includes('topBarLeading'))
     const helper=fs.readFileSync(path.join(root,'root-toolbar.tsx'),'utf8');assert.ok(!helper.includes('ToolbarItem'));assert.ok(!helper.includes('<Toolbar'));assert.ok(!helper.includes('key='));assert.ok(!helper.includes('id='))
   })
-  await test('1.5.9 编辑控制器仍进管理页；共享栈push详情不附根X', () => {
+  await test('1.5.10 编辑控制器仍进管理页；共享栈push详情不附根X', () => {
     let closes=0
     let page=render(app.OverviewPage,{active:c,version:0,onSwitch(){},onClose(){closes++}},true)
     button(trailing(page.props.toolbar),'编辑控制器').props.action()
@@ -324,6 +324,18 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     assert.ok(calls.length > 0); assert.ok(calls.every(x => x.url.endsWith('/ubus')))
     let tree = render(app.OverviewPage, { active: router, version: 0, onSwitch() {} }); tree.props.onDisappear(); render(app.OverviewPage, { active: router, version: 0, onSwitch() {} }); await flush()
     assert.ok(![...intervals.values()].some(x => x.ms === 1000)); unmount(); assert.equal(intervals.size, 0)
+  })
+  await test('1.5.10 OpenWrt卡：目标平台、内核版本、CPU两次采样', async () => {
+    const router = { ...api.listControllers().find(x => x.kind === 'openwrt'), id: 'cpu-test' }
+    let stat = 'cpu  100 0 100 800 0 0 0 0 0 0\n'
+    responder = (url, init) => { const b = JSON.parse(init.body || '{}'), path = b.params?.[3]?.path
+      if (b.params?.[1] === 'session') return { body: { result: [0, { ubus_rpc_session: 'sid' }] } }
+      const data = path === '/proc/stat' ? stat : '2'
+      return { body: { id: b.id, result: [0, { release: { description: 'X', target: 'x86/64' }, kernel: '6.12.94', model: 'M', uptime: 1, load: [0,0,0], memory: { total: 100, available: 50 }, interface: [], data }] } } }
+    let o = await api.loadOverview(router); assert.equal(o.wrt.target, 'x86/64'); assert.equal(o.wrt.kernel, '6.12.94'); assert.equal(o.wrt.cpu, undefined)
+    stat = 'cpu  150 0 150 900 0 0 0 0 0 0\n'
+    o = await api.loadOverview(router); assert.equal(Math.round(o.wrt.cpu), 50)
+    const src = fs.readFileSync(path.join(root, 'index.tsx'), 'utf8'); for (const t of ['目标平台','内核版本','CPU 使用率']) assert.ok(src.includes(`title="${t}"`))
   })
   await test('六卡104pt；速率SVG全高背景且前景文字最后绘制；连接内存无曲线', () => {
     const tree = render(app.StatCard, { icon: 'link', color: '#3B82F6', title: '下载速率', parts: ['1', 'KB/s'], spark: [10, 20] }, true)
