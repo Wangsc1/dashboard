@@ -153,8 +153,9 @@ export function MorePage({active,onChanged,onClose,selected=true}:{active:Contro
   const [core,setCore]=useState("未提供"),[app,setApp]=useState("未提供"),[mode,setMode]=useState("未提供"),[err,setErr]=useState(""),[visible,setVisible]=useState(selected),[busy,setBusy]=useState(false),[running,setRunning]=useState<boolean|null>(null),[guard]=useState({alive:true,source:"",busy:false}),[runtime,setRuntime]=useState<NikkiRuntime|null>(null),[,setClock]=useState(0),[notice,setNotice]=useState(""),[noticeKind,setNoticeKind]=useState("success")
   guard.source=active?sourceKey(active):""
   useEffect(()=>()=>{guard.alive=false},[])
+  useEffect(()=>{setVisible(selected)},[selected])
   useEffect(()=>{
-    if(!active||!visible)return
+    if(!active||!selected||!visible)return
     let alive=true,runtimeTimer:any,inFlight=false
     const key=sourceKey(active),cached=moreSnapshots.get(key)??{}
     if(moreSnapshots.size>30)moreSnapshots.clear()
@@ -168,8 +169,8 @@ export function MorePage({active,onChanged,onClose,selected=true}:{active:Contro
       void readRuntime();runtimeTimer=setInterval(readRuntime,30000)
     }
     return()=>{alive=false;if(runtimeTimer)clearInterval(runtimeTimer)}
-  },[active&&sourceKey(active),visible])
-  useEffect(()=>{if(!visible||!runtime||(runtime.coreSeconds===null&&runtime.serviceSeconds===null))return;const timer=setInterval(()=>setClock(n=>n+1),1000);return()=>clearInterval(timer)},[visible,runtime])
+  },[active&&sourceKey(active),selected,visible])
+  useEffect(()=>{if(!selected||!visible||!runtime||(runtime.coreSeconds===null&&runtime.serviceSeconds===null))return;const timer=setInterval(()=>setClock(n=>n+1),1000);return()=>clearInterval(timer)},[selected,visible,runtime])
   useEffect(()=>{setNotice("")},[active&&sourceKey(active),visible])
   useEffect(()=>{if(!notice||noticeKind==="progress")return;const timer=setTimeout(()=>setNotice(""),4500);return()=>clearTimeout(timer)},[notice,noticeKind])
   const duration=(value:number|null|undefined)=>value==null?"未提供":fmtUptime(value+Math.max(0,Math.floor((Date.now()-(runtime?.measuredAt??Date.now()))/1000)),true)

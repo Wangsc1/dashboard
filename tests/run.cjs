@@ -569,7 +569,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) { const lazy = ['proxies','rules','connections'].includes(ids[i]) && ids[i] !== id; assert.equal(nodes(tree, types[i]).length, lazy ? 0 : 1); if (!lazy) assert.equal(nodes(tree, types[i])[0].props.selected, ids[i] === id) }
     }
-    assert.equal(api.VERSION, '1.5.127'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.5.128'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('独立导航栈保留业务owner和身份，只有选中页提供可见工具栏', () => {
     pref.savePreferences({ defaultPage: 'overview' })
@@ -1511,7 +1511,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       const diagnostic = logs.filter(x => x.startsWith('[preferences-icon]'))
       for (const stage of ['change','accepted','proxies-render','group-render']) assert.ok(diagnostic.some(x => x.includes('stage=' + stage) && x.includes('enabled=false')))
       assert.ok(diagnostic.every(x => !x.includes('private.invalid') && !x.includes('private-group-name') && !x.includes('secret-')))
-      assert.ok(diagnostic.every(x => x.includes('build=1.5.127') && /instance=[a-z0-9]+/.test(x)))
+      assert.ok(diagnostic.every(x => x.includes('build=1.5.128') && /instance=[a-z0-9]+/.test(x)))
       assert.equal(new Set(diagnostic.map(x => x.match(/instance=([^ ]+)/)[1])).size, 1)
     } finally { context.console = originalConsole; unmount(); pref.savePreferences({ customIcons: true, testURL: 'https://www.gstatic.com/generate_204' }) }
   })
@@ -1528,6 +1528,22 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     pref.savePreferences({ customIcons: true }); tree = render(pages.GroupSection, props); await flush()
     assert.equal(nodes(tree, pages.GroupIcon).length, 1); assert.ok(nodes(tree, 'Image').some(n => n.props.systemName === 'chevron.down'))
     unmount(); pref.savePreferences({ collapseGesture: false })
+  })
+  await test('更多从预挂载未选中切到选中，无需onAppear或进入子页就启动读取，隐藏即停',async()=>{
+    const n={...c,id:'more-selection-start',kind:'openwrt',plugin:'nikki',auto:false,cport:9090}
+    const props={active:n,onChanged(){},selected:false}
+    responder=(url,init)=>({body:url.endsWith('/ubus')?{result:[0,JSON.parse(init.body).params[1]==='session'?{ubus_rpc_session:'selection-session'}:{app:'selected-app',core:'selected-core'}]}:url.endsWith('/version')?{version:'selected-core'}:{mode:'global'}})
+    calls.length=0;render(pages.MorePage,props,true);await flush();assert.equal(calls.length,0)
+    render(pages.MorePage,{...props,selected:true});await flush()
+    render(pages.MorePage,{...props,selected:true});await flush()
+    let tree=render(pages.MorePage,{...props,selected:true});assert.ok(calls.length>0);assert.ok(text(tree).includes('selected-app'));assert.ok(text(tree).includes('全局模式'));assert.ok(intervals.size>0)
+    // Native tab switching may call disappear but omit a later appear. Selection must restart work itself.
+    tree.props.onDisappear();render(pages.MorePage,props);await flush();assert.equal(intervals.size,0)
+    calls.length=0;render(pages.MorePage,{...props,selected:true});await flush();render(pages.MorePage,{...props,selected:true});await flush()
+    tree=render(pages.MorePage,{...props,selected:true});assert.ok(calls.length>0);assert.ok(text(tree).includes('全局模式'))
+    // Pushing a subpage while still selected still pauses background work until returning.
+    tree.props.onDisappear();render(pages.MorePage,{...props,selected:true});await flush();assert.equal(intervals.size,0)
+    calls.length=0;tree.props.onAppear();render(pages.MorePage,{...props,selected:true});await flush();assert.ok(calls.length>0);unmount()
   })
   await test('隐藏标签不请求不采样；更多selected透传到业务页', async () => {
     for (const fn of [app.OverviewPage, pages.ProxiesPage, pages.RulesPage, pages.ConnectionsPage, pages.MorePage]) {
