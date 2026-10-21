@@ -467,11 +467,13 @@ body{display:flex;flex-direction:column}#tools{display:flex;align-items:center;f
 // Seed a documented native path so both the system back button AND edge-swipe
 // pop a destination. Do not replace this with a modal cancel/save toolbar.
 export function NikkiFilePresentation({closed,...props}:{c:Controller;base:NikkiManagement;file:NikkiFile;done:(saved?:boolean)=>void;entryKey:string;closed:()=>void}) {
-  const path=useObservable<string[]>(["file"])
+  const path=useObservable<string[]>(["file"]),[exit]=useState({notified:false})
+  const closeIfPopped=()=>{if(path.value.length===0&&!exit.notified){exit.notified=true;closed()}}
+  // Native pop updates the documented observable path. Closing the cover must
+  // not depend on destination cleanup ordering, a WebView, or a pending save.
+  useEffect(()=>{path.subscribe(closeIfPopped);closeIfPopped();return()=>path.unsubscribe(closeIfPopped)},[path])
   return <NavigationStack path={path} statusBarHidden={false} persistentSystemOverlays="visible">
-    <VStack navigationTitle="配置文件" navigationBarTitleDisplayMode="inline" background="systemBackground" frame={{maxWidth:"infinity",maxHeight:"infinity"}} navigationDestination={<NavigationDestination>{()=> <NikkiFileEditor {...props} onExit={closed}/>}</NavigationDestination>}>
-      <ProgressView/><Hint>正在完成返回…</Hint>
-    </VStack>
+    <VStack navigationTitle="配置文件" navigationBarTitleDisplayMode="inline" background="systemBackground" frame={{maxWidth:"infinity",maxHeight:"infinity"}} onAppear={closeIfPopped} navigationDestination={<NavigationDestination>{()=> <NikkiFileEditor {...props} onExit={closeIfPopped}/>}</NavigationDestination>}/>
   </NavigationStack>
 }
 // Recovery is source/file scoped and memory-only. A canceled confirmation, failed
@@ -479,7 +481,7 @@ export function NikkiFilePresentation({closed,...props}:{c:Controller;base:Nikki
 const nikkiFileDrafts=new Map<string,{original:string;text:string}>()
 export function NikkiFileEditor({c,base,file,done,entryKey="direct",onExit}:{c:Controller;base:NikkiManagement;file:NikkiFile;done:(saved?:boolean)=>void;entryKey?:string;onExit?:()=>void}) {
   const work=useWork(c),p=usePreferences(["theme"]),[original,setOriginal]=useState<string|null>(null),[text,setText]=useState(""),[loadError,setLoadError]=useState(""),[tick,setTick]=useState(0),[ready,setReady]=useState(false),[appeared,setAppeared]=useState(false)
-  const [host]=useState(()=>({controller:new WebViewController({ephemeral:true}),alive:true,generation:0,revision:0,theme:p.theme,registration:null as Promise<unknown>|null,initial:null as null|{text:string;generation:number;theme:string},initialized:null as null|((error?:string)=>void),baseline:null as string|null,ready:false,closing:false,unmounted:false,saving:null as Promise<void>|null,writing:false,exitTask:null as Promise<void>|null,snapshotRequest:0,snapshot:null as null|((value:{text:string;revision:number;generation:number})=>void)}))
+  const [host]=useState(()=>({controller:new WebViewController({ephemeral:true}),alive:true,generation:0,revision:0,theme:p.theme,registration:null as Promise<unknown>|null,initial:null as null|{text:string;generation:number;theme:string},initialized:null as null|((error?:string)=>void),baseline:null as string|null,ready:false,closing:false,unmounted:false,saving:null as Promise<void>|null,writing:false,exitTask:null as Promise<void>|null,exitNotified:false,cancel:null as null|(()=>void),closedSignal:new Promise<void>(()=>{}),snapshotRequest:0,snapshot:null as null|((value:{text:string;revision:number;generation:number})=>void)}))
   const draftKey=JSON.stringify(work.owner)+":"+file.key
   host.theme=p.theme
   const sameSource=()=>host.alive&&work.guard.source===source(work.owner)
@@ -532,17 +534,19 @@ export function NikkiFileEditor({c,base,file,done,entryKey="direct",onExit}:{c:C
     void load();return()=>{alive=false;host.initialized=null;for(const timer of timers)clearTimeout(timer)}
   },[file.key,entryKey,tick,appeared])
   useEffect(()=>{if(ready)void host.controller.evaluateJavaScript(`window.nikkiEditor.setTheme(${JSON.stringify(p.theme)});`).catch(()=>{})},[p.theme,ready])
-  // Serialized local snapshots are also used on return, solely for in-memory
-  // recovery. Returning never calls save(), opens confirmation, or writes remotely.
+  // Only explicit save may request a snapshot. Return uses the last complete
+  // source-scoped Changed buffer; a detached WebView is never queried for exit.
   async function snapshot(){
     const request=++host.snapshotRequest
     let timer:ReturnType<typeof setTimeout>|undefined
-    const response=new Promise<{text:string;revision:number;generation:number}>((resolve,reject)=>{
-      host.snapshot=resolve
-      timer=setTimeout(()=>reject(new NikkiManagementError("未收到本地编辑器快照，未写入文件；草稿仍保留")),5000)
-    })
-    void response.catch(()=>{})
-    try{await host.controller.evaluateJavaScript(`void window.nikkiEditor.sendSnapshot(${request});`);return await response}
+    type Draft={text:string;revision:number;generation:number}
+    const response=new Promise<Draft>(resolve=>{host.snapshot=resolve})
+    const deadline=new Promise<never>((_resolve,reject)=>{timer=setTimeout(()=>reject(new NikkiManagementError("未收到本地编辑器快照，未写入文件；草稿仍保留")),5000)})
+    const canceled=host.closedSignal.then(()=>{throw new NikkiManagementError("编辑器已返回，未写入文件；草稿仍保留")})
+    // The deadline covers evaluateJavaScript AND the message reply. A rejected
+    // reply alone cannot release an await stuck inside evaluateJavaScript.
+    const capture=(async()=>{await host.controller.evaluateJavaScript(`void window.nikkiEditor.sendSnapshot(${request});`);return await response})()
+    try{return await Promise.race([capture,deadline,canceled])}
     finally{if(timer!==undefined)clearTimeout(timer);host.snapshot=null}
   }
   function retain(draft:{text:string;revision:number;generation:number}){
@@ -552,7 +556,12 @@ export function NikkiFileEditor({c,base,file,done,entryKey="direct",onExit}:{c:C
     else nikkiFileDrafts.set(draftKey,{original:host.baseline,text:draft.text})
     return true
   }
-  async function unlock(){if(host.alive)try{await host.controller.evaluateJavaScript("window.nikkiEditor.unlock();")}catch{}}
+  async function unlock(){
+    if(!host.alive||host.unmounted||host.closing)return
+    let timer:ReturnType<typeof setTimeout>|undefined
+    try{await Promise.race([host.controller.evaluateJavaScript("window.nikkiEditor.unlock();"),new Promise<void>(resolve=>{timer=setTimeout(resolve,500)})])}catch{}
+    finally{if(timer!==undefined)clearTimeout(timer)}
+  }
   function save():Promise<void>{
     if(host.closing||host.saving||work.guard.busy||!work.current()||original===null||!ready||!!loadError||text===original)return Promise.resolve()
     const generation=host.generation
@@ -562,8 +571,11 @@ export function NikkiFileEditor({c,base,file,done,entryKey="direct",onExit}:{c:C
         if(!sameSource()||generation!==host.generation||!retain(draft)||host.closing)return
         setText(draft.text)
         if(draft.text===host.baseline)return
-        await work.confirm(`覆盖文件「${file.filename}」？可能是当前选用的配置。仅保存文件，不重载服务；大文件分块写入，失败可能留下部分内容，请勿在失败后重载。`,async()=>{
-          if(host.closing||host.generation!==generation)return
+        const accepted=await Promise.race([
+          Dialog.confirm({title:"确认操作",message:`目标：${work.owner.name}\n覆盖文件「${file.filename}」？可能是当前选用的配置。仅保存文件，不重载服务；大文件分块写入，失败可能留下部分内容，请勿在失败后重载。`,confirmLabel:"继续",cancelLabel:"取消"}),
+          host.closedSignal.then(()=>false)
+        ])
+        if(accepted&&work.current()&&!host.closing&&host.generation===generation){
           // Once explicitly confirmed, finish this one source-bound write and its
           // full read-back even if native back/unmount occurs. Never start another.
           host.writing=true;work.guard.leaving=true
@@ -575,27 +587,25 @@ export function NikkiFileEditor({c,base,file,done,entryKey="direct",onExit}:{c:C
             }
           }catch(e){if(host.closing){await Dialog.alert({title:"保存未完成",message:errorText(e)})}else throw e}
           finally{host.writing=false;work.guard.leaving=false}
-        })
+        }
       }finally{await unlock()}
     }).finally(()=>{host.saving=null})
     return host.saving
   }
   function leaveFile(notify=true):Promise<void>{
+    host.closing=true;work.onDisappear();host.cancel?.()
+    // Notification ownership is independent of the cleanup task. cleanup(false)
+    // may run first, but can never consume the later native pop notification.
+    if(notify&&!host.exitNotified){host.exitNotified=true;onExit?.()}
     if(host.exitTask)return host.exitTask
-    host.closing=true;work.onDisappear()
-    const task=(async()=>{
-      // A pending snapshot/confirmation is invalidated by closing; an already
-      // confirmed write is awaited before the controller can be disposed.
-      if(host.saving)await host.saving
-      if(host.closing&&host.ready&&sameSource())try{retain(await snapshot())}catch{/* retain last complete input-message draft */}finally{await unlock()}
-    })()
-    host.exitTask=task
-    if(notify)void task.then(()=>{if(host.closing)onExit?.()})
-    return task
+    // Pending snapshot/confirmation is cancelable. A confirmed source-bound write
+    // keeps its controller until full read-back finishes, without blocking pop.
+    host.exitTask=host.saving??Promise.resolve()
+    return host.exitTask
   }
   const editorBackground=p.theme==="dark"?"#141820":p.theme==="light"?"#fff":{light:"#fff",dark:"#141820"}
-  const toolbar={topBarTrailing:<Button accessibilityLabel="保存" buttonStyle="plain" disabled={!ready||!!loadError||original===null||text===original||work.busy||host.closing||work.changed} action={save}><Image systemName="square.and.arrow.down" font={17} foregroundStyle="systemBlue" frame={{width:34,height:34}} background={<Circle fill="tertiarySystemFill"/>}/></Button>}
-  return <VStack alignment="leading" spacing={0} background={<RoundedRectangle cornerRadius={0} fill={editorBackground} ignoresSafeArea={{regions:"container",edges:"bottom"}}/>} frame={{maxWidth:"infinity",maxHeight:"infinity"}} navigationTitle={file.filename} navigationBarTitleDisplayMode="inline" toolbar={toolbar} onAppear={()=>{host.closing=false;host.exitTask=null;work.onAppear();setAppeared(true)}} onDisappear={()=>leaveFile()}>
+  const toolbar={topBarTrailing:<Button accessibilityLabel="保存" buttonStyle="plain" disabled={!ready||!!loadError||original===null||text===original||work.busy||host.closing||work.changed} action={save}><Image systemName="square.and.arrow.down"/></Button>}
+  return <VStack alignment="leading" spacing={0} background={<RoundedRectangle cornerRadius={0} fill={editorBackground} ignoresSafeArea={{regions:"container",edges:"bottom"}}/>} frame={{maxWidth:"infinity",maxHeight:"infinity"}} navigationTitle={file.filename} navigationBarTitleDisplayMode="inline" toolbar={toolbar} onAppear={()=>{host.closing=false;host.exitTask=null;host.exitNotified=false;host.closedSignal=new Promise<void>(resolve=>{host.cancel=resolve});work.onAppear();setAppeared(true)}} onDisappear={()=>leaveFile()}>
     <Status work={work}/>{work.changed?<Note error>来源已改变，请返回后重新进入</Note>:null}
     <ZStack frame={{maxWidth:"infinity",maxHeight:"infinity",minHeight:0}}>
       {/* Keep the native host mounted from the first render, including before onAppear.
