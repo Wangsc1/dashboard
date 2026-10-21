@@ -1,6 +1,6 @@
 import { rootToolbar } from "./root-toolbar"
 import { AppEvents, Animation, Transition, Button, Divider, HStack, VStack, Text, Image, Circle, RoundedRectangle, Spacer, ScrollView, LazyVStack, NavigationLink, Menu, Picker, TextField, Toggle, Form, Section, Label, ProgressView, modifiers, Safari, useState, useEffect } from "scripting"
-import { Controller, Group, Conn, Rule, Provider, loadGroups, testGroup, testNodes, selectProxy, loadProviders, updateProvider, loadRules, loadConnections, closeConnection, closeAllConnections, fmtBytes, fmtSpeed, fmtUptime, delayColor, loadRuntimeVersions, loadNikkiRuntime, NikkiRuntime, loadConfig, nikkiService, nikkiServiceStatus, coreAction, CoreAction, queryDNS, loadNikkiManagement, NikkiManagement, updateNikkiSubscription, webpage } from "./api"
+import { Controller, Group, Conn, Rule, Provider, loadGroups, testGroup, testNodes, selectProxy, loadProviders, updateProvider, loadRules, loadConnections, closeConnection, closeAllConnections, fmtBytes, fmtSpeed, fmtUptime, delayColor, loadRuntimeVersions, loadNikkiRuntime, NikkiRuntime, verifyCoreRestart, lastControllerMode, loadConfig, nikkiService, nikkiServiceStatus, coreAction, CoreAction, queryDNS, loadNikkiManagement, NikkiManagement, updateNikkiSubscription, webpage } from "./api"
 import { usePreferences, KernelConfigPage } from "./settings-ui"
 import { NODE_SORT_OPTIONS, savePreferences, cachedIcon, traceIconPreference, feedback } from "./preferences"
 import { selectable, sortedNodes, historyFor, filterConnections, clientLabels, saveClientLabel, sourceKey, confirmed } from "./dashboard-model"
@@ -148,14 +148,30 @@ function MoreHeading({children}:any) { return <Text font={13} foregroundStyle="s
 function MoreLine({title,icon,color="systemBlue",detail,subtitle,arrow=false}:any) { return <HStack alignment="center" spacing={14} padding={{horizontal:16,vertical:14}} frame={{maxWidth:"infinity",alignment:"leading"}}><Image systemName={icon} font={21} foregroundStyle={color} frame={{width:24}}/><VStack alignment="leading" spacing={6} frame={{maxWidth:"infinity",alignment:"leading"}}><HStack><Text font={17} foregroundStyle="label">{title}</Text><Spacer/>{detail?<Text font={14} foregroundStyle="secondaryLabel" fixedSize={{horizontal:true,vertical:false}} lineLimit={1}>{detail}</Text>:null}{arrow?<Image systemName="chevron.right" font={12} foregroundStyle="tertiaryLabel"/>:null}</HStack>{subtitle?<Text font={12} foregroundStyle="secondaryLabel">{subtitle}</Text>:null}</VStack></HStack> }
 function MoreSeparator() { return <Divider padding={{leading:54}}/> }
 function MoreTile({title,icon,color}:any) { return <VStack spacing={10} padding={{vertical:12,horizontal:4}} frame={{maxWidth:"infinity",minHeight:64}} background={<RoundedRectangle cornerRadius={9} fill="tertiarySystemGroupedBackground"/>}><Image systemName={icon} font={23} foregroundStyle={color}/><Text font={12} foregroundStyle="label">{title}</Text></VStack> }
+const moreSnapshots=new Map<string,{core?:string;app?:string;runtime?:NikkiRuntime;running?:boolean|null}>()
 export function MorePage({active,onChanged,onClose,selected=true}:{active:Controller|null;onChanged:()=>void;onClose?:()=>void;selected?:boolean}) {
-  const [core,setCore]=useState("未提供"),[app,setApp]=useState("未提供"),[mode,setMode]=useState("未提供"),[err,setErr]=useState(""),[visible,setVisible]=useState(selected),[busy,setBusy]=useState(false),[running,setRunning]=useState<boolean|null>(null),[guard]=useState({alive:true,source:"",busy:false}),[runtime,setRuntime]=useState<NikkiRuntime|null>(null),[,setClock]=useState(0),[notice,setNotice]=useState("")
+  const [core,setCore]=useState("未提供"),[app,setApp]=useState("未提供"),[mode,setMode]=useState("未提供"),[err,setErr]=useState(""),[visible,setVisible]=useState(selected),[busy,setBusy]=useState(false),[running,setRunning]=useState<boolean|null>(null),[guard]=useState({alive:true,source:"",busy:false}),[runtime,setRuntime]=useState<NikkiRuntime|null>(null),[,setClock]=useState(0),[notice,setNotice]=useState(""),[noticeKind,setNoticeKind]=useState("success")
   guard.source=active?sourceKey(active):""
   useEffect(()=>()=>{guard.alive=false},[])
-  useEffect(()=>{if(!active||!visible)return;let alive=true,runtimeTimer:any;setCore("读取中…");setApp("读取中…");setMode("未提供");setRunning(null);setRuntime(null);setErr("");loadRuntimeVersions(active,x=>{if(alive){if(x.core!=="未提供")setCore(x.core);if(x.app!=="未提供")setApp(x.app)}}).then(x=>{if(alive){setCore(x.core);setApp(x.app);if(x.failed)setErr("部分版本信息未读取到，请检查当前控制器与插件类型；返回的数据不会用默认值替代。")}}).catch(()=>{if(alive){setCore("读取失败");setApp("读取失败");setErr(safeError())}});loadConfig(active).then(x=>{if(alive)setMode(x.mode??"未提供")}).catch(()=>{});if(active.kind==="openwrt"&&active.plugin==="nikki"){nikkiServiceStatus(active).then(x=>{if(alive)setRunning(x)}).catch(()=>{if(alive)setRunning(null)});const readRuntime=()=>loadNikkiRuntime(active).then(x=>{if(alive)setRuntime(x)}).catch(()=>{if(alive)setRuntime(null)});void readRuntime();runtimeTimer=setInterval(readRuntime,30000)};return()=>{alive=false;if(runtimeTimer)clearInterval(runtimeTimer)}},[active&&sourceKey(active),visible])
+  useEffect(()=>{
+    if(!active||!visible)return
+    let alive=true,runtimeTimer:any,inFlight=false
+    const key=sourceKey(active),cached=moreSnapshots.get(key)??{}
+    if(moreSnapshots.size>30)moreSnapshots.clear()
+    const remember=(patch:typeof cached)=>{if(alive)moreSnapshots.set(key,{...moreSnapshots.get(key),...patch})}
+    setCore(cached.core??"读取中…");setApp(cached.app??"读取中…");setMode(lastControllerMode(active)??"读取中…");setRunning(cached.running??null);setRuntime(cached.runtime??null);setErr("")
+    loadRuntimeVersions(active,x=>{if(alive){if(x.core!=="未提供"){setCore(x.core);remember({core:x.core})}if(x.app!=="未提供"){setApp(x.app);remember({app:x.app})}}}).then(x=>{if(alive){if(x.failed){if(!moreSnapshots.get(key)?.core)setCore("读取失败");if(!moreSnapshots.get(key)?.app)setApp("读取失败");setErr("部分版本信息读取失败；已保留同来源上次结果。")}}}).catch(()=>{if(alive)setErr(safeError())})
+    loadConfig(active).then(x=>{if(alive)setMode(x.mode??"未提供")}).catch(()=>{if(alive&&!lastControllerMode(active))setMode("读取失败")})
+    if(active.kind==="openwrt"&&active.plugin==="nikki"){
+      const update=(x:NikkiRuntime)=>{if(alive){setRuntime(x);setRunning(x.running??null);remember({runtime:x,running:x.running})}}
+      const readRuntime=async()=>{if(inFlight)return;inFlight=true;try{update(await loadNikkiRuntime(active,update))}catch{if(alive)setErr("运行时间读取失败，请检查连接与读取权限。")}finally{inFlight=false}}
+      void readRuntime();runtimeTimer=setInterval(readRuntime,30000)
+    }
+    return()=>{alive=false;if(runtimeTimer)clearInterval(runtimeTimer)}
+  },[active&&sourceKey(active),visible])
   useEffect(()=>{if(!visible||!runtime||(runtime.coreSeconds===null&&runtime.serviceSeconds===null))return;const timer=setInterval(()=>setClock(n=>n+1),1000);return()=>clearInterval(timer)},[visible,runtime])
   useEffect(()=>{setNotice("")},[active&&sourceKey(active),visible])
-  useEffect(()=>{if(!notice)return;const timer=setTimeout(()=>setNotice(""),4500);return()=>clearTimeout(timer)},[notice])
+  useEffect(()=>{if(!notice||noticeKind==="progress")return;const timer=setTimeout(()=>setNotice(""),4500);return()=>clearTimeout(timer)},[notice,noticeKind])
   const duration=(value:number|null|undefined)=>value==null?"未提供":fmtUptime(value+Math.max(0,Math.floor((Date.now()-(runtime?.measuredAt??Date.now()))/1000)),true)
   async function act(action:CoreAction,label:string,impact:string){
     if(!active||guard.busy)return
@@ -163,14 +179,28 @@ export function MorePage({active,onChanged,onClose,selected=true}:{active:Contro
     guard.busy=true;setBusy(true);setNotice("")
     await attempt(async()=>{
       const options=action==="restart"?{title:"重启核心",message:"确定要重启核心吗？这将短暂中断代理服务。",confirmLabel:"确认重启"}:action==="reload"?{title:"重载配置",message:"将重新加载配置文件。",confirmLabel:"确认重载"}:null
-      const ok=action==="geo"?true:options?await Dialog.confirm({...options,cancelLabel:"取消"}):await Dialog.confirm({title:label,message:impact,confirmLabel:"确认清除",cancelLabel:"取消"})
+      const ok=["geo","dns","fakeip"].includes(action)?true:options?await Dialog.confirm({...options,cancelLabel:"取消"}):await Dialog.confirm({title:label,message:impact,confirmLabel:"确认清除",cancelLabel:"取消"})
       if(!ok||!current())return
-      await coreAction(active,action)
+      let before:NikkiRuntime|null=null
+      if(action==="restart"){
+        setNoticeKind("progress");setNotice("正在重启核心…")
+        if(nikki)try{before=await loadNikkiRuntime(active)}catch{}
+        if(!current())return
+      }
+      try{await coreAction(active,action)}catch(error){if(action!=="restart")throw error}
       if(!current())return
-      setNotice(({restart:"核心重启请求已发送",reload:"配置已重载",geo:"GEO 数据库更新成功",dns:"DNS 缓存已清除",fakeip:"FakeIP 缓存已清除"})[action])
-      if(nikki&&action==="restart"){setRuntime(null);void loadNikkiRuntime(active).then(rt=>{if(current())setRuntime(rt)}).catch(()=>{})}
+      if(action==="restart"){
+        const checked=await verifyCoreRestart(active,before,current)
+        if(!current())return
+        if(checked.runtime)setRuntime(checked.runtime)
+        setNoticeKind(checked.verified?"success":"warning")
+        setNotice(checked.verified?"核心重启成功":"尚未确认核心重启完成，请检查运行状态")
+        return
+      }
+      setNoticeKind("success")
+      setNotice(({restart:"核心重启成功",reload:"配置已重载",geo:"GEO 数据库更新成功",dns:"DNS 缓存已清除",fakeip:"FakeIP 缓存已清除"})[action])
     })
-    guard.busy=false;if(guard.alive)setBusy(false)
+    guard.busy=false;if(guard.alive){setBusy(false);setNoticeKind(k=>k==="progress"?"warning":k)}
   }
   async function service(action:"start"|"stop"|"restart"|"reload",title:string){
     if(!active||guard.busy)return
@@ -180,7 +210,7 @@ export function MorePage({active,onChanged,onClose,selected=true}:{active:Contro
       if(!await Dialog.confirm({title:`${title}服务`,message:`确认要${title}相关服务吗？`,confirmLabel:`确认${title}`,cancelLabel:"取消"})||!current())return
       await nikkiService(active,action)
       if(!current())return
-      setNotice(`${title}服务请求已发送`);setRunning(null);setRuntime(null)
+      setNoticeKind("success");setNotice(`${title}服务请求已发送`);setRunning(null);setRuntime(null)
       void nikkiServiceStatus(active).then(x=>{if(current())setRunning(x)}).catch(()=>{})
       void loadNikkiRuntime(active).then(x=>{if(current())setRuntime(x)}).catch(()=>{})
     })
@@ -188,7 +218,7 @@ export function MorePage({active,onChanged,onClose,selected=true}:{active:Contro
   }
   const nikki=active?.kind==="openwrt"&&active.plugin==="nikki"
   const actions:[CoreAction,string,string,string][]=[["restart","重启核心","arrow.clockwise","会短暂中断代理服务及连接；禁用管理API的内核可能拒绝。"],["reload","重载配置","arrow.triangle.2.circlepath","强制重新读取当前核心配置并应用，可能断开连接；不会保存Nikki UCI。"],["geo","更新GEO数据库","globe","内核将从其配置的上游下载GEO文件并替换本地数据库，产生外部请求。"]]
-  return Shell({title:active?.name??"更多",background:"systemBackground",toolbar:rootToolbar("more",onClose),overlay:notice?{alignment:"top",content:<VStack padding={{horizontal:14,top:8}}><HStack spacing={14} padding={18} background={<RoundedRectangle cornerRadius={18} fill="secondarySystemBackground"/>}><Image systemName="checkmark.circle.fill" font={24} foregroundStyle="systemGreen"/><Text font={16} fontWeight="medium">{notice}</Text><Spacer/><Button buttonStyle="plain" action={()=>setNotice("")}><Image systemName="xmark" font={16} foregroundStyle="secondaryLabel"/></Button></HStack></VStack>}:undefined,onAppear:()=>setVisible(true),onDisappear:()=>setVisible(false),children:<>{!active?<Empty/>:<>{err?<Hint>{err}</Hint>:null}
+  return Shell({title:active?.name??"更多",background:"systemBackground",toolbar:rootToolbar("more",onClose),overlay:{alignment:"top",content:<VStack animation={{animation:Animation.easeOut(0.22),value:notice}} padding={{horizontal:14,top:8}}>{notice?<HStack transition={Transition.opacity()} spacing={14} padding={18} background={<RoundedRectangle cornerRadius={18} fill="secondarySystemBackground"/>}>{noticeKind==="progress"?<ProgressView/>:<Image systemName={noticeKind==="warning"?"exclamationmark.circle.fill":"checkmark.circle.fill"} font={24} foregroundStyle={noticeKind==="warning"?"systemOrange":"systemGreen"}/>}<Text font={16} fontWeight="medium">{notice}</Text><Spacer/><Button buttonStyle="plain" action={()=>setNotice("")}><Image systemName="xmark" font={16} foregroundStyle="secondaryLabel"/></Button></HStack>:null}</VStack>},onAppear:()=>setVisible(true),onDisappear:()=>setVisible(false),children:<>{!active?<Empty/>:<>{err?<Hint>{err}</Hint>:null}
     <MoreHeading>运行信息</MoreHeading><MorePanel><MoreLine title="内核版本" icon="desktopcomputer" detail={core} subtitle={`运行时间：${running===false?"未运行":duration(runtime?.coreSeconds)}`}/><MoreSeparator/><MoreLine title="插件版本" icon="shippingbox" color="systemOrange" detail={app} subtitle={`${nikki?"Nikki 服务":active.plugin??"独立控制器"}（运行时间：${running===false?"未运行":duration(runtime?.serviceSeconds)}）`}/></MorePanel>
     <MoreHeading>核心配置</MoreHeading><MorePanel><NavigationLink destination={<KernelConfigPage c={active}/>}><MoreLine title="代理配置" icon="slider.horizontal.3" color="systemOrange" detail={mode==="rule"?"规则模式":mode==="global"?"全局模式":mode==="direct"?"直连模式":mode} arrow/></NavigationLink></MorePanel>
     <MoreHeading>快捷管理</MoreHeading><MorePanel padding={12}><HStack spacing={12}><NavigationLink frame={{maxWidth:"infinity"}} destination={<ManagementPage c={active} kind="profile"/>}><MoreTile title="配置管理" icon="gearshape" color="systemOrange"/></NavigationLink><NavigationLink frame={{maxWidth:"infinity"}} destination={<ManagementPage c={active} kind="subscription"/>}><MoreTile title="订阅管理" icon="icloud.and.arrow.down" color="systemIndigo"/></NavigationLink><NavigationLink frame={{maxWidth:"infinity"}} destination={<ManagementPage c={active} kind="rule"/>}><MoreTile title="附加规则" icon="list.bullet" color="systemPurple"/></NavigationLink></HStack></MorePanel>

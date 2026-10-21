@@ -1,6 +1,6 @@
 
 import { getPreferences, customHeaders, recordEvent, controllerHealth, feedback } from "./preferences"
-export const VERSION = "1.5.125"
+export const VERSION = "1.5.126"
 
 export type Kind = "clash" | "openwrt"
 export type Plugin = "openclash" | "nikki" | "mihomo"
@@ -357,12 +357,16 @@ export async function loadOverview(c: Controller): Promise<Overview> {
     controllerHealth[c.id] = true; return o
   } catch (e) { controllerHealth[c.id] = false; throw e }
 }
+const observedModes=new Map<string,{mode:string;at:number}>()
+export function lastControllerMode(c:Controller):string|null {const x=observedModes.get(JSON.stringify(c));return x&&Date.now()-x.at<60000?x.mode:null}
+function observeMode(c:Controller,mode:unknown){if(typeof mode!=="string"||!mode)return;if(observedModes.size>30)observedModes.clear();observedModes.set(JSON.stringify(c),{mode,at:Date.now()})}
 export async function loadClashOverview(c0: Controller): Promise<Overview> {
   const c = await cc(c0)
   {
     const [ver, cfg, conns] = await Promise.all([
       http(c, "/version").catch(() => ({})), http(c, "/configs"), http(c, "/connections"),
     ])
+    observeMode(c0,cfg.mode)
     return {
       version: String(ver.version ?? ""), mode: String(cfg.mode ?? ""), traffic: { up: 0, down: 0 },
       mem: typeof conns.memory === "number" ? conns.memory : undefined,
@@ -513,7 +517,7 @@ export async function loadRules(c0: Controller): Promise<Rule[]> {
 }
 
 export interface ClashConfig { mode?: string; "log-level"?: string; port?: number; "socks-port"?: number; "mixed-port"?: number; "redir-port"?: number; "tproxy-port"?: number; "allow-lan"?: boolean; ipv6?: boolean; "bind-address"?: string; tun?: { enable?: boolean; [key:string]: any } }
-export async function loadConfig(c: Controller): Promise<ClashConfig> { return await http(await cc(c), "/configs") }
+export async function loadConfig(c: Controller): Promise<ClashConfig> { const cfg=await http(await cc(c), "/configs");observeMode(c,cfg.mode);return cfg }
 export function validateConfigPatch(patch: Partial<ClashConfig>): Partial<ClashConfig> {
   const out: any = {}
   for (const [k, v] of Object.entries(patch)) {
@@ -532,7 +536,7 @@ export function validateConfigPatch(patch: Partial<ClashConfig>): Partial<ClashC
 }
 export async function patchConfig(c: Controller, patch: Partial<ClashConfig>) {
   const body = validateConfigPatch(patch)
-  try { await http(await cc(c), "/configs", { method: "PATCH", body }); recordEvent("config", true) }
+  try { await http(await cc(c), "/configs", { method: "PATCH", body }); recordEvent("config", true);observeMode(c,body.mode) }
   catch (e) { recordEvent("config", false); throw e }
 }
 export const LOG_LEVELS = ["silent", "error", "warning", "info", "debug"]
@@ -616,32 +620,67 @@ export function linuxProcessSeconds(uptime: string, stat: string, ticks: number,
   const seconds=now-start/ticks
   return seconds>=0?Math.floor(seconds):null
 }
-// started.flag is touched by Nikki after service setup, independently of core restarts.
-// btime + uptime supplies remote UTC epoch seconds; ubus system.info.localtime is timezone-shifted.
-export function nikkiStartedSeconds(procStat: string, uptime: string, mtime: unknown): number | null {
-  const boot=Number(procStat.match(/^btime (\d+)$/m)?.[1]),up=Number(uptime.trim().split(/\s+/)[0])
-  if(!Number.isSafeInteger(boot)||boot<=0||!Number.isFinite(up)||up<0||typeof mtime!=="number"||!Number.isSafeInteger(mtime)||mtime<boot||mtime>boot+up)return null
-  return Math.floor(boot+up-mtime)
+// ubus localtime includes the POSIX timezone offset. Refuse DST/unknown zones rather than guess.
+export function nikkiServiceSeconds(localtime: unknown, uptime: unknown, timezone: string, mtime: unknown): number | null {
+  const zone=timezone.trim().match(/^(?:[A-Za-z]{3,}|<[^>]+>)([+-]?)(\d{1,2})(?::(\d{2}))?(?::(\d{2}))?$/)
+  if(!zone||typeof localtime!=="number"||!Number.isFinite(localtime)||typeof uptime!=="number"||!Number.isFinite(uptime)||uptime<0||typeof mtime!=="number"||!Number.isSafeInteger(mtime))return null
+  const hours=Number(zone[2]),minutes=Number(zone[3]??0),seconds=Number(zone[4]??0)
+  if(hours>24||minutes>59||seconds>59)return null
+  const offset=(hours*3600+minutes*60+seconds)*(zone[1]==="-"?-1:1),age=localtime+offset-mtime
+  return age>=0&&age<=uptime?Math.floor(age):null
 }
-export interface NikkiRuntime { coreSeconds:number|null;serviceSeconds:number|null;measuredAt:number }
-export async function loadNikkiRuntime(c: Controller): Promise<NikkiRuntime> {
+export function linuxCoreIdentity(stat:string,pid:number):string|null {
+  const end=stat.lastIndexOf(")"),fields=stat.slice(end+2).trim().split(/\s+/)
+  if(end<0||!stat.startsWith(pid+" (")||![fields[19],fields[25]].every(x=>/^\d+$/.test(x??"")&&Number(x)>0))return null
+  // execve keeps PID/starttime, but replaces the user stack. Never rely on PID alone.
+  return `${pid}:${fields[19]}:${fields[25]}`
+}
+export interface NikkiRuntime { coreSeconds:number|null;serviceSeconds:number|null;measuredAt:number;coreIdentity?:string|null;running?:boolean|null }
+export async function loadNikkiRuntime(c: Controller,onUpdate?:(value:NikkiRuntime)=>void): Promise<NikkiRuntime> {
   requireNikki(c)
-  const result:NikkiRuntime={coreSeconds:null,serviceSeconds:null,measuredAt:Date.now()}
-  const services=await ubus(c,"service","list",{name:"nikki"})
-  const instance:any=Object.values(services.nikki?.instances??{}).find((x:any)=>x.running===true&&Number.isInteger(x.pid)&&x.pid>0)
-  if(!instance)return result
+  const result:NikkiRuntime={coreSeconds:null,serviceSeconds:null,measuredAt:Date.now(),coreIdentity:null,running:null}
+  const [services,info,flag,tz]=await ubusBatch(c,[
+    ["service","list",{name:"nikki"}], ["system","info"],
+    ["file","stat",{path:"/var/run/nikki/started.flag"}], ["file","read",{path:"/etc/TZ"}]
+  ])
+  const instances:any[]=Object.values(services?.nikki?.instances??{})
+  const instance=instances.find(x=>x.running===true&&Number.isInteger(x.pid)&&x.pid>0)
+  result.running=services?.nikki?!!instance:null
+  if(!instance){onUpdate?.({...result});return result}
+  if(flag?.type==="file")result.serviceSeconds=nikkiServiceSeconds(info?.localtime,info?.uptime,String(tz?.data??""),flag.mtime)
+  result.measuredAt=Date.now();onUpdate?.({...result})
   const pid=instance.pid
-  // Batch independent reads into one HTTP round-trip; individual denied fields stay null.
-  const [uptime,aux,stat,comm,flag,systemStat]=await ubusBatch(c,[
+  const [uptime,aux,stat,comm]=await ubusBatch(c,[
     ["file","read",{path:"/proc/uptime"}], ["file","read",{path:"/proc/self/auxv",base64:true}],
-    ["file","read",{path:`/proc/${pid}/stat`}], ["file","read",{path:`/proc/${pid}/comm`}],
-    ["file","stat",{path:"/var/run/nikki/started.flag"}], ["file","read",{path:"/proc/stat"}]
+    ["file","read",{path:`/proc/${pid}/stat`}], ["file","read",{path:`/proc/${pid}/comm`}]
   ])
   const ticks=linuxClockTicks(String(aux?.data??""))
-  if(ticks!==null&&String(comm?.data??"").trim()==="mihomo")result.coreSeconds=linuxProcessSeconds(String(uptime?.data??""),String(stat?.data??""),ticks,pid)
-  if(flag?.type==="file")result.serviceSeconds=nikkiStartedSeconds(String(systemStat?.data??""),String(uptime?.data??""),flag.mtime)
+  if(String(comm?.data??"").trim()==="mihomo"){
+    result.coreIdentity=linuxCoreIdentity(String(stat?.data??""),pid)
+    if(ticks!==null)result.coreSeconds=linuxProcessSeconds(String(uptime?.data??""),String(stat?.data??""),ticks,pid)
+  }
+  // Keep plugin age aligned with the later sample.
+  if(result.serviceSeconds!==null)result.serviceSeconds+=Math.max(0,Math.floor((Date.now()-result.measuredAt)/1000))
   result.measuredAt=Date.now()
   return result
+}
+export async function verifyCoreRestart(c:Controller,before:NikkiRuntime|null,current:()=>boolean=()=>true):Promise<{verified:boolean;runtime:NikkiRuntime|null}> {
+  let unavailable=false,last:NikkiRuntime|null=null
+  const resolved=await cc(c)
+  for(let attempt=0;attempt<6&&current();attempt++){
+    await new Promise<void>(resolve=>setTimeout(resolve,700))
+    if(!current())break
+    const [health,runtime]=await Promise.all([
+      http(resolved,"/version",{timeout:2}).then(x=>typeof x.version==="string"&&!!x.version).catch(()=>false),
+      c.kind==="openwrt"&&c.plugin==="nikki"?loadNikkiRuntime(c).catch(()=>null):Promise.resolve(null)
+    ])
+    if(!current())break
+    if(runtime)last=runtime
+    if(!health){unavailable=true;continue}
+    const changed=!!(before?.coreIdentity&&runtime?.coreIdentity&&before.coreIdentity!==runtime.coreIdentity)
+    if(changed||unavailable)return {verified:true,runtime:last}
+  }
+  return {verified:false,runtime:last}
 }
 export async function nikkiService(c: Controller, action: "start"|"stop"|"restart"|"reload") { requireNikki(c); if (!["start","stop","restart","reload"].includes(action)) throw new Error("不支持的服务动作"); await ubus(c,"rc","init",{name:"nikki",action}) }
 export type CoreAction = "restart"|"reload"|"geo"|"dns"|"fakeip"

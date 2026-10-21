@@ -569,7 +569,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) { const lazy = ['proxies','rules','connections'].includes(ids[i]) && ids[i] !== id; assert.equal(nodes(tree, types[i]).length, lazy ? 0 : 1); if (!lazy) assert.equal(nodes(tree, types[i])[0].props.selected, ids[i] === id) }
     }
-    assert.equal(api.VERSION, '1.5.125'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.5.126'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('独立导航栈保留业务owner和身份，只有选中页提供可见工具栏', () => {
     pref.savePreferences({ defaultPage: 'overview' })
@@ -994,29 +994,39 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(api.linuxClockTicks(b.toString('base64')),100)
     }
     for(const b of ['', '!',Buffer.alloc(16).toString('base64')])assert.equal(api.linuxClockTicks(b),null)
-    const stat='10883 (mihomo) S 1 1 1 0 -1 4194560 2188599 0 0 0 189179 108801 0 0 20 0 22 0 340950391'
+    const stat='10883 (mihomo) S 1 1 1 0 -1 4194560 2188599 0 0 0 189179 108801 0 0 20 0 22 0 340950391 123 456 999 1000 2000 140723296616752'
     assert.equal(api.linuxProcessSeconds('4214450 0',stat,100,10883),804946)
     assert.equal(api.linuxProcessSeconds('4214450 0',stat.replace('(mihomo)','(mi)ho mo)'),100,10883),804946)
     assert.equal(api.linuxProcessSeconds('1 0',stat,100,10883),null);assert.equal(api.linuxProcessSeconds('4214450 0',stat,100,9),null);assert.equal(api.linuxProcessSeconds('bad',stat,100,10883),null)
   })
-  await test('Nikki启动标记独立于内核及路由器时长，缺失/未来/旧标记不伪造',()=>{
-    assert.equal(api.nikkiStartedSeconds('btime 1788359842','4215137.95 0',1792549767),25212)
-    for(const stamp of [undefined,null,'1792549767',1788359841,1792575000,NaN])assert.equal(api.nikkiStartedSeconds('btime 1788359842','4215137.95 0',stamp),null)
-    assert.equal(api.nikkiStartedSeconds('','4215137.95 0',1792549767),null)
+  await test('Nikki时间不读截断proc/stat：POSIX时区换算与未知/DST/未来时间拒绝',()=>{
+    assert.equal(api.nikkiServiceSeconds(1792603092,4214450,'CST-8',1792549767),24525)
+    assert.equal(api.nikkiServiceSeconds(1792574292,4214450,'UTC0',1792549767),24525)
+    assert.equal(api.nikkiServiceSeconds(1792554492,4214450,'EST5:30',1792549767),24525)
+    for(const zone of ['', 'Asia/Shanghai','EST5EDT,M3.2.0,M11.1.0','UTC25','UTC0:99'])assert.equal(api.nikkiServiceSeconds(1792603092,4214450,zone,1792549767),null)
+    for(const stamp of [null,undefined,'1792549767',NaN,1792574293,1780000000])assert.equal(api.nikkiServiceSeconds(1792603092,4214450,'CST-8',stamp),null)
   })
   await test('Nikki进程时长只读RPC、真实PID路径、无权限/停服不伪造开机时长', async () => {
     const n={...c,id:'runtime-proc',kind:'openwrt',plugin:'nikki',host:'proc.invalid',url:'http://proc.invalid',auto:false,cport:9090}
     const aux=Buffer.alloc(32);aux.writeBigUInt64LE(17n,0);aux.writeBigUInt64LE(100n,8)
-    const stat='10883 (mihomo) S 1 1 1 0 -1 4194560 2188599 0 0 0 189179 108801 0 0 20 0 22 0 340950391'
+    const stat='10883 (mihomo) S 1 1 1 0 -1 4194560 2188599 0 0 0 189179 108801 0 0 20 0 22 0 340950391 123 456 999 1000 2000 140723296616752'
     let alive=true,denied=false
-    responder=(url,init)=>{const p=JSON.parse(init.body).params;if(p[1]==='session')return {body:{result:[0,{ubus_rpc_session:'proc-session'}]}};if(denied)return {body:{result:[6]}};if(p[1]==='service')return {body:{result:[0,{nikki:{instances:alive?{nikki:{running:true,pid:10883}}:{}}}]}};if(p[2]==='stat')return {body:{result:[0,{type:'file',mtime:1792549767}]}};return {body:{result:[0,{data:({'/proc/self/auxv':aux.toString('base64'),'/proc/10883/stat':stat,'/proc/uptime':'4214450 0','/proc/10883/comm':'mihomo','/proc/stat':'btime 1788359842'})[p[3].path]}]}}}
+    responder=(url,init)=>{const p=JSON.parse(init.body).params;if(p[1]==='session')return {body:{result:[0,{ubus_rpc_session:'proc-session'}]}};if(denied)return {body:{result:[6]}};if(p[1]==='service')return {body:{result:[0,{nikki:{instances:alive?{nikki:{running:true,pid:10883}}:{}}}]}};if(p[1]==='system')return {body:{result:[0,{localtime:1792603092,uptime:4214450}]}};if(p[2]==='stat')return {body:{result:[0,{type:'file',mtime:1792549767}]}};return {body:{result:[0,{data:({'/proc/self/auxv':aux.toString('base64'),'/proc/10883/stat':stat,'/proc/uptime':'4214450 0','/proc/10883/comm':'mihomo','/etc/TZ':'CST-8'})[p[3].path]}]}}}
     calls.length=0;const rt=await api.loadNikkiRuntime(n);assert.equal(rt.coreSeconds,804946);assert.equal(rt.serviceSeconds,24525);assert.equal(rt.measuredAt,now)
-    assert.ok(calls.length<=3);const rpcCalls=calls.flatMap(x=>{const j=JSON.parse(x.init.body);return Array.isArray(j)?j:[j]});assert.ok(rpcCalls.every(x=>x.params[2]!=='exec'));assert.deepEqual(rpcCalls.filter(x=>x.params[1]==='file').map(x=>x.params[3].path).sort(),['/proc/10883/comm','/proc/10883/stat','/proc/self/auxv','/proc/uptime','/proc/stat','/var/run/nikki/started.flag'].sort())
+    assert.ok(calls.length<=3);const rpcCalls=calls.flatMap(x=>{const j=JSON.parse(x.init.body);return Array.isArray(j)?j:[j]});assert.ok(rpcCalls.every(x=>x.params[2]!=='exec'));assert.deepEqual(rpcCalls.filter(x=>x.params[1]==='file').map(x=>x.params[3].path).sort(),['/proc/10883/comm','/proc/10883/stat','/proc/self/auxv','/proc/uptime','/etc/TZ','/var/run/nikki/started.flag'].sort())
     const full=responder
     responder=(url,init)=>JSON.parse(init.body).params[2]==='stat'?{body:{result:[6]}}:full(url,init)
     const flagDenied=await api.loadNikkiRuntime(n);assert.equal(flagDenied.coreSeconds,804946);assert.equal(flagDenied.serviceSeconds,null)
     responder=(url,init)=>JSON.parse(init.body).params[3]?.path==='/proc/self/auxv'?{body:{result:[6]}}:full(url,init)
     const coreDenied=await api.loadNikkiRuntime(n);assert.equal(coreDenied.coreSeconds,null);assert.equal(coreDenied.serviceSeconds,24525)
+    responder=(url,init)=>url.endsWith('/version')?{body:{version:'restarted-core'}}:JSON.parse(init.body).params[3]?.path==='/proc/10883/stat'?{body:{result:[0,{data:stat.replace('140723296616752','140723296700000')}]}}:full(url,init)
+    assert.equal((await api.verifyCoreRestart(n,rt)).verified,true)
+    responder=(url,init)=>url.endsWith('/version')?{body:{version:'same-core'}}:full(url,init)
+    assert.equal((await api.verifyCoreRestart(n,rt)).verified,false)
+    let probes=0
+    responder=(url,init)=>url.endsWith('/version')?(++probes===1?{throw:'restarting'}:{body:{version:'healthy'}}):full(url,init)
+    assert.equal((await api.verifyCoreRestart(n,null)).verified,true)
+    calls.length=0;assert.equal((await api.verifyCoreRestart(n,rt,()=>false)).verified,false);assert.equal(calls.length,0)
     responder=full
     alive=false;assert.equal((await api.loadNikkiRuntime(n)).coreSeconds,null);denied=true;await assert.rejects(()=>api.loadNikkiRuntime(n));calls.length=0;await assert.rejects(()=>api.loadNikkiRuntime(c));assert.equal(calls.length,0)
     denied=false;alive=true
@@ -1060,17 +1070,52 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       const before=confirms.length
       calls.length=0;await button(tree,'更新GEO数据库').props.action();assert.equal(confirms.length,before);assert.ok(calls.some(x=>x.url.endsWith('/configs/geo')))
       tree=render(pages.MorePage,{active:n,onChanged(){}});assert.equal(tree.props.overlay.alignment,'top');assert.ok(text(tree.props.overlay.content).includes('GEO 数据库更新成功'));await flush()
-      nodes(tree.props.overlay.content,'Button')[0].props.action();tree=render(pages.MorePage,{active:n,onChanged(){}});assert.equal(tree.props.overlay,undefined)
-      context.confirmResult=true
-      for(const [name,msg] of [['刷新DNS缓存','DNS 缓存已清除'],['刷新FakeIP缓存','FakeIP 缓存已清除'],['重载配置','配置已重载']]){
-        const prev=alerts.length;await button(tree,name).props.action();tree=render(pages.MorePage,{active:n,onChanged(){}});assert.ok(text(tree.props.overlay.content).includes(msg));assert.equal(alerts.length,prev)
+      nodes(tree.props.overlay.content,'Button')[0].props.action();tree=render(pages.MorePage,{active:n,onChanged(){}});assert.equal(text(tree.props.overlay?.content),'')
+      context.confirmResult=false
+      for(const [name,msg] of [['刷新DNS缓存','DNS 缓存已清除'],['刷新FakeIP缓存','FakeIP 缓存已清除']]){
+        const prev=alerts.length;await button(tree,name).props.action();tree=render(pages.MorePage,{active:n,onChanged(){}});assert.ok(text(tree.props.overlay.content).includes(msg));assert.equal(alerts.length,prev);assert.equal(confirms.length,before);assert.ok(tree.props.overlay.content.props.animation);assert.ok(nodes(tree.props.overlay.content,'HStack')[0].props.transition)
       }
+      context.confirmResult=true
       const prev=alerts.length;await button(tree,'启动').props.action();tree=render(pages.MorePage,{active:n,onChanged(){}});assert.ok(text(tree.props.overlay.content).includes('启动服务请求已发送'));assert.equal(alerts.length,prev);await flush()
-      timers.at(-1).fn();tree=render(pages.MorePage,{active:n,onChanged(){}});assert.equal(tree.props.overlay,undefined)
+      timers.at(-1).fn();tree=render(pages.MorePage,{active:n,onChanged(){}});assert.equal(text(tree.props.overlay?.content),'')
       responder=(url,init)=>url.endsWith('/configs/geo')?{throw:'failed'}:respond(url,init)
-      await button(tree,'更新GEO数据库').props.action();tree=render(pages.MorePage,{active:n,onChanged(){}});assert.equal(tree.props.overlay,undefined);assert.equal(alerts.at(-1).title,'操作未完成')
+      await button(tree,'更新GEO数据库').props.action();tree=render(pages.MorePage,{active:n,onChanged(){}});assert.equal(text(tree.props.overlay?.content),'');assert.equal(alerts.at(-1).title,'操作未完成')
       unmount()
     }finally{context.setTimeout=original;context.confirmResult=true;unmount()}
+  })
+  await test('核心重启：同PID执行替换后才显示成功，原始请求只发一次',async()=>{
+    const n={...c,id:'restart-verified-ui',kind:'openwrt',plugin:'nikki',auto:false,cport:9090};let restarted=false,posts=0
+    const aux=Buffer.alloc(32);aux.writeBigUInt64LE(17n,0);aux.writeBigUInt64LE(100n,8)
+    responder=(url,init)=>{
+      if(url.endsWith('/restart')){posts++;restarted=true;return {body:{status:'ok'}}}
+      if(!url.endsWith('/ubus'))return {body:url.endsWith('/version')?{version:'core'}:{mode:'rule'}}
+      const p=JSON.parse(init.body).params;let body={}
+      if(p[1]==='session')body={ubus_rpc_session:'restart-ui-session'}
+      else if(p[1]==='service')body={nikki:{instances:{nikki:{running:true,pid:10883}}}}
+      else if(p[1]==='system')body={localtime:1792603092,uptime:4214450}
+      else if(p[1]==='luci.nikki')body={core:'core',app:'app'}
+      else if(p[2]==='stat')body={type:'file',mtime:1792549767}
+      else body={data:({'/etc/TZ':'CST-8','/proc/self/auxv':aux.toString('base64'),'/proc/10883/comm':'mihomo','/proc/uptime':'4214450 0','/proc/10883/stat':'10883 (mihomo) S 1 1 1 0 -1 4194560 2188599 0 0 0 189179 108801 0 0 20 0 22 0 340950391 123 456 999 1000 2000 '+(restarted?'140723296700000':'140723296616752')})[p[3]?.path]}
+      return {body:{result:[0,body]}}
+    }
+    const timers=[],original=context.setTimeout;context.setTimeout=(fn,ms)=>{if(ms===700)return fn();timers.push(fn);return timers.length}
+    try{
+      render(pages.MorePage,{active:n,onChanged(){}},true);await flush();let tree=render(pages.MorePage,{active:n,onChanged(){}})
+      await button(tree,'重启核心').props.action();tree=render(pages.MorePage,{active:n,onChanged(){}})
+      assert.equal(posts,1);assert.ok(text(tree.props.overlay.content).includes('核心重启成功'));assert.ok(!text(tree.props.overlay.content).includes('请求已发送'))
+    }finally{context.setTimeout=original;unmount()}
+  })
+  await test('更多代理模式立即复用同来源真实读数，首次读取显示读取中，失败不伪造',async()=>{
+    const n={...c,id:'mode-cache-fixture',url:'http://mode-cache.invalid'},other={...c,id:'mode-cache-other',url:'http://mode-cache-other.invalid'}
+    responder=()=>({body:{mode:'global',version:'core'}})
+    await api.loadConfig(n)
+    const original=context.fetch;let release;const gate=new Promise(r=>release=r)
+    context.fetch=async(url,init)=>{if(url.endsWith('/configs'))await gate;return original(url,init)}
+    try{
+      render(pages.MorePage,{active:n,onChanged(){}},true);await flush();let tree=render(pages.MorePage,{active:n,onChanged(){}});assert.ok(text(tree).includes('全局模式'))
+      render(pages.MorePage,{active:other,onChanged(){}});await flush();tree=render(pages.MorePage,{active:other,onChanged(){}});assert.ok(!text(tree).includes('全局模式'));assert.ok(text(tree).includes('读取中…'))
+      release();await flush();tree=render(pages.MorePage,{active:other,onChanged(){}});assert.ok(text(tree).includes('全局模式'))
+    }finally{release();context.fetch=original;unmount()}
   })
   await test('连接活动与已关闭仅保留加载更多，不显示已展示和底部历史注释', async () => {
     const conns=Array.from({length:70},(_,i)=>({id:'footer-'+i,start:new Date(now-i*1000).toISOString(),metadata:{host:'footer-'+i+'.invalid'},upload:0,download:0}))
@@ -1083,7 +1128,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     const n={...c,id:'more-nikki',kind:'openwrt',plugin:'nikki',url:'http://current-device.invalid'}
     responder=(url,init)=>({body:url.endsWith('/ubus')?{result:[0,JSON.parse(init.body).params[1]==='session'?{ubus_rpc_session:'session'}:{app:'nikki-real',core:'core-real'}]}:url.endsWith('/configs')?{mode:'rule'}:{version:'core-real'}})
     render(pages.MorePage,{active:n,onChanged(){}},true);await flush();let tree=render(pages.MorePage,{active:n,onChanged(){}});assert.ok(text(tree).includes('运行时间：未提供'));assert.ok(text(tree).includes('nikki-real'))
-    context.confirmResult=false;calls.length=0;await button(tree,'重启核心').props.action();await button(tree,'刷新DNS缓存').props.action();assert.equal(calls.length,0);context.confirmResult=true
+    context.confirmResult=false;calls.length=0;await button(tree,'重启核心').props.action();assert.equal(calls.length,0);context.confirmResult=true
     assert.equal(await api.webpage(n,'profile'),'http://current-device.invalid/cgi-bin/luci/admin/services/nikki/profile');assert.equal(await api.webpage(c),c.url+'/ui/');await assert.rejects(()=>api.webpage({...c,url:'http://private@controller.invalid/?token=secret'}))
   })
   await test('1.5所有危险入口UI取消：核心/服务/DNS/网页/订阅均无请求或外发', async () => {
@@ -1091,7 +1136,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     responder=(url,init)=>({body:url.endsWith('/ubus')?{result:[0,JSON.parse(init.body).params[1]==='session'?{ubus_rpc_session:'session'}:JSON.parse(init.body).params[1]==='uci'?{values:{s1:{'.type':'subscription','.name':'s1',name:'Real subscription'}}}:JSON.parse(init.body).params[1]==='file'?{entries:[]}:{app:'nikki',core:'mihomo'}]}:{version:'mihomo',mode:'rule'}})
     render(pages.MorePage,{active:n,onChanged(){}},true);await flush();let tree=render(pages.MorePage,{active:n,onChanged(){}})
     context.confirmResult=false;calls.length=0;openedURLs.length=0
-    for(const title of ['重启核心','重载配置','刷新DNS缓存','刷新FakeIP缓存'])await button(tree,title).props.action()
+    for(const title of ['重启核心','重载配置'])await button(tree,title).props.action()
     for(const b of nodes(tree,'Button').filter(b=>['启动','停止','重启','重载'].includes(text(b)))) await b.props.action()
     assert.ok(!nodes(tree,'Button').some(b=>text(b).includes('网页访问')));assert.equal(calls.length,0);assert.equal(openedURLs.length,0)
     render(pages.DNSPage,{c:n},true);tree=render(pages.DNSPage,{c:n});nodes(tree,'TextField')[0].props.onChanged('example.invalid');tree=render(pages.DNSPage,{c:n});calls.length=0;await button(tree,'查询').props.action();assert.equal(calls.length,0)
@@ -1458,7 +1503,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       const diagnostic = logs.filter(x => x.startsWith('[preferences-icon]'))
       for (const stage of ['change','accepted','proxies-render','group-render']) assert.ok(diagnostic.some(x => x.includes('stage=' + stage) && x.includes('enabled=false')))
       assert.ok(diagnostic.every(x => !x.includes('private.invalid') && !x.includes('private-group-name') && !x.includes('secret-')))
-      assert.ok(diagnostic.every(x => x.includes('build=1.5.125') && /instance=[a-z0-9]+/.test(x)))
+      assert.ok(diagnostic.every(x => x.includes('build=1.5.126') && /instance=[a-z0-9]+/.test(x)))
       assert.equal(new Set(diagnostic.map(x => x.match(/instance=([^ ]+)/)[1])).size, 1)
     } finally { context.console = originalConsole; unmount(); pref.savePreferences({ customIcons: true, testURL: 'https://www.gstatic.com/generate_204' }) }
   })
