@@ -201,14 +201,15 @@ function OverviewPage({ active, version, onSwitch, onClose, selected = true }: {
   const memUsed = w ? Math.max(0, w.memTotal - w.memFree) : 0
   const toolbar = useMemo(() => rootToolbar("home", onClose, <NavigationLink destination={<SettingsPage active={active} onChanged={onSwitch} />}><Image systemName="ellipsis.circle" /></NavigationLink>), [active, onSwitch, onClose])
   if (!active) return <Form navigationTitle="dashboard" navigationBarTitleDisplayMode="inline" toolbar={toolbar} onAppear={() => setVisible(true)} onDisappear={() => setVisible(false)}><NoController /></Form>
-  return <ScrollView navigationTitle="OpenWrt 状态" navigationBarTitleDisplayMode="inline" toolbar={toolbar} onAppear={() => setVisible(true)} onDisappear={() => setVisible(false)}>
+  return <VStack spacing={0} navigationTitle="OpenWrt 状态" navigationBarTitleDisplayMode="inline" toolbar={toolbar} onAppear={() => setVisible(true)} onDisappear={() => setVisible(false)}>
+    <HStack spacing={4} frame={{ maxWidth: "infinity" }} padding={{ top: 2, bottom: 6 }}>
+      <Spacer />
+      <Circle fill={err ? "systemRed" : "systemGreen"} frame={{ width: 5, height: 5 }} />
+      <Text font={11} foregroundStyle={err ? "systemRed" : "systemGreen"}>{err ? "连接失败" : ov ? "运行正常" : "连接中"}</Text>
+      <Spacer />
+    </HStack>
+    <ScrollView>
     <VStack spacing={12} padding={{ horizontal: 14, top: 2, bottom: 8 }}>
-      <HStack spacing={4} frame={{ maxWidth: "infinity" }} padding={{ top: -14 }}>
-        <Spacer />
-        <Circle fill={err ? "systemRed" : "systemGreen"} frame={{ width: 5, height: 5 }} />
-        <Text font={11} foregroundStyle={err ? "systemRed" : "systemGreen"}>{err ? "连接失败" : ov ? "运行正常" : "连接中"}</Text>
-        <Spacer />
-      </HStack>
       {all.length > 1 ? <Card>
         <Picker title="当前路由器" pickerStyle="menu" value={active.id} onChanged={(v: string) => { setActive(v); onSwitch() }}>
           {all.map(c => <Text key={c.id} tag={c.id}>{c.name}</Text>)}
@@ -235,7 +236,8 @@ function OverviewPage({ active, version, onSwitch, onClose, selected = true }: {
       <RateChart down={dn} up={upH} enabled={showCharts} />
 
     </VStack>
-  </ScrollView>
+    </ScrollView>
+  </VStack>
 }
 
 function WrtInterfacesPage({ active, version }: { active: Controller; version: number }) {
