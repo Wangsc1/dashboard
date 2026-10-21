@@ -340,6 +340,108 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     tree = render(ui.KernelConfigPage, { c }); context.confirmResult = false; await button(tree, '保存修改字段').props.action(); assert.equal(calls.length, 1)
     context.confirmResult = true; await button(tree, '保存修改字段').props.action(); assert.equal(calls.length, 2); assert.deepEqual(JSON.parse(calls[1].init.body), { 'mixed-port': 7892 }); assert.match(confirms.at(-1).message, /仅 PATCH/)
   })
+  await test('扩展配置API：五种端口边界、IPv6、绑定地址与仅tun.enable白名单', async () => {
+    const valid = { 'redir-port': 0, 'tproxy-port': 65535, ipv6: false, 'bind-address': '::', tun: { enable: true } }
+    responder = () => ({}); calls.length = 0
+    await api.patchConfig(c, valid); assert.deepEqual(JSON.parse(calls[0].init.body), valid)
+    for (const key of ['port', 'socks-port', 'mixed-port', 'redir-port', 'tproxy-port']) {
+      for (const value of [0, 65535]) assert.equal(api.validateConfigPatch({ [key]: value })[key], value)
+      for (const value of [-1, 65536, 1.5, '', '80', null, undefined]) assert.throws(() => api.validateConfigPatch({ [key]: value }))
+    }
+    for (const patch of [{ ipv6: 0 }, { ipv6: null }, { 'bind-address': '' }, { 'bind-address': ' ' }, { 'bind-address': 'bad address' }, { 'bind-address': 'http://host' }, { 'bind-address': 'a'.repeat(254) }, { tun: {} }, { tun: { enable: 1 } }, { tun: { enable: false, stack: 'system' } }, { tun: null }, { tun: [] }]) await assert.rejects(() => api.patchConfig(c, patch))
+    assert.equal(calls.length, 1)
+    for (const address of ['*', '0.0.0.0', '::', '127.0.0.1']) assert.equal(api.validateConfigPatch({ 'bind-address': address })['bind-address'], address)
+  })
+  await test('代理配置布局、实际数据与模式/网络/TUN/日志草稿仅显式保存', async () => {
+    const cfg = { mode: 'rule', port: 80, 'socks-port': 1080, 'mixed-port': 7890, 'redir-port': 0, 'tproxy-port': 65535, 'allow-lan': false, ipv6: true, 'bind-address': '*', tun: { enable: false, stack: 'mixed', mtu: 9000 }, 'log-level': 'info' }
+    responder = () => ({ body: cfg }); calls.length = 0; context.confirmResult = true
+    render(ui.KernelConfigPage, { c }, true); await flush(); let tree = render(ui.KernelConfigPage, { c })
+    assert.equal(tree.type, 'ScrollView'); assert.equal(tree.props.navigationTitle, '代理配置'); assert.equal(tree.props.background, 'systemBackground')
+    assert.deepEqual(nodes(tree, 'TextField').map(n => n.props.title), ['混合端口', 'HTTP 端口', 'SOCKS5 端口', '透明代理端口', 'TProxy 端口', '绑定地址'])
+    assert.deepEqual(nodes(tree, 'TextField').map(n => n.props.value), ['7890', '80', '1080', '0', '65535', '*'])
+    assert.deepEqual(nodes(tree, 'Toggle').map(n => n.props.value), [false, true, false])
+    const icons = nodes(tree, 'Image').map(n => n.props.systemName)
+    for (const name of ['wifi', 'number', 'link', 'shield', 'doc.text']) assert.ok(icons.includes(name))
+    for (const [name, color] of [['wifi','systemBlue'], ['number','systemPurple'], ['link','systemGreen'], ['shield','systemPurple'], ['doc.text','systemGray']]) assert.equal(nodes(tree, 'Image').find(n => n.props.systemName === name).props.foregroundStyle, color)
+    assert.ok(nodes(tree, 'TextField').every(n => n.props.background.style.light === '#F2F2F7' && n.props.background.shape.cornerRadius === 8))
+    assert.deepEqual(nodes(tree, 'Text').filter(n => n.props.font === 13 && n.props.padding?.leading === 14).map(text), ['代理模式', '端口配置', '网络设置', 'TUN 模式', '日志'])
+    assert.equal(nodes(tree, 'Image').filter(n => n.props.systemName === 'checkmark').length, 1)
+    assert.equal(nodes(button(tree, '规则模式'), 'Image')[0].props.foregroundStyle, 'systemBlue')
+    button(tree, '全局模式').props.action()
+    nodes(tree, 'Toggle').find(n => n.props.title === 'IPv6').props.onChanged(false)
+    nodes(tree, 'Toggle').find(n => n.props.title === '允许局域网连接').props.onChanged(true)
+    nodes(tree, 'Toggle').find(n => n.props.title === 'TUN 模式').props.onChanged(true)
+    nodes(tree, 'TextField').find(n => n.props.title === '绑定地址').props.onChanged('::')
+    button(nodes(tree, 'Menu')[0], '调试').props.action()
+    tree = render(ui.KernelConfigPage, { c }); assert.equal(calls.length, 1)
+    assert.equal(nodes(button(tree, '全局模式'), 'Image')[0].props.systemName, 'checkmark')
+    await button(tree, '保存修改字段').props.action()
+    assert.deepEqual(JSON.parse(calls.at(-1).init.body), { mode: 'global', ipv6: false, 'allow-lan': true, tun: { enable: true }, 'bind-address': '::', 'log-level': 'debug' })
+    assert.match(confirms.at(-1).message, /tun.enable/)
+    tree = render(ui.KernelConfigPage, { c }); assert.equal(button(tree, '保存修改字段').props.disabled, true)
+    assert.deepEqual(clone(hooks[0].tun), { enable: true, stack: 'mixed', mtu: 9000 })
+    nodes(tree, 'Toggle').find(n => n.props.title === 'TUN 模式').props.onChanged(false)
+    tree = render(ui.KernelConfigPage, { c }); await button(tree, '保存修改字段').props.action()
+    assert.deepEqual(JSON.parse(calls.at(-1).init.body), { tun: { enable: false } })
+    assert.equal(hooks[0].tun.stack, 'mixed'); unmount()
+  })
+  await test('代理配置缺失字段无假默认：缺失开关显示未提供、输入禁用、不可写回', async () => {
+    for (const cfg of [{}, { tun: { stack: 'system' } }]) {
+      responder = () => ({ body: cfg }); calls.length = 0
+      render(ui.KernelConfigPage, { c }, true); await flush(); let tree = render(ui.KernelConfigPage, { c })
+      assert.equal(nodes(tree, 'Toggle').length, 0); assert.match(text(tree), /未提供/)
+      assert.ok(nodes(tree, 'TextField').every(n => n.props.value === '' && n.props.disabled))
+      for (const title of ['规则模式', '全局模式', '直连模式']) assert.equal(button(tree, title).props.disabled, true)
+      assert.equal(nodes(tree, 'Menu')[0].props.disabled, true)
+      assert.equal(nodes(tree, 'Image').filter(n => n.props.systemName === 'checkmark').length, 0)
+      nodes(tree, 'TextField')[0].props.onChanged('1234'); button(tree, '规则模式').props.action(); button(nodes(tree, 'Menu')[0], '调试').props.action()
+      tree = render(ui.KernelConfigPage, { c }); assert.equal(button(tree, '保存修改字段').props.disabled, true)
+      await button(tree, '保存修改字段').props.action(); assert.equal(calls.length, 1)
+    }
+    unmount()
+  })
+  await test('代理配置验证五端口/绑定地址、恢复原值不PATCH，失败保留草稿且重读需确认', async () => {
+    const cfg = { port: 80, 'socks-port': 1080, 'mixed-port': 7890, 'redir-port': 0, 'tproxy-port': 0, ipv6: false, 'bind-address': '*' }
+    responder = () => ({ body: cfg }); calls.length = 0; context.confirmResult = true
+    render(ui.KernelConfigPage, { c }, true); await flush(); let tree = render(ui.KernelConfigPage, { c })
+    for (const title of ['混合端口', 'HTTP 端口', 'SOCKS5 端口', '透明代理端口', 'TProxy 端口']) {
+      const original = nodes(tree, 'TextField').find(n => n.props.title === title).props.value
+      for (const bad of ['', ' ', '-1', '65536', '1.5', 'abc']) {
+        nodes(tree, 'TextField').find(n => n.props.title === title).props.onChanged(bad)
+        tree = render(ui.KernelConfigPage, { c }); await button(tree, '保存修改字段').props.action()
+        tree = render(ui.KernelConfigPage, { c }); assert.match(text(tree), /0–65535/); assert.equal(calls.length, 1)
+      }
+      nodes(tree, 'TextField').find(n => n.props.title === title).props.onChanged(original); tree = render(ui.KernelConfigPage, { c })
+    }
+    for (const bad of ['', ' ', 'bad address']) {
+      nodes(tree, 'TextField').find(n => n.props.title === '绑定地址').props.onChanged(bad)
+      tree = render(ui.KernelConfigPage, { c }); await button(tree, '保存修改字段').props.action()
+      tree = render(ui.KernelConfigPage, { c }); assert.match(text(tree), /绑定地址无效/); assert.equal(calls.length, 1)
+    }
+    nodes(tree, 'TextField').find(n => n.props.title === '绑定地址').props.onChanged('*'); tree = render(ui.KernelConfigPage, { c })
+    await button(tree, '保存修改字段').props.action(); assert.equal(calls.length, 1)
+    nodes(tree, 'TextField').find(n => n.props.title === '透明代理端口').props.onChanged('65535')
+    nodes(tree, 'TextField').find(n => n.props.title === 'HTTP 端口').props.onChanged('0')
+    tree = render(ui.KernelConfigPage, { c }); responder = (_u, init) => init.method === 'PATCH' ? { status: 500 } : { body: cfg }
+    await button(tree, '保存修改字段').props.action(); tree = render(ui.KernelConfigPage, { c })
+    assert.match(text(tree), /保存失败/); assert.equal(nodes(tree, 'TextField').find(n => n.props.title === '透明代理端口').props.value, '65535')
+    const before = calls.length; context.confirmResult = false
+    await button(tree, '重新读取（丢弃未保存修改）').props.action(); assert.equal(calls.length, before)
+    responder = () => ({ status: 500 }); context.confirmResult = true
+    await button(tree, '重新读取（丢弃未保存修改）').props.action(); tree = render(ui.KernelConfigPage, { c })
+    assert.match(text(tree), /读取内核配置失败/); assert.equal(nodes(tree, 'TextField').find(n => n.props.title === 'HTTP 端口').props.value, '0')
+    responder = () => ({ body: cfg }); await button(tree, '保存修改字段').props.action()
+    assert.deepEqual(JSON.parse(calls.at(-1).init.body), { port: 0, 'redir-port': 65535 })
+    tree = render(ui.KernelConfigPage, { c }); nodes(tree, 'Toggle')[0].props.onChanged(true); tree = render(ui.KernelConfigPage, { c })
+    await button(tree, '重新读取（丢弃未保存修改）').props.action(); tree = render(ui.KernelConfigPage, { c })
+    assert.equal(nodes(tree, 'Toggle')[0].props.value, false); assert.equal(button(tree, '保存修改字段').props.disabled, true); unmount()
+  })
+  await test('设置子页Form统一原生白底，隐藏分组滚动背景且保留主题适配', () => {
+    const src = fs.readFileSync(path.join(root, 'settings-ui.tsx'), 'utf8')
+    const forms = src.match(/<Form\b[^>]*>/g)
+    assert.equal(forms.length, 4)
+    assert.ok(forms.every(form => form.includes('background="systemBackground"') && form.includes('scrollContentBackground="hidden"')))
+  })
   await test('运行日志UI：四级过滤、搜索、刷新、复制全部与清空确认', async () => {
     pref.clearLogs(); pref.recordEvent('start', true); pref.recordEvent('login', false)
     let tree = render(ui.LogsPage, {}, true), menu = trailing(tree.props.toolbar)
@@ -432,7 +534,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) { const lazy = ['proxies','rules','connections'].includes(ids[i]) && ids[i] !== id; assert.equal(nodes(tree, types[i]).length, lazy ? 0 : 1); if (!lazy) assert.equal(nodes(tree, types[i])[0].props.selected, ids[i] === id) }
     }
-    assert.equal(api.VERSION, '1.5.121'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.5.122'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('独立导航栈保留业务owner和身份，只有选中页提供可见工具栏', () => {
     pref.savePreferences({ defaultPage: 'overview' })
@@ -809,15 +911,46 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(tree.props.navigationTitle,name)
     }
     const tree=render(pages.MorePage,{active:{...c,name:'P320'},selected:false,onChanged(){}},true)
-    assert.equal(tree.props.background,'systemGroupedBackground')
-    for(const title of ['运行信息','内核版本','插件版本','核心配置','代理配置','快捷管理','网页访问','运行日志','配置管理','订阅管理','附加规则','服务管理','核心操作','DNS 工具','域名查询'])assert.ok(text(tree).includes(title),title)
+    assert.equal(tree.props.background,'systemBackground')
+    for(const title of ['运行信息','内核版本','插件版本','核心配置','代理配置','快捷管理','配置管理','订阅管理','附加规则','服务管理','核心操作','DNS 工具','域名查询'])assert.ok(text(tree).includes(title),title)
     const tiles=nodes(tree,'VStack').filter(n=>n.props.background?.props?.cornerRadius===9)
-    assert.equal(tiles.length,5);assert.ok(tiles.every(n=>n.props.frame.maxWidth==='infinity'))
+    assert.equal(tiles.length,3);assert.ok(tiles.every(n=>n.props.frame.maxWidth==='infinity'))
+    assert.deepEqual(tiles.map(t=>text(t).trim()),['配置管理','订阅管理','附加规则'])
+    assert.ok(!text(tree).includes('网页访问'));assert.ok(!tiles.some(t=>text(t).includes('运行日志')))
+    assert.ok(!nodes(tree,'NavigationLink').some(l=>l.props.destination?.type===pages.ManagementPage&&l.props.destination?.props.kind==='log'))
+    assert.ok(!nodes(tree,'NavigationLink').some(l=>l.props.destination?.type===ui.LogsPage));for(const removed of ['全局配置','设置（控制器管理）','脚本安全日志'])assert.ok(!text(tree).includes(removed));const wrapper=render(app.MorePage,{active:c,selected:false,onChanged(){}},true);assert.equal(wrapper.props.settings,undefined)
     const service=nodes(tree,'Button').filter(b=>['启动','停止','重启','重载'].includes(text(b).trim()))
     assert.equal(service.length,4);assert.ok(service.every(b=>b.props.disabled));assert.ok(service.every(b=>nodes(b,'Image')[0].props.background.type==='Circle'))
     assert.ok(nodes(tree,'Divider').length>=5)
     const links=nodes(tree,'NavigationLink');assert.ok(links.some(l=>l.props.destination.type===ui.KernelConfigPage));assert.ok(links.some(l=>l.props.destination.type===pages.DNSPage))
     assert.equal(nodes(tree,'Tab').length,0);unmount()
+  })
+  await test('版本数据：真实接口结构、请求先后顺序、单路失败及Nikki兜底', async () => {
+    unmount()
+    const n={...c,id:'runtime-versions',kind:'openwrt',plugin:'nikki',host:'runtime.invalid',url:'http://runtime.invalid',auto:false,cport:9090}
+    let direct={version:'live-core'},local={app:'1.26.2',core:'alpha-94b13ae'},directFailed=false,localFailed=false,waitFor='',release
+    responder=(url,init)=>{
+      if(url.endsWith('/ubus')){const p=JSON.parse(init.body).params;if(p[1]==='session')return {body:{result:[0,{ubus_rpc_session:'runtime-session'}]}};if(localFailed)return {status:500};return {body:{result:[0,local]},...(waitFor==='local'?{wait:new Promise(r=>{release=r})}:{})}}
+      if(directFailed)return {status:500};return {body:direct,...(waitFor==='direct'?{wait:new Promise(r=>{release=r})}:{})}
+    }
+    for(const delayed of ['local','direct']){waitFor=delayed;const pending=api.loadRuntimeVersions(n);await flush();assert.equal(typeof release,'function');release();const v=await pending;assert.deepEqual(clone(v),{core:'live-core',app:'1.26.2',failed:false})}
+    waitFor='';directFailed=true;assert.deepEqual(clone(await api.loadRuntimeVersions(n)),{core:'alpha-94b13ae',app:'1.26.2',failed:false})
+    directFailed=false;local={};assert.deepEqual(clone(await api.loadRuntimeVersions(n)),{core:'live-core',app:'未提供',failed:true})
+    localFailed=true;assert.equal((await api.loadRuntimeVersions(n)).core,'live-core')
+    directFailed=true;assert.deepEqual(clone(await api.loadRuntimeVersions(n)),{core:'未提供',app:'未提供',failed:true})
+    directFailed=false;localFailed=false;direct={version:'plain-core'};calls.length=0;assert.deepEqual(clone(await api.loadRuntimeVersions(c)),{core:'plain-core',app:'不适用',failed:false});assert.ok(calls.every(x=>!x.url.endsWith('/ubus')))
+  })
+  await test('更多版本行单独保留数值空间，白底及子页背景不使用分组灰底', async () => {
+    const n={...c,id:'runtime-visible',kind:'openwrt',plugin:'nikki',host:'runtime-ui.invalid',url:'http://runtime-ui.invalid',auto:false,cport:9090}
+    responder=(url,init)=>{if(url.endsWith('/ubus')){const p=JSON.parse(init.body).params;return {body:{result:[0,p[1]==='session'?{ubus_rpc_session:'runtime-ui-session'}:p[2]==='version'?{app:'1.26.2',core:'alpha-94b13ae'}:{}]}}}return {body:url.endsWith('/version')?{version:'alpha-94b13ae'}:{mode:'rule'}}}
+    render(pages.MorePage,{active:n,onChanged(){}},true);await flush();let tree=render(pages.MorePage,{active:n,onChanged(){}})
+    for(const value of ['1.26.2','alpha-94b13ae']){const t=nodes(tree,'Text').find(x=>text(x)===value);assert.ok(t);assert.equal(t.props.fixedSize.horizontal,true)}
+    const versionRow=nodes(tree,'HStack').find(x=>text(x).includes('alpha-94b13ae'));assert.ok(!text(versionRow).includes('运行时间'))
+    assert.equal(tree.props.background,'systemBackground');unmount()
+    for(const [Page,props] of [[pages.DNSPage,{c:n}],[pages.ManagementPage,{c:n,kind:'profile'}],[ui.KernelConfigPage,{c:n}],[ui.GlobalConfigPage,{active:n}],[ui.LogsPage,{}],[app.SettingsPage,{active:n,onChanged(){}}]]){
+      tree=render(Page,props,true);assert.equal(tree.props.background,'systemBackground');if(tree.type==='Form')assert.equal(tree.props.scrollContentBackground,'hidden');unmount()
+    }
+    tree=render(app.Root,{},true);const stack=nodes(tree,'NavigationStack').find(x=>x.props.key==='more-stack');assert.equal(stack.props.scrollContentBackground,'hidden');assert.equal(stack.props.background,'systemBackground');unmount()
   })
   await test('1.5更多实际动作：运行时间未知不冒充，取消操作不请求，网页无密钥', async () => {
     const n={...c,id:'more-nikki',kind:'openwrt',plugin:'nikki',url:'http://current-device.invalid'}
@@ -833,7 +966,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     context.confirmResult=false;calls.length=0;openedURLs.length=0
     for(const title of ['重启核心','重载配置','更新GEO数据库','刷新DNS缓存','刷新FakeIP缓存'])await button(tree,title).props.action()
     for(const b of nodes(tree,'Button').filter(b=>['启动','停止','重启','重载'].includes(text(b)))) await b.props.action()
-    await nodes(tree,'Button').find(b=>text(b).includes('网页访问')).props.action();assert.equal(calls.length,0);assert.equal(openedURLs.length,0)
+    assert.ok(!nodes(tree,'Button').some(b=>text(b).includes('网页访问')));assert.equal(calls.length,0);assert.equal(openedURLs.length,0)
     render(pages.DNSPage,{c:n},true);tree=render(pages.DNSPage,{c:n});nodes(tree,'TextField')[0].props.onChanged('example.invalid');tree=render(pages.DNSPage,{c:n});calls.length=0;await button(tree,'查询').props.action();assert.equal(calls.length,0)
     render(pages.ManagementPage,{c:n,kind:'subscription'},true);await flush();tree=render(pages.ManagementPage,{c:n,kind:'subscription'});calls.length=0;await button(tree,'更新订阅').props.action();assert.equal(calls.length,0)
     await button(tree,'打开Nikki官方管理页面').props.action();assert.equal(openedURLs.length,0);context.confirmResult=true
@@ -1198,7 +1331,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       const diagnostic = logs.filter(x => x.startsWith('[preferences-icon]'))
       for (const stage of ['change','accepted','proxies-render','group-render']) assert.ok(diagnostic.some(x => x.includes('stage=' + stage) && x.includes('enabled=false')))
       assert.ok(diagnostic.every(x => !x.includes('private.invalid') && !x.includes('private-group-name') && !x.includes('secret-')))
-      assert.ok(diagnostic.every(x => x.includes('build=1.5.121') && /instance=[a-z0-9]+/.test(x)))
+      assert.ok(diagnostic.every(x => x.includes('build=1.5.122') && /instance=[a-z0-9]+/.test(x)))
       assert.equal(new Set(diagnostic.map(x => x.match(/instance=([^ ]+)/)[1])).size, 1)
     } finally { context.console = originalConsole; unmount(); pref.savePreferences({ customIcons: true, testURL: 'https://www.gstatic.com/generate_204' }) }
   })

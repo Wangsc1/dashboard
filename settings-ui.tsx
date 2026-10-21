@@ -1,5 +1,5 @@
-import { Button, Circle, GeometryReader, ZStack, RoundedRectangle, gradient, Form, HStack, Image, Label, Menu, NavigationLink, Picker, Section, SecureField, Slider, Spacer, Text, TextField, Toggle, VStack, useEffect, useState } from "scripting"
-import { Controller, ClashConfig, CLASH_MODES, LOG_LEVELS, loadConfig, patchConfig } from "./api"
+import { ScrollView, Button, Circle, GeometryReader, ZStack, RoundedRectangle, gradient, Form, HStack, Image, Label, Menu, NavigationLink, Picker, Section, SecureField, Slider, Spacer, Text, TextField, Toggle, VStack, useEffect, useState } from "scripting"
+import { Controller, ClashConfig, CLASH_MODES, LOG_LEVELS, loadConfig, patchConfig, validateConfigPatch } from "./api"
 import { Preferences, AppLog, LogLevel, getPreferences, savePreferences, subscribePreferences, preferenceTrace, traceIconPreference, feedback, getLogs, clearLogs, exportLogs, logTime, getHeaderText, saveHeaders, clearImageCache } from "./preferences"
 
 import { makeBackup, restoreBackup, validateBackup } from "./cloud-backup"
@@ -147,7 +147,7 @@ function IconsPage() {
       savePreferences({ groupIcons: icons }); setErr("已保存；启用自定义代理组图标后生效")
     } catch (e: any) { setErr(String(e.message)) }
   }
-  return <Form navigationTitle="自定义代理组图标" navigationBarTitleDisplayMode="inline"><Section footer={<Text>本地替代：按组名配置 SF Symbols；未覆盖时使用内核提供的 HTTPS 图标（仅脚本管理的缓存）。不修改内核配置。</Text>}><TextField title="图标映射 JSON" value={text} onChanged={setText} prompt={'{"节点选择":"globe"}'} /><Button title="保存图标" action={save} /><Text foregroundStyle="secondaryLabel">{err}</Text></Section></Form>
+  return <Form background="systemBackground" scrollContentBackground="hidden" navigationTitle="自定义代理组图标" navigationBarTitleDisplayMode="inline"><Section footer={<Text>本地替代：按组名配置 SF Symbols；未覆盖时使用内核提供的 HTTPS 图标（仅脚本管理的缓存）。不修改内核配置。</Text>}><TextField title="图标映射 JSON" value={text} onChanged={setText} prompt={'{"节点选择":"globe"}'} /><Button title="保存图标" action={save} /><Text foregroundStyle="secondaryLabel">{err}</Text></Section></Form>
 }
 function HeaderFields() {
   const p = usePreferences()
@@ -182,36 +182,75 @@ export function KernelConfigPage({ c }: { c: Controller }) {
   const [cfg, setCfg] = useState<ClashConfig | null>(null), [dirty, setDirty] = useState<Record<string, any>>({}), [err, setErr] = useState(""), [busy, setBusy] = useState(false)
   async function reload() { setBusy(true); try { setCfg(await loadConfig(c)); setDirty({}); setErr("") } catch { setErr("读取内核配置失败，请检查控制器连接与权限后重试") } finally { setBusy(false) } }
   useEffect(() => { void reload() }, [c.id])
-  const change = (key: string, v: any) => setDirty(d => ({ ...d, [key]: v }))
+  const provided = (key: string) => key === "tun" ? typeof cfg?.tun?.enable === "boolean" : (cfg as any)?.[key] !== undefined
+  const change = (key: string, v: any) => { if (!busy && provided(key)) setDirty(d => ({ ...d, [key]: v })) }
   async function save() {
     if (!cfg || busy) return
     const patch: any = {}
     for (const [k, v] of Object.entries(dirty)) {
-      if (k.endsWith("port") || k === "port") {
+      if (!provided(k)) continue
+      if (k.endsWith("port")) {
         if (!String(v).trim() || !/^\d+$/.test(String(v)) || Number(v) > 65535) { setErr("端口必须为 0–65535 的整数；空值不会写回"); return }
         if (Number(v) !== (cfg as any)[k]) patch[k] = Number(v)
+      } else if (k === "tun") {
+        if (v.enable !== cfg.tun?.enable) patch.tun = { enable: v.enable }
       } else if (v !== (cfg as any)[k]) patch[k] = v
     }
     if (!Object.keys(patch).length) { setErr("没有待保存的更改"); return }
-    if (!await Dialog.confirm({ title: `保存到 ${c.name} 的代理内核`, message: `仅 PATCH：${Object.keys(patch).join("、")}。不会修改 OpenWrt UCI 文件；内核重启后可能被插件配置覆盖。端口或 LAN 修改可能影响连接。`, confirmLabel: "保存" })) return
+    try { validateConfigPatch(patch) } catch (e: any) { setErr(String(e.message)); return }
+    if (!await Dialog.confirm({ title: `保存到 ${c.name} 的代理内核`, message: `仅 PATCH：${Object.keys(patch).map(k => k === "tun" ? "tun.enable" : k).join("、")}。不会修改 OpenWrt UCI 文件；内核重启后可能被插件配置覆盖。端口、网络或 TUN 修改可能影响连接。`, confirmLabel: "保存" })) return
     setBusy(true)
-    try { await patchConfig(c, patch); setCfg({ ...cfg, ...patch }); setDirty({}); setErr("已保存到当前代理内核（仅本次运行配置）"); feedback() } catch { setErr("保存失败；未确认的改动保留，请检查控制器后重试。若响应丢失，请重新读取核对。") } finally { setBusy(false) }
+    try { await patchConfig(c, patch); setCfg({ ...cfg, ...patch, ...(patch.tun ? { tun: { ...cfg.tun, enable: patch.tun.enable } } : {}) }); setDirty({}); setErr("已保存到当前代理内核（仅本次运行配置）"); feedback() } catch { setErr("保存失败；未确认的改动保留，请检查控制器后重试。若响应丢失，请重新读取核对。") } finally { setBusy(false) }
   }
-  const field = (key: string, title: string) => <TextField key={key} title={title} value={String(dirty[key] ?? (cfg as any)?.[key] ?? "")} prompt="未返回，不写回" onChanged={(v: string) => change(key, v)} disabled={busy || (cfg as any)?.[key] === undefined} />
-  return <Form navigationTitle="代理内核配置" navigationBarTitleDisplayMode="inline">
-    <Section header={<Text>{c.name}</Text>} footer={<Text>先读取，修改后点击保存。缺失字段不显示假默认值，也不会写回。仅影响所选控制器的 Mihomo/Clash 运行配置。</Text>}>
-      {cfg ? <>
-        {cfg.mode !== undefined ? <Choice disabled={busy} title="运行模式" value={dirty.mode ?? cfg.mode} values={CLASH_MODES} onChanged={v => change("mode", v)} /> : null}
-        {cfg["log-level"] !== undefined ? <Choice disabled={busy} title="内核日志级别（非应用日志）" value={dirty["log-level"] ?? cfg["log-level"]!} values={LOG_LEVELS.map(v => [v, v])} onChanged={v => change("log-level", v)} /> : null}
-        {cfg["allow-lan"] !== undefined ? <Toggle title="允许局域网连接" value={dirty["allow-lan"] ?? cfg["allow-lan"]!} onChanged={(v: boolean) => change("allow-lan", v)} disabled={busy} /> : null}
-        {field("port", "HTTP 端口（0 关闭）")}{field("socks-port", "SOCKS 端口")}{field("mixed-port", "混合端口")}
-        <Button title={busy ? "处理中…" : "保存修改字段"} disabled={busy || !Object.keys(dirty).length} action={save} />
-      </> : <Text>{busy ? "读取中…" : "尚未读取配置"}</Text>}
+  const icon = (name: string, color: string) => <Image systemName={name} font={21} foregroundStyle={color} frame={{ width: 24 }} />
+  const separator = () => <RoundedRectangle cornerRadius={0} fill={{ light: "#E8E8ED", dark: "#38383A" }} frame={{ maxWidth: "infinity", height: 0.5 }} />
+  const card = (children: any) => <VStack spacing={0} padding={{ horizontal: 14 }} background={<RoundedRectangle cornerRadius={16} fill="systemBackground" stroke={{ shapeStyle: { light: "#ECECF1", dark: "#38383A" }, strokeStyle: { lineWidth: 0.5 } }} />}>{children}</VStack>
+  const heading = (title: string) => <Text font={13} foregroundStyle="secondaryLabel" padding={{ leading: 14 }}>{title}</Text>
+  const field = (key: string, title: string, port = true) => <TextField key={key} title={title} value={String(dirty[key] ?? (cfg as any)?.[key] ?? "")} prompt="未提供" onChanged={(v: string) => change(key, v)} disabled={busy || !provided(key)} keyboardType={port ? "numberPad" : "default"} autocorrectionDisabled textInputAutocapitalization="never" multilineTextAlignment="trailing" frame={{ width: port ? 100 : 142 }} padding={{ horizontal: 10, vertical: 8 }} background={{ style: { light: "#F2F2F7", dark: "#2C2C2E" }, shape: { type: "rect", cornerRadius: 8 } }} />
+  const toggle = (key: string, title: string) => provided(key)
+    ? <Toggle title={title} value={key === "tun" ? (dirty.tun?.enable ?? cfg?.tun?.enable) : (dirty[key] ?? (cfg as any)?.[key])} onChanged={(v: boolean) => change(key, key === "tun" ? { enable: v } : v)} disabled={busy} />
+    : <HStack><Text>{title}</Text><Spacer /><Text font={14} foregroundStyle="secondaryLabel">未提供</Text></HStack>
+  return <ScrollView navigationTitle="代理配置" navigationBarTitleDisplayMode="inline" background="systemBackground">
+    <VStack alignment="leading" spacing={10} padding={{ horizontal: 20, vertical: 16 }}>
+      {heading("代理模式")}
+      {card(([ ["rule", "规则模式"], ["global", "全局模式"], ["direct", "直连模式"] ]).map(([value, title], i) => <VStack key={value} spacing={0}>
+        {i ? separator() : null}
+        <Button disabled={busy || !provided("mode")} buttonStyle="plain" action={() => change("mode", value)}>
+          <HStack padding={{ vertical: 15 }}><Text>{title}</Text><Spacer />{(dirty.mode ?? cfg?.mode) === value ? <Image systemName="checkmark" font={18} foregroundStyle="systemBlue" /> : null}</HStack>
+        </Button>
+      </VStack>))}
+      <Text font={12} foregroundStyle="secondaryLabel" padding={{ horizontal: 14, bottom: 14 }}>{"规则：根据配置规则分流\n全局：所有流量走代理\n直连：所有流量直连"}{!provided("mode") ? " 当前控制器未提供模式。" : ""}</Text>
+      {heading("端口配置")}
+      {card(([ ["mixed-port", "混合端口"], ["port", "HTTP 端口"], ["socks-port", "SOCKS5 端口"], ["redir-port", "透明代理端口"], ["tproxy-port", "TProxy 端口"] ]).map(([key, title], i) => <VStack key={key} spacing={0}>
+        {i ? separator() : null}<HStack padding={{ vertical: 10 }}><Text>{title}</Text><Spacer />{field(key, title)}</HStack>
+      </VStack>))}
+      <Text font={12} foregroundStyle="secondaryLabel" padding={{ horizontal: 14, bottom: 14 }}>端口范围 0–65535，0 表示关闭；未提供的字段不会写回。</Text>
+      {heading("网络设置")}
+      {card(<>
+        <HStack spacing={12} padding={{ vertical: 12 }}>{icon("wifi", "systemBlue")}{toggle("allow-lan", "允许局域网连接")}</HStack>
+        {separator()}
+        <HStack spacing={12} padding={{ vertical: 12 }}>{icon("number", "systemPurple")}{toggle("ipv6", "IPv6")}</HStack>
+        {separator()}
+        <HStack spacing={12} padding={{ vertical: 12 }}>{icon("link", "systemGreen")}<Text>绑定地址</Text><Spacer />{field("bind-address", "绑定地址", false)}</HStack>
+      </>)}
+      {heading("TUN 模式")}
+      {card(<HStack spacing={12} padding={{ vertical: 12 }}>{icon("shield", "systemPurple")}{toggle("tun", "TUN 模式")}</HStack>)}
+      <Text font={12} foregroundStyle="secondaryLabel" padding={{horizontal:14,bottom:14}}>TUN 模式可实现透明代理，需要相应的系统权限。</Text>
+      {heading("日志")}
+      {card(<HStack spacing={12} padding={{ vertical: 12 }}>{icon("doc.text", "systemGray")}<Text>日志级别</Text><Spacer />
+        <Menu disabled={busy || !provided("log-level")} label={<HStack spacing={6}><Text foregroundStyle="secondaryLabel">{({silent:"静默",error:"错误",warning:"警告",info:"信息",debug:"调试"} as Record<string,string>)[dirty["log-level"] ?? cfg?.["log-level"] ?? ""] ?? "未提供"}</Text><Image systemName="chevron.up.chevron.down" font={12} foregroundStyle="secondaryLabel" /></HStack>}>
+          {LOG_LEVELS.map(value => <Button key={value} title={({silent:"静默",error:"错误",warning:"警告",info:"信息",debug:"调试"} as Record<string,string>)[value]??value} action={() => change("log-level", value)} />)}
+        </Menu>
+      </HStack>)}
+      <Text font={12} foregroundStyle="secondaryLabel" padding={{ horizontal: 14, vertical: 8 }}>{`${c.name} · 先读取，修改后点击保存。仅影响所选控制器的 Mihomo/Clash 运行配置，不是应用日志设置。`}</Text>
+      {!cfg ? <Text foregroundStyle="secondaryLabel">{busy ? "读取中…" : "尚未读取配置"}</Text> : null}
+      <Button title={busy ? "处理中…" : "保存修改字段"} disabled={busy || !cfg || !Object.keys(dirty).length} action={save} />
       <Button title="重新读取（丢弃未保存修改）" disabled={busy} action={async () => { if (!Object.keys(dirty).length || await Dialog.confirm({ title: "重新读取", message: "丢弃当前未保存修改？", confirmLabel: "重新读取" })) await reload() }} />
-      {err ? <Text foregroundStyle="secondaryLabel">{err}</Text> : null}
-    </Section>
-  </Form>
+      {err ? <Text font={13} foregroundStyle="secondaryLabel">{err}</Text> : null}
+    </VStack>
+  </ScrollView>
 }
+
 function TestURLField() {
   const p = usePreferences(["testURL"])
   const [url, setURL] = useState(() => p.testURL), [error, setError] = useState("")
@@ -236,7 +275,7 @@ export function GlobalConfigPage({ active }: { active: Controller | null }) {
     if (!await Dialog.confirm({ title: "清除图片缓存", message: "仅删除本脚本缓存的代理组图片；不会删除账号、密码、密钥、设置或日志。", confirmLabel: "清除" })) return
     const n = clearImageCache(); await Dialog.alert({ message: `已清除 ${n} 项脚本图片缓存；已显示图片在重新进入代理页后重载。` })
   }
-  return <Form navigationTitle="全局配置" navigationBarTitleDisplayMode="inline">
+  return <Form background="systemBackground" scrollContentBackground="hidden" navigationTitle="全局配置" navigationBarTitleDisplayMode="inline">
     <Section header={<Text>主题</Text>}><Choice title="外观模式" value={p.theme} values={[["system", "跟随系统"], ["light", "浅色"], ["dark", "深色"]]} onChanged={v => update({ theme: v as any })} /></Section>
     <Section header={<Text>启动设置</Text>}><Choice title="默认打开界面" value={p.defaultPage} values={[["overview", "主页"], ["proxies", "代理"], ["rules", "规则"], ["connections", "连接"], ["more", "更多"]]} onChanged={v => update({ defaultPage: v as any })} /></Section>
     <Section header={<Text>代理组</Text>}>{toggle("showHidden", "显示隐藏代理组")}{toggle("customIcons", "自定义代理组图标")}</Section>
@@ -275,7 +314,7 @@ function CloudSettingsPage() {
       Storage.set("dashboard_cloud_last", text); setStatus(text)
     } catch { setStatus("操作失败，请检查备份格式、iCloud 文件、网络与权限；若本地存储失败，可能已部分合并，请检查控制器。未确认云端同步") } finally { setBusy(false) }
   }
-  return <Form navigationTitle="iCloud 设置备份" navigationBarTitleDisplayMode="inline"><Section footer={<Text>非原样同步：采用官方 FileManager 的 iCloud 文档，手动备份/恢复控制器地址与设置；不支持自动跨设备冲突合并或账号凭据同步。系统负责上传，脚本无法保证其他设备立即收到。</Text>}><Text>{status}</Text><Button title="立即备份" disabled={busy} action={() => transfer(false)} /><Button title="从 iCloud 恢复" disabled={busy} action={() => transfer(true)} /></Section></Form>
+  return <Form background="systemBackground" scrollContentBackground="hidden" navigationTitle="iCloud 设置备份" navigationBarTitleDisplayMode="inline"><Section footer={<Text>非原样同步：采用官方 FileManager 的 iCloud 文档，手动备份/恢复控制器地址与设置；不支持自动跨设备冲突合并或账号凭据同步。系统负责上传，脚本无法保证其他设备立即收到。</Text>}><Text>{status}</Text><Button title="立即备份" disabled={busy} action={() => transfer(false)} /><Button title="从 iCloud 恢复" disabled={busy} action={() => transfer(true)} /></Section></Form>
 }
 const LEVELS: [LogLevel, string, string][] = [["info", "信息", "systemBlue"], ["success", "成功", "systemGreen"], ["warning", "警告", "systemOrange"], ["error", "错误", "systemRed"]]
 export function LogsPage() {
@@ -283,7 +322,7 @@ export function LogsPage() {
   useEffect(() => { const t = setInterval(() => setLogs(getLogs()), 2000); return () => clearInterval(t) }, [])
   const shown = logs.filter(l => levels.includes(l.level) && (!query || (l.title + l.detail + l.category).toLowerCase().includes(query.toLowerCase()))).slice().reverse()
   async function clear() { if (await Dialog.confirm({ title: "清空运行日志", message: "将删除本脚本的全部应用日志，无法撤销。", confirmLabel: "清空" })) { clearLogs(); setLogs([]) } }
-  return <Form navigationTitle="运行日志" navigationBarTitleDisplayMode="inline" toolbar={{ topBarTrailing: <Menu label={<Image systemName="ellipsis.circle" />}>
+  return <Form background="systemBackground" scrollContentBackground="hidden" navigationTitle="运行日志" navigationBarTitleDisplayMode="inline" toolbar={{ topBarTrailing: <Menu label={<Image systemName="ellipsis.circle" />}>
     <Button title={search ? "隐藏搜索" : "搜索日志"} systemImage="magnifyingglass" action={() => setSearch(!search)} />
     {LEVELS.map(([v, title]) => <Button key={v} title={`${levels.includes(v) ? "✓ " : ""}${title}`} action={() => setLevels(s => s.includes(v) ? s.filter(x => x !== v) : [...s, v])} />)}
     <Button title="刷新" systemImage="arrow.clockwise" action={() => setLogs(getLogs())} />

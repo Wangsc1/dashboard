@@ -1,6 +1,6 @@
 
 import { getPreferences, customHeaders, recordEvent, controllerHealth, feedback } from "./preferences"
-export const VERSION = "1.5.121"
+export const VERSION = "1.5.122"
 
 export type Kind = "clash" | "openwrt"
 export type Plugin = "openclash" | "nikki" | "mihomo"
@@ -512,14 +512,16 @@ export async function loadRules(c0: Controller): Promise<Rule[]> {
   }
 }
 
-export interface ClashConfig { mode?: string; "log-level"?: string; port?: number; "socks-port"?: number; "mixed-port"?: number; "allow-lan"?: boolean }
+export interface ClashConfig { mode?: string; "log-level"?: string; port?: number; "socks-port"?: number; "mixed-port"?: number; "redir-port"?: number; "tproxy-port"?: number; "allow-lan"?: boolean; ipv6?: boolean; "bind-address"?: string; tun?: { enable?: boolean; [key:string]: any } }
 export async function loadConfig(c: Controller): Promise<ClashConfig> { return await http(await cc(c), "/configs") }
 export function validateConfigPatch(patch: Partial<ClashConfig>): Partial<ClashConfig> {
   const out: any = {}
   for (const [k, v] of Object.entries(patch)) {
-    if (["port", "socks-port", "mixed-port"].includes(k)) {
+    if (["port", "socks-port", "mixed-port", "redir-port", "tproxy-port"].includes(k)) {
       if (!Number.isInteger(v) || Number(v) < 0 || Number(v) > 65535) throw new Error("端口须为 0–65535 的整数")
-    } else if (k === "allow-lan") { if (typeof v !== "boolean") throw new Error("局域网开关无效") }
+    } else if (k === "allow-lan" || k === "ipv6") { if (typeof v !== "boolean") throw new Error("网络开关无效") }
+    else if (k === "bind-address") { if (typeof v !== "string" || !v.trim() || v.length > 253 || /[\s/?#@]/.test(v)) throw new Error("绑定地址无效") }
+    else if (k === "tun") { if (!v || typeof v !== "object" || Array.isArray(v) || typeof v.enable !== "boolean" || Object.keys(v).some(key=>key!=="enable")) throw new Error("仅支持修改 TUN 开关") }
     else if (k === "log-level") { if (!LOG_LEVELS.includes(String(v))) throw new Error("日志级别无效") }
     else if (k === "mode") { if (!CLASH_MODES.some(x => x[0] === v)) throw new Error("模式无效") }
     else throw new Error("不支持修改该配置字段")
@@ -580,6 +582,16 @@ export async function updateProvider(c: Controller, kind: "proxies" | "rules", n
 function requireNikki(c: Controller) { if (c.kind !== "openwrt" || c.plugin !== "nikki") throw new Error("仅支持 Nikki 的 LuCI RPC；当前来源不是 Nikki") }
 export async function nikkiInfo(c: Controller): Promise<{ app: string; core: string }> { requireNikki(c); const j = await ubus(c,"luci.nikki","version"); return { app: String(j.app || "未提供"), core: String(j.core || "未提供") } }
 export async function coreVersion(c: Controller) { return String((await http(await cc(c),"/version")).version || "未提供") }
+// Prefer the live core API, with Nikki's local version as a read-only fallback.
+// Resolve both results together so a slower missing value cannot overwrite a valid version.
+export async function loadRuntimeVersions(c: Controller): Promise<{core:string;app:string;failed:boolean}> {
+  const nikki=c.kind==="openwrt"&&c.plugin==="nikki"
+  const [direct,local]=await Promise.all([coreVersion(c).catch(()=>null),nikki?nikkiInfo(c).catch(()=>null):Promise.resolve(null)])
+  const present=(v:any)=>typeof v==="string"&&v.trim()&&v!=="未提供"?v.trim():null
+  const core=present(direct)??present(local?.core)
+  const app=nikki?present(local?.app):"不适用"
+  return {core:core??"未提供",app:app??"未提供",failed:!core||(nikki&&!app)}
+}
 export async function nikkiService(c: Controller, action: "start"|"stop"|"restart"|"reload") { requireNikki(c); if (!["start","stop","restart","reload"].includes(action)) throw new Error("不支持的服务动作"); await ubus(c,"rc","init",{name:"nikki",action}) }
 export type CoreAction = "restart"|"reload"|"geo"|"dns"|"fakeip"
 export async function coreAction(c: Controller, action: CoreAction) {

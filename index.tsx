@@ -540,7 +540,7 @@ function SoftwarePage({ active }: { active: Controller }) {
 }
 
 function HelpPage() {
-  return <Form navigationTitle="使用说明" navigationBarTitleDisplayMode="inline">
+  return <Form background="systemBackground" scrollContentBackground="hidden" navigationTitle="使用说明" navigationBarTitleDisplayMode="inline">
     <Section header={<Text>OpenWrt</Text>}>
       <Text>地址填路由器 LuCI 后台的 IP，端口为 LuCI 的端口（默认 80；开启 HTTPS 时通常 443）。用户名、密码是登录 LuCI 的账号。</Text>
     </Section>
@@ -584,7 +584,7 @@ function EditController({ initial, onDone }: { initial?: Controller; onDone: () 
       onDone(); dismiss()
     } catch (e) { setErr(msg(e)) } finally { setSaving(false) }
   }
-  return <Form navigationTitle={initial ? "编辑 OpenWrt" : "添加 OpenWrt"} navigationBarTitleDisplayMode="inline"
+  return <Form background="systemBackground" scrollContentBackground="hidden" navigationTitle={initial ? "编辑 OpenWrt" : "添加 OpenWrt"} navigationBarTitleDisplayMode="inline"
     toolbar={{ confirmationAction: <Button title={saving ? "保存中…" : "保存"} disabled={saving} action={save} /> }}>
     <Section header={<Text>基本信息</Text>}>
       <TextField title="名称" value={name} onChanged={setName} prompt="例如：家庭路由" />
@@ -624,7 +624,7 @@ function SettingsPage({ active, onChanged }: { active: Controller | null; onChan
     setList(listControllers())
     setTimeout(onChanged, 500)
   }
-  return <Form navigationTitle="面板设置" navigationBarTitleDisplayMode="inline" onAppear={() => setPrefs(prev => { const next = getPreferences(); return prev.foldOffline === next.foldOffline ? prev : next })}>
+  return <Form background="systemBackground" scrollContentBackground="hidden" navigationTitle="面板设置" navigationBarTitleDisplayMode="inline" onAppear={() => setPrefs(prev => { const next = getPreferences(); return prev.foldOffline === next.foldOffline ? prev : next })}>
     <Section header={<HStack><Text>OpenWrt</Text><Spacer /><Text font={12} foregroundStyle="secondaryLabel">{`v${VERSION}`}</Text></HStack>}>
       {list.map(c => <NavigationLink key={c.id} destination={<EditController initial={c} onDone={reload} />}
           trailingSwipeActions={{ allowsFullSwipe: false, actions: [<Button title="删除" tint="systemRed" action={() => remove(c.id)} />] }}>
@@ -652,10 +652,7 @@ function SettingsPage({ active, onChanged }: { active: Controller | null; onChan
 
 type RootTab = "home" | "proxies" | "rules" | "connections" | "more"
 function MorePage({ active, onChanged, onClose, selected = true }: { active: Controller | null; onChanged: () => void; onClose?: () => void; selected?: boolean }) {
-  return <DashboardMorePage selected={selected} active={active} onChanged={onChanged} onClose={onClose} settings={<Card>
-    <NavigationLink destination={<GlobalConfigPage active={active} />}><Label title="全局配置" systemImage="slider.horizontal.3" /></NavigationLink>
-    <NavigationLink destination={<SettingsPage active={active} onChanged={onChanged} />}><Label title="设置（控制器管理）" systemImage="gearshape" /></NavigationLink>
-  </Card>} />
+  return <DashboardMorePage selected={selected} active={active} onChanged={onChanged} onClose={onClose} />
 }
 function Root() {
   const dismiss = Navigation.useDismiss()
@@ -694,7 +691,7 @@ function Root() {
       </NavigationStack>
     </Tab>
     <Tab key="more" title="更多" systemImage="square.split.2x2" value="more">
-      <NavigationStack key="more-stack">
+      <NavigationStack key="more-stack" background="systemBackground" scrollContentBackground="hidden">
         <MorePage selected={tab === "more"} onClose={dismiss} key={`more:${active?.id ?? "empty"}`} active={active} onChanged={bump} />
       </NavigationStack>
     </Tab>
