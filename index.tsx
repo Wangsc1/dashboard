@@ -143,7 +143,7 @@ function RateChart({ down, up, enabled = true }: { down: number[]; up: number[];
 }
 
 function OverviewPage({ active, version, onSwitch, onClose }: { active: Controller | null; version: number; onSwitch: () => void; onClose?: () => void }) {
-  const prefs = usePreferences()
+  const prefs = usePreferences(["showWrt", "connectionBackground"])
   const [hosts, setHosts] = useState<string[]>([])
   const [ov, setOv] = useState<Overview | null>(null)
   const [err, setErr] = useState("")
@@ -605,7 +605,7 @@ function EditController({ initial, onDone }: { initial?: Controller; onDone: () 
 }
 
 function SettingsPage({ active, onChanged }: { active: Controller | null; onChanged: () => void }) {
-  const prefs = usePreferences()
+  const prefs = usePreferences(["foldOffline"])
   const [revealed, setRevealed] = useState<string[]>([])
   const [list, setList] = useState(listControllers())
   const reload = () => { setList(listControllers()); onChanged() }
@@ -651,7 +651,7 @@ function MorePage({ active, onChanged, onClose }: { active: Controller | null; o
   </Card>} />
 }
 function Root() {
-  const prefs = usePreferences(), dismiss = Navigation.useDismiss()
+  const prefs = usePreferences(["theme"]), dismiss = Navigation.useDismiss()
   const [version, setVersion] = useState(0)
   const selection = useObservable<RootTab>(() => { const p = getPreferences().defaultPage; return p === "overview" ? "home" : p })
   const tab = selection.value

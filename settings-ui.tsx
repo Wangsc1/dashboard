@@ -4,9 +4,17 @@ import { Preferences, AppLog, LogLevel, getPreferences, savePreferences, subscri
 
 import { makeBackup, restoreBackup, validateBackup } from "./cloud-backup"
 
-export function usePreferences() {
+export function usePreferences(keys?: (keyof Preferences)[]) {
   const [p, setP] = useState(getPreferences())
-  useEffect(() => subscribePreferences(() => setP(getPreferences())), [])
+  const [track] = useState({ value: p })
+  const signature = keys?.join(",") ?? "*"
+  useEffect(() => subscribePreferences(() => {
+    const next = getPreferences()
+    const watched = keys ?? Object.keys(next) as (keyof Preferences)[]
+    if (!watched.some(k => JSON.stringify(track.value[k]) !== JSON.stringify(next[k]))) return
+    track.value = next
+    setP(next)
+  }), [signature])
   return p
 }
 function update(patch: Partial<Preferences>) { try { savePreferences(patch); feedback() } catch { void Dialog.alert({ message: "本地设置保存失败，请重试" }) } }
