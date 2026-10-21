@@ -1,6 +1,6 @@
 
 import { getPreferences, customHeaders, recordEvent, controllerHealth, feedback } from "./preferences"
-export const VERSION = "1.5.87"
+export const VERSION = "1.5.88"
 
 export type Kind = "clash" | "openwrt"
 export type Plugin = "openclash" | "nikki" | "mihomo"
@@ -383,13 +383,26 @@ export async function loadGroups(c0: Controller): Promise<Group[]> {
     const order: string[] = all.GLOBAL?.all ?? Object.keys(all)
     const names = [...order.filter(n => all[n]?.all), ...Object.keys(all).filter(n => all[n]?.all && !order.includes(n))]
     const prefs = getPreferences()
+    function lastDelay(node: any): number | undefined {
+      const h = node?.history
+      if (h?.length && num(h[h.length - 1].delay) > 0) return num(h[h.length - 1].delay)
+      let best: { t: number; d: number } | undefined
+      for (const st of Object.values<any>(node?.extra ?? {})) {
+        const eh = st?.history
+        const last = eh?.length ? eh[eh.length - 1] : undefined
+        if (!last) continue
+        const t = Date.parse(last.time) || 0
+        if (!best || t > best.t) best = { t, d: num(last.delay) }
+      }
+      if (best && best.d > 0) return best.d
+      return h?.length ? num(h[h.length - 1].delay) : best?.d
+    }
     function delayOf(name: string, seen = new Set<string>()): number | undefined {
       if (seen.has(name)) return undefined
       seen.add(name)
       const node = all[name]
       if (prefs.nestedDelay && node?.all && node?.now) return delayOf(node.now, seen)
-      const h = node?.history
-      return h?.length ? num(h[h.length - 1].delay) : undefined
+      return lastDelay(node)
     }
     const providerTypes: Record<string, string> = {}
     const visible = names.filter(n => (n !== "GLOBAL" || prefs.showGlobal) && (prefs.showHidden || !all[n]?.hidden))
