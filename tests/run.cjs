@@ -429,7 +429,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) { const lazy = ['proxies','rules','connections'].includes(ids[i]) && ids[i] !== id; assert.equal(nodes(tree, types[i]).length, lazy ? 0 : 1); if (!lazy) assert.equal(nodes(tree, types[i])[0].props.selected, ids[i] === id) }
     }
-    assert.equal(api.VERSION, '1.5.110'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.5.111'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('独立导航栈保留业务owner和身份，只有选中页提供可见工具栏', () => {
     pref.savePreferences({ defaultPage: 'overview' })
@@ -1122,9 +1122,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     render(pages.ConnectionsPage,{active:c,version:0},true);await flush()
     let tree=render(pages.ConnectionsPage,{active:c,version:0})
     const card=nodes(tree,'VStack').find(n=>n.props.contextMenu)
-    const preview=card.props.contextMenu.preview
-    assert.ok(preview);assert.equal(preview.props.padding,14);assert.equal(nodes(preview,'NavigationLink').length,0);assert.equal(nodes(preview,'Button').length,0)
-    assert.ok(text(preview).includes('detail.invalid'));assert.ok(nodes(preview,'Text').some(n=>n.props.font===14&&text(n)==='detail.invalid'))
+    assert.equal(card.props.contextMenu.preview,undefined);assert.equal(card.props.frame.maxWidth,'infinity');assert.ok(text(card).includes('detail.invalid'))
     const items=nodes(card.props.contextMenu.menuItems,'Button')
     assert.deepEqual(items.map(n=>n.props.title),['关闭连接','筛选同源连接','筛选同域名连接','复制连接信息'])
     await items[3].props.action();assert.ok(clipboard.includes('detail.invalid:443'));assert.ok(clipboard.includes('10.0.0.8:1234'))
@@ -1169,7 +1167,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       const diagnostic = logs.filter(x => x.startsWith('[preferences-icon]'))
       for (const stage of ['change','accepted','proxies-render','group-render']) assert.ok(diagnostic.some(x => x.includes('stage=' + stage) && x.includes('enabled=false')))
       assert.ok(diagnostic.every(x => !x.includes('private.invalid') && !x.includes('private-group-name') && !x.includes('secret-')))
-      assert.ok(diagnostic.every(x => x.includes('build=1.5.110') && /instance=[a-z0-9]+/.test(x)))
+      assert.ok(diagnostic.every(x => x.includes('build=1.5.111') && /instance=[a-z0-9]+/.test(x)))
       assert.equal(new Set(diagnostic.map(x => x.match(/instance=([^ ]+)/)[1])).size, 1)
     } finally { context.console = originalConsole; unmount(); pref.savePreferences({ customIcons: true, testURL: 'https://www.gstatic.com/generate_204' }) }
   })
