@@ -600,7 +600,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) { const lazy = ['proxies','rules','connections'].includes(ids[i]) && ids[i] !== id; assert.equal(nodes(tree, types[i]).length, lazy ? 0 : 1); if (!lazy) assert.equal(nodes(tree, types[i])[0].props.selected, ids[i] === id) }
     }
-    assert.equal(api.VERSION, '1.5.153'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.5.154'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('独立导航栈保留业务owner和身份，只有选中页提供可见工具栏', () => {
     pref.savePreferences({ defaultPage: 'overview' })
@@ -1530,6 +1530,31 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     const closedBtn = nodes(tree, 'Button').find(n => text(n).includes('已关闭')); closedBtn.props.action(); tree = render(pages.ConnectionsPage, { active: c, version: 0 })
     assert.ok(!text(tree).includes('big.invalid')); unmount(); responder = () => ({ status: 204 })
   })
+  await test('活动中与已关闭搜索右侧均可清空，恢复各自列表且不关闭搜索或发送请求', async () => {
+    const active = { ...c, id: 'search-clear-test', url: 'http://search-clear.invalid' }, props = { active, version: 0 }
+    const all = ['active-one', 'active-two', 'closed-one', 'closed-two']
+    let ids = all
+    responder = () => ({ body: { connections: ids.map(id => ({ id, start: new Date(now - 1000).toISOString(), metadata: { host: id + '.invalid', destinationPort: '443', sourceIP: '10.0.0.2' }, upload: 1, download: 2 })) } })
+    render(pages.ConnectionsPage, props, true); await flush()
+    ids = all.slice(0, 2); await [...intervals.values()].find(t => t.ms === 1500).fn(); await flush()
+    let tree = render(pages.ConnectionsPage, props)
+    nodes(tree, 'Button').find(n => nodes(n, 'Image').some(i => i.props.systemName === 'magnifyingglass')).props.action()
+    for (const [tab, prefix] of [['活动中', 'active'], ['已关闭', 'closed']]) {
+      tree = render(pages.ConnectionsPage, props); button(tree, tab).props.action(); tree = render(pages.ConnectionsPage, props)
+      assert.equal(nodes(tree, 'TextField')[0].props.value, '')
+      assert.equal(nodes(tree, 'Button').filter(n => n.props.accessibilityLabel === '清除连接搜索').length, 0)
+      nodes(tree, 'TextField')[0].props.onChanged(prefix + '-one'); tree = render(pages.ConnectionsPage, props)
+      assert.ok(text(tree).includes(prefix + '-one.invalid')); assert.ok(!text(tree).includes(prefix + '-two.invalid'))
+      const before = calls.length, confirmBefore = confirms.length
+      const clear = button(tree, '清除连接搜索'); assert.equal(nodes(clear, 'Image')[0].props.systemName, 'xmark.circle.fill'); clear.props.action()
+      tree = render(pages.ConnectionsPage, props)
+      assert.equal(nodes(tree, 'TextField').length, 1); assert.equal(nodes(tree, 'TextField')[0].props.value, '')
+      assert.ok(text(tree).includes(prefix + '-one.invalid')); assert.ok(text(tree).includes(prefix + '-two.invalid'))
+      assert.equal(nodes(tree, 'Button').filter(n => n.props.accessibilityLabel === '清除连接搜索').length, 0)
+      assert.equal(calls.length, before); assert.equal(confirms.length, confirmBefore)
+    }
+    unmount()
+  })
   await test('连接卡片长按菜单、详情入口及直接排序选项', async () => {
     responder = () => ({ body: { connections: [{ id:'detail-test', start:new Date(now-20000).toISOString(), metadata:{host:'detail.invalid',sourceIP:'10.0.0.8',sourcePort:1234,destinationIP:'192.0.2.8',destinationPort:443,network:'tcp',type:'TProxy'}, chains:['N','G'],rule:'Match',upload:48,download:96 }] } })
     render(pages.ConnectionsPage,{active:c,version:0},true);await flush()
@@ -1592,7 +1617,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       const diagnostic = logs.filter(x => x.startsWith('[preferences-icon]'))
       for (const stage of ['change','accepted','proxies-render','group-render']) assert.ok(diagnostic.some(x => x.includes('stage=' + stage) && x.includes('enabled=false')))
       assert.ok(diagnostic.every(x => !x.includes('private.invalid') && !x.includes('private-group-name') && !x.includes('secret-')))
-      assert.ok(diagnostic.every(x => x.includes('build=1.5.153') && /instance=[a-z0-9]+/.test(x)))
+      assert.ok(diagnostic.every(x => x.includes('build=1.5.154') && /instance=[a-z0-9]+/.test(x)))
       assert.equal(new Set(diagnostic.map(x => x.match(/instance=([^ ]+)/)[1])).size, 1)
     } finally { context.console = originalConsole; unmount(); pref.savePreferences({ customIcons: true, testURL: 'https://www.gstatic.com/generate_204' }) }
   })
