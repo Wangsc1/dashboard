@@ -1,6 +1,6 @@
 
 import { getPreferences, customHeaders, recordEvent, controllerHealth, feedback } from "./preferences"
-export const VERSION = "1.5.79"
+export const VERSION = "1.5.80"
 
 export type Kind = "clash" | "openwrt"
 export type Plugin = "openclash" | "nikki" | "mihomo"
@@ -10,7 +10,7 @@ export interface Controller {
   host?: string; port?: number; https?: boolean; plugin?: Plugin; auto?: boolean; cport?: number
 }
 export interface ControllerInput { id?: string; name: string; host: string; port: number; https: boolean; username: string; plugin: Plugin; auto: boolean; cport: number }
-export interface Group { name: string; type: string; now: string; all: string[]; delays: Record<string, number>; hidden?: boolean; icon?: string }
+export interface Group { name: string; type: string; now: string; all: string[]; delays: Record<string, number>; types?: Record<string, string>; hidden?: boolean; icon?: string }
 export interface Conn { id: string; host: string; src: string; dst: string; network: string; rule: string; chain: string; up: number; down: number; start: number; upSpeed?: number; downSpeed?: number; sourceIP?: string; inboundType?: string; chains?: string[]; closedAt?: number }
 export interface Rule { type: string; payload: string; proxy: string }
 export interface Traffic { up: number; down: number; upTotal?: number; downTotal?: number }
@@ -392,9 +392,9 @@ export async function loadGroups(c0: Controller): Promise<Group[]> {
       return h?.length ? num(h[h.length - 1].delay) : undefined
     }
     return names.filter(n => (n !== "GLOBAL" || prefs.showGlobal) && (prefs.showHidden || !all[n]?.hidden)).map(n => {
-      const g = all[n]; const delays: Record<string, number> = {}
-      for (const m of g.all as string[]) { const delay = delayOf(m); if (delay !== undefined) delays[m] = delay }
-      return { name: n, type: String(g.type ?? ""), now: String(g.now ?? ""), all: g.all, delays, hidden: !!g.hidden, icon: typeof g.icon === "string" ? g.icon : undefined }
+      const g = all[n]; const delays: Record<string, number> = {}, types: Record<string, string> = {}
+      for (const m of g.all as string[]) { const delay = delayOf(m); if (delay !== undefined) delays[m] = delay; if (typeof all[m]?.type === "string") types[m] = all[m].type }
+      return { name: n, type: String(g.type ?? ""), now: String(g.now ?? ""), all: g.all, delays, types, hidden: !!g.hidden, icon: typeof g.icon === "string" ? g.icon : undefined }
     })
   }
 }
