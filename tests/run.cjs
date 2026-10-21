@@ -5,9 +5,13 @@ const ts = require(process.env.TYPESCRIPT_PATH || '/tmp/chk/node_modules/typescr
 const root = path.resolve(__dirname, '..')
 const store = new Map(), secrets = new Map(), calls = [], cache = new Map(), files = new Map()
 let now = 1800000000000, failStorage = false, responder = () => ({ body: {} }), hooks = [], hookIndex = 0, effects = [], confirms = [], alerts = [], clipboard = '', haptics = 0, openedURLs = [], intervals = new Map(), nextInterval = 1, cleanups = new Map()
+const sceneListeners = new Set()
+const emitScene = phase => { for (const fn of [...sceneListeners]) fn(phase) }
 const clone = v => v === undefined ? undefined : JSON.parse(JSON.stringify(v))
 const h = (type, props, ...children) => ({ type, props: { ...props, children: children.flat(Infinity).filter(x => x !== null && x !== undefined && x !== false) } })
 const scripting = new Proxy({
+  AppEvents: { scenePhase: { addListener: fn => sceneListeners.add(fn), removeListener: fn => sceneListeners.delete(fn) } },
+  useMemo(fn, deps) { const i = hookIndex++, old = hooks[i]; if (!old || deps.some((v, j) => v !== old.deps[j])) hooks[i] = { deps, value: fn() }; return hooks[i].value },
   useState(v) { const i = hookIndex++; if (!(i in hooks)) hooks[i] = typeof v === 'function' ? v() : v; return [hooks[i], v => { hooks[i] = typeof v === 'function' ? v(hooks[i]) : v }] },
   useObservable(v) { const [o] = scripting.useState(() => ({ value: typeof v === "function" ? v() : v, setValue(value) { this.value = value } })); return o },
   useEffect(fn, deps) { const i = hookIndex++, old = hooks[i]; if (!old || deps.some((v, j) => v !== old[j])) { hooks[i] = deps; effects.push(() => { cleanups.get(i)?.(); cleanups.delete(i); const c = fn(); if (typeof c === "function") cleanups.set(i, c) }) } },
@@ -258,7 +262,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) assert.equal(nodes(tree, types[i]).length, ids[i] === id ? 1 : 0)
     }
-    assert.equal(api.VERSION, '1.5.52'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.5.53'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('1.5.46 共享栈/简单ToolBarProps：唯一业务页owner、隐藏Tab无注册', () => {
     pref.savePreferences({ defaultPage: 'overview' })
@@ -351,6 +355,37 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     render(app.OverviewPage, props, true); await flush(); assert.equal(polling().length, 1)
     unmount(); assert.equal(intervals.size, 0)
     const tree = render(ui.GlobalConfigPage, { active: null }, true); assert.ok(!text(tree).includes('碎片化移除特效')); unmount()
+  })
+  await test('后台暂停前台恢复且导航入口身份不变；卸载移除前后台监听', async () => {
+    pref.savePreferences({ connectionBackground: false })
+    const router = api.listControllers().find(x => x.kind === 'openwrt')
+    responder = (_url, init) => { const b = JSON.parse(init.body); return { body: { id: b.id, result: [0, b.params?.[1] === 'session' ? { ubus_rpc_session: 'scene-test' } : { uptime: 100, memory: { total: 100, free: 50 }, interface: [], data: '2' }] } } }
+    const props = { active: router, version: 0, onSwitch() {} }
+    render(app.OverviewPage, props, true); await flush()
+    const tree = render(app.OverviewPage, props), toolbar = tree.props.toolbar
+    const link = trailing(toolbar), destination = link.props.destination
+    assert.equal(sceneListeners.size, 1)
+    for (let i = 0; i < 3; i++) {
+      for (const phase of ['inactive','background','active']) {
+        const before = calls.length
+        emitScene(phase); let current = render(app.OverviewPage, props); await flush()
+        assert.equal(current.props.toolbar, toolbar); assert.equal(trailing(current.props.toolbar), link); assert.equal(trailing(current.props.toolbar).props.destination, destination)
+        const poll = [...intervals.values()].filter(x => x.ms === 1000)
+        assert.equal(poll.length, phase === 'active' ? 1 : 0)
+        if (phase === 'active') { assert.ok(calls.length > before); await poll[0].fn(); await flush() }
+        else assert.equal(calls.length, before)
+      }
+    }
+    unmount(); assert.equal(intervals.size, 0); assert.equal(sceneListeners.size, 0)
+    emitScene('active'); assert.equal(intervals.size, 0)
+  })
+  await test('设置恢复时偏好未变不重建子页；离线折叠改变仍同步', () => {
+    pref.savePreferences({ foldOffline: false })
+    render(app.SettingsPage, { active: c, onChanged() {} }, true)
+    const state = hooks[0]
+    let tree = render(app.SettingsPage, { active: c, onChanged() {} }); tree.props.onAppear(); assert.equal(hooks[0], state)
+    pref.savePreferences({ foldOffline: true }); tree.props.onAppear(); assert.notEqual(hooks[0], state); assert.equal(hooks[0].foldOffline, true)
+    unmount(); pref.savePreferences({ foldOffline: false })
   })
   await test('外观壳响应浅深色与跟随系统，主题更新保持根导航元素身份', async () => {
     pref.savePreferences({ theme: 'system' })
@@ -635,7 +670,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     pref.savePreferences({ theme: 'dark' }); assert.notEqual(render(Probe, {}), first); assert.equal(render(Probe, {}).theme, 'dark')
     unmount(); pref.savePreferences({ headersEnabled: true, theme: 'system' })
     const src = fs.readFileSync(path.join(root, 'index.tsx'), 'utf8')
-    assert.ok(src.includes('function AppearanceRoot()')); assert.ok(src.includes('usePreferences(["connectionBackground"])'));  assert.ok(src.includes('onAppear={() => setPrefs(getPreferences())}'))
+    assert.ok(src.includes('function AppearanceRoot()')); assert.ok(src.includes('usePreferences(["connectionBackground"])'));  assert.ok(src.includes('prev.foldOffline === next.foldOffline ? prev : next'))
   })
   await test('五种节点排序：升降序、超时未测速最后、原始顺序不变', () => {
     const g = { all: ['C','B','A','D','E'], delays: { A: 10, B: 20, C: 0, E: 20 } }

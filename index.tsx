@@ -1,8 +1,8 @@
 import { rootToolbar } from "./root-toolbar"
 import { ProxiesPage, ConnectionsPage, RulesPage, GroupSection, MorePage as DashboardMorePage } from "./dashboard-pages"
 import {
-  Animation, Transition, Button, ForEach, Form, HStack, Label, Navigation, NavigationLink, NavigationStack, Picker, Script, Section, SecureField, Spacer,
-  Image, Menu, RoundedRectangle, Circle, ScrollView, SVG, Text, ZStack, modifiers, TextField, Toggle, VStack, TabView, Tab, useObservable, useEffect, useState,
+  AppEvents, Animation, Transition, Button, ForEach, Form, HStack, Label, Navigation, NavigationLink, NavigationStack, Picker, Script, Section, SecureField, Spacer,
+  Image, Menu, RoundedRectangle, Circle, ScrollView, SVG, Text, ZStack, modifiers, TextField, Toggle, VStack, TabView, Tab, useObservable, useEffect, useState, useMemo,
 } from "scripting"
 import {
   VERSION, Controller, Group, Conn, Rule, Overview, Plugin, PLUGINS, listControllers, saveController, removeController, getActive, setActive, getSecret, getClashSecret,
@@ -142,6 +142,19 @@ function RateChart({ down, up, enabled = true }: { down: number[]; up: number[];
   </Card>
 }
 
+function useForeground() {
+  const [foreground, setForeground] = useState(true)
+  useEffect(() => {
+    let alive = true
+    const changed = (phase: "active" | "inactive" | "background") => {
+      if (alive) setForeground(phase === "active")
+    }
+    AppEvents.scenePhase.addListener(changed)
+    return () => { alive = false; AppEvents.scenePhase.removeListener(changed) }
+  }, [])
+  return foreground
+}
+
 function OverviewPage({ active, version, onSwitch, onClose }: { active: Controller | null; version: number; onSwitch: () => void; onClose?: () => void }) {
   const prefs = usePreferences(["connectionBackground"])
   const [hosts, setHosts] = useState<string[]>([])
@@ -150,9 +163,8 @@ function OverviewPage({ active, version, onSwitch, onClose }: { active: Controll
   const [dn, setDn] = useState<number[]>([])
   const [upH, setUpH] = useState<number[]>([])
   const all = listControllers()
-  // The active tab owns this component. Keep sampling while settings covers it;
-  // tab changes/unmount clean up timers without depending on native push/pop callbacks.
-  const showCharts = true
+  // Scene lifecycle controls sampling; native push/pop does not control polling.
+  const showCharts = useForeground()
   useEffect(() => { setDn([]); setUpH([]); setOv(null) }, [active?.id, active?.url])
   useEffect(() => {
     if (!active || !showCharts) return
@@ -185,7 +197,7 @@ function OverviewPage({ active, version, onSwitch, onClose }: { active: Controll
   }, [active?.id, prefs.connectionBackground, showCharts])
   const w = ov?.wrt
   const memUsed = w ? Math.max(0, w.memTotal - w.memFree) : 0
-  const toolbar = rootToolbar("home", onClose, <NavigationLink destination={<SettingsPage active={active} onChanged={onSwitch} />}><Image systemName="ellipsis.circle" /></NavigationLink>)
+  const toolbar = useMemo(() => rootToolbar("home", onClose, <NavigationLink destination={<SettingsPage active={active} onChanged={onSwitch} />}><Image systemName="ellipsis.circle" /></NavigationLink>), [active, onSwitch, onClose])
   if (!active) return <Form navigationTitle="dashboard" navigationBarTitleDisplayMode="inline" toolbar={toolbar}><NoController /></Form>
   return <ScrollView navigationTitle="OpenWrt 状态" navigationBarTitleDisplayMode="inline" toolbar={toolbar}>
     <VStack spacing={12} padding={{ horizontal: 14, top: 2, bottom: 8 }}>
@@ -609,7 +621,7 @@ function SettingsPage({ active, onChanged }: { active: Controller | null; onChan
     setList(listControllers())
     setTimeout(onChanged, 500)
   }
-  return <Form navigationTitle="面板设置" navigationBarTitleDisplayMode="inline" onAppear={() => setPrefs(getPreferences())}>
+  return <Form navigationTitle="面板设置" navigationBarTitleDisplayMode="inline" onAppear={() => setPrefs(prev => { const next = getPreferences(); return prev.foldOffline === next.foldOffline ? prev : next })}>
     <Section header={<HStack><Text>OpenWrt</Text><Spacer /><Text font={12} foregroundStyle="secondaryLabel">{`v${VERSION}`}</Text></HStack>}>
       {list.map(c => <NavigationLink key={c.id} destination={<EditController initial={c} onDone={reload} />}
           trailingSwipeActions={{ allowsFullSwipe: false, actions: [<Button title="删除" tint="systemRed" action={() => remove(c.id)} />] }}>
