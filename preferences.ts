@@ -19,6 +19,8 @@ export const DEFAULTS: Preferences = {
 }
 const KEY = "dashboard_preferences_v140"
 const listeners = new Set<() => void>()
+let preferenceRevision = 0
+export function preferenceTrace(stage: string) { console.log(`[preferences] revision=${preferenceRevision} ${stage}`) }
 export function subscribePreferences(fn: () => void) { listeners.add(fn); return () => { listeners.delete(fn) } }
 // Storage persists asynchronously. Keep an accepted write visible to this instance
 // instead of rereading an older persisted value during navigation/subscriber updates.
@@ -49,8 +51,15 @@ export function savePreferences(patch: Partial<Preferences>) {
   const p = normalizePreferences({ ...getPreferences(), ...patch })
   if (!Storage.set(KEY, p)) throw new Error("本地设置保存失败")
   preferenceSnapshot = p
-  trimLogs(p.logLimit)
-  for (const fn of listeners) fn()
+  preferenceRevision++
+  preferenceTrace("saved")
+  // The write has succeeded. Maintenance or one failed UI listener must not
+  // block the other pages or turn an accepted write into a save-failed alert.
+  try { trimLogs(p.logLimit) } catch { preferenceTrace("log-trim-failed") }
+  for (const fn of [...listeners]) {
+    if (!listeners.has(fn)) continue
+    try { fn() } catch { preferenceTrace("listener-failed") }
+  }
 }
 export function feedback() { if (getPreferences().haptics) { try { HapticFeedback.selection() } catch {} } }
 

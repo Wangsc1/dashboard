@@ -4,7 +4,7 @@ const fs = require('node:fs'), path = require('node:path'), vm = require('node:v
 const ts = require(process.env.TYPESCRIPT_PATH || '/tmp/chk/node_modules/typescript')
 const root = path.resolve(__dirname, '..')
 const store = new Map(), secrets = new Map(), calls = [], cache = new Map(), files = new Map()
-let now = 1800000000000, failStorage = false, responder = () => ({ body: {} }), hooks = [], hookIndex = 0, effects = [], confirms = [], alerts = [], clipboard = '', haptics = 0, openedURLs = [], intervals = new Map(), nextInterval = 1, cleanups = new Map()
+let now = 1800000000000, failNextState = false, failStorage = false, responder = () => ({ body: {} }), hooks = [], hookIndex = 0, effects = [], confirms = [], alerts = [], clipboard = '', haptics = 0, openedURLs = [], intervals = new Map(), nextInterval = 1, cleanups = new Map()
 const sceneListeners = new Set()
 const emitScene = phase => { for (const fn of [...sceneListeners]) fn(phase) }
 const clone = v => v === undefined ? undefined : JSON.parse(JSON.stringify(v))
@@ -12,7 +12,7 @@ const h = (type, props, ...children) => ({ type, props: { ...props, children: ch
 const scripting = new Proxy({
   AppEvents: { scenePhase: { addListener: fn => sceneListeners.add(fn), removeListener: fn => sceneListeners.delete(fn) } },
   useMemo(fn, deps) { const i = hookIndex++, old = hooks[i]; if (!old || deps.some((v, j) => v !== old.deps[j])) hooks[i] = { deps, value: fn() }; return hooks[i].value },
-  useState(v) { const i = hookIndex++; if (!(i in hooks)) hooks[i] = typeof v === 'function' ? v() : v; return [hooks[i], v => { hooks[i] = typeof v === 'function' ? v(hooks[i]) : v }] },
+  useState(v) { const i = hookIndex++; if (!(i in hooks)) hooks[i] = typeof v === 'function' ? v() : v; return [hooks[i], v => { if (failNextState) { failNextState = false; throw Error("mock native setter failed") }; hooks[i] = typeof v === 'function' ? v(hooks[i]) : v }] },
   useObservable(v) { const [o] = scripting.useState(() => ({ value: typeof v === "function" ? v() : v, setValue(value) { this.value = value } })); return o },
   useEffect(fn, deps) { const i = hookIndex++, old = hooks[i]; if (!old || deps.some((v, j) => v !== old[j])) { hooks[i] = deps; effects.push(() => { cleanups.get(i)?.(); cleanups.delete(i); const c = fn(); if (typeof c === "function") cleanups.set(i, c) }) } },
   Safari: { async openURL(url) { openedURLs.push(url); return true } },
@@ -48,7 +48,7 @@ function load(name) {
   const file = path.join(root, name + (name === 'index' || name === 'settings-ui' || name === 'dashboard-pages' || name === 'root-toolbar' ? '.tsx' : '.ts'))
   let source = fs.readFileSync(file, 'utf8')
   if (name === 'index') source = source.replace(/\nrun\(\)\s*$/, '') + '\nexport { OverviewPage, InfoItem, SettingsPage, ConnectionsPage, ProxiesPage, RulesPage, Spark, RateChart, StatCard, GroupSection, MorePage, Root, AppearanceRoot };'
-  if (name === 'settings-ui') source += '\nexport { Choice };'
+  if (name === 'settings-ui') source += '\nexport { Choice, Range };'
   const code = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020, jsx: ts.JsxEmit.React, jsxFactory: 'h' } }).outputText
   const module = { exports: {} }; cache.set(name, module.exports)
   vm.runInNewContext('(function(require,module,exports){' + code + '\n})', context, { filename: file })(n => n === 'scripting' ? scripting : load(n), module, module.exports)
@@ -99,6 +99,49 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     failStorage = true
     try { assert.throws(() => pref.savePreferences({ customIcons: false })); assert.equal(pref.getPreferences().customIcons, true); assert.equal(notified, 0) }
     finally { failStorage = false; unsub() }
+  })
+  await test('通知异常不截断已保存设置的后续订阅；日志裁剪失败不阻断通知', async () => {
+    unmount(); const seen = [], messages = [], originalConsole = context.console, originalGet = context.Storage.get
+    context.console = { ...console, log: message => messages.push(message) }
+    const bad = pref.subscribePreferences(() => { throw Error('secret-not-for-logs') })
+    const good = pref.subscribePreferences(() => seen.push(pref.getPreferences().customIcons))
+    try {
+      assert.doesNotThrow(() => pref.savePreferences({ customIcons: false })); assert.deepEqual(seen, [false])
+      context.Storage.get = k => { if (k === 'dashboard_logs_v140') throw Error('secret-log-error'); return originalGet(k) }
+      assert.doesNotThrow(() => pref.savePreferences({ customIcons: true })); assert.deepEqual(seen, [false, true])
+      assert.ok(messages.some(x => x.includes('listener-failed'))); assert.ok(messages.some(x => x.includes('log-trim-failed')))
+      assert.ok(!messages.join(' ').includes('secret-'))
+    } finally { bad(); good(); context.console = originalConsole; context.Storage.get = originalGet }
+    pref.savePreferences({ customIcons: true })
+    const Probe = () => ui.usePreferences(['customIcons'])
+    render(Probe, {}, true); await flush()
+    failNextState = true; pref.savePreferences({ customIcons: false })
+    assert.equal(render(Probe, {}).customIcons, true)
+    pref.savePreferences({ customIcons: false }); assert.equal(render(Probe, {}).customIcons, false)
+    unmount(); pref.savePreferences({ customIcons: true })
+  })
+  await test('全局设置同一页面连续改变开关、主题和滑块，保存及当前页状态一致', async () => {
+    const props = { active: null }; let tree = render(ui.GlobalConfigPage, props, true); await flush()
+    for (const value of [false, true, false, true, false]) {
+      nodes(tree, 'Toggle').find(n => n.props.key === 'customIcons').props.onChanged(value)
+      tree = render(ui.GlobalConfigPage, props); await flush()
+      assert.equal(nodes(tree, 'Toggle').find(n => n.props.key === 'customIcons').props.value, value)
+      assert.equal(pref.getPreferences().customIcons, value)
+    }
+    for (const theme of ['dark','light','system','dark']) {
+      nodes(tree, ui.Choice).find(n => n.props.title === '外观模式').props.onChanged(theme)
+      tree = render(ui.GlobalConfigPage, props); await flush()
+      assert.equal(nodes(tree, ui.Choice).find(n => n.props.title === '外观模式').props.value, theme)
+      assert.equal(pref.getPreferences().theme, theme)
+    }
+    for (const timeout of [2, 8, 15, 3]) {
+      nodes(tree, ui.Range).find(n => n.props.title === '连接超时时间').props.onChanged(timeout)
+      tree = render(ui.GlobalConfigPage, props); await flush()
+      assert.equal(nodes(tree, ui.Range).find(n => n.props.title === '连接超时时间').props.value, timeout)
+      assert.equal(pref.getPreferences().requestTimeout, timeout)
+    }
+    const src = fs.readFileSync(path.join(root, 'settings-ui.tsx'), 'utf8'); assert.ok(src.includes('global-render'))
+    unmount(); pref.savePreferences({ customIcons: true, theme: 'system', requestTimeout: 8 })
   })
   await test('请求头 Keychain 保存与认证/传输覆盖、CRLF拒绝', () => {
     pref.saveHeaders('{"X-Client":"private-header-value"}')
@@ -287,7 +330,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) assert.equal(nodes(tree, types[i]).length, ids[i] === id ? 1 : 0)
     }
-    assert.equal(api.VERSION, '1.5.55'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.5.56'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('1.5.46 共享栈/简单ToolBarProps：唯一业务页owner、隐藏Tab无注册', () => {
     pref.savePreferences({ defaultPage: 'overview' })
