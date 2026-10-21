@@ -11,7 +11,7 @@ export function useSmoothPlot(a: number[], b: number[] = EMPTY, enabled = true, 
     const reset = a.length < track.current[0].length || !a.length
     track.previous = reset || !enabled ? [a, b] : track.current
     track.current = [a, b]
-    track.duration = Math.max(250, Math.min(1000, now - track.at))
+    track.duration = Math.max(250, Math.min(2500, now - track.at)) // 跟随实际到样间隔，链路偶发变慢时曲线不停住
     track.at = now
     setTick(now)
     if (!enabled || reset || a.length < 2) return

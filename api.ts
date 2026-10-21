@@ -1,6 +1,6 @@
 // dashboard 数据层：Clash 外部控制 API 与 OpenWrt（LuCI ubus JSON-RPC）
 import { getPreferences, customHeaders, recordEvent, controllerHealth, feedback } from "./preferences"
-export const VERSION = "1.5.18"
+export const VERSION = "1.5.19"
 
 export type Kind = "clash" | "openwrt"
 export type Plugin = "openclash" | "nikki" | "mihomo"
@@ -18,8 +18,9 @@ export interface WrtInfo { model: string; release: string; uptime: number; load:
 export interface Overview { version: string; mode: string; traffic: Traffic; upTotal: number; downTotal: number; connCount: number; wrt?: WrtInfo; mem?: number }
 export interface WrtIface { name: string; proto: string; up: boolean; ip: string; device: string; uptime: number }
 export interface DockerContainer { id: string; name: string; image: string; state: string; status: string }
-export interface FrpProxy { name: string; type: string; local: string; remote: string }
-export interface FrpInfo { running: boolean; enabled: boolean; server: string; proxies: FrpProxy[] }
+export interface FrpProxy { id: string; name: string; type: string; local: string; remote: string }
+export interface FrpInfo { running: boolean; enabled: boolean; server: string; proxies: FrpProxy[]; common: { addr: string; port: string; tls: boolean; hasToken: boolean } }
+export interface DockerSettings { logLevel: string; httpProxy: string; httpsProxy: string; noProxy: string; dataRoot: string }
 export interface WrtLease { host: string; ip: string; mac: string; expires: number }
 
 const K_LIST = "neko_controllers_v1"
@@ -162,6 +163,38 @@ async function ubus(c: Controller, obj: string, method: string, params: any = {}
     }
   }
 }
+// 批量 ubus：一次 HTTP 请求携带多个调用（路由器已实测支持），失败的单项返回 null，不影响其余项。
+type UbusCall = [string, string, any?]
+async function ubusBatchRaw(c: Controller, sid: string, calls: UbusCall[]): Promise<any[]> {
+  const r = await fetch(c.url + "/ubus", {
+    method: "POST", headers: { ...customHeaders(), "Content-Type": "application/json" }, allowInsecureRequest: true, timeout: getPreferences().requestTimeout,
+    body: JSON.stringify(calls.map((x, i) => ({ jsonrpc: "2.0", id: i + 1, method: "call", params: [sid, x[0], x[1], x[2] ?? {}] }))),
+  } as any)
+  if (!r.ok) throw new Error(`请求失败 HTTP ${r.status}`)
+  let j: any
+  try { j = JSON.parse(await r.text()) } catch { throw new Error("返回内容不是 ubus 接口") }
+  const arr: any[] = Array.isArray(j) ? j : [j]
+  const out: any[] = calls.map(() => null)
+  let denied = false
+  for (const x of arr) {
+    const i = Number(x?.id) - 1
+    if (!(i >= 0 && i < calls.length)) continue
+    const res = x.result
+    if (Array.isArray(res) && res[0] === 0) out[i] = res[1] ?? {}
+    else if (Array.isArray(res) && res[0] === 6) denied = true
+  }
+  if (denied && out.every(v => v === null)) throw new Error("ACCESS")
+  recordEvent("ubus", true)
+  return out
+}
+async function ubusBatch(c: Controller, calls: UbusCall[]): Promise<any[]> {
+  let sid = sessions[c.id]?.sid
+  if (!sid || Date.now() - sessions[c.id].at > 50 * 60 * 1000) sid = await wrtLogin(c)
+  try { return await ubusBatchRaw(c, sid, calls) } catch (e: any) {
+    if (String(e?.message) !== "ACCESS") throw e
+    return await ubusBatchRaw(c, await wrtLogin(c), calls)
+  }
+}
 function pickWan(dump: any): { name: string; device: string } {
   const list: any[] = dump?.interface ?? []
   const hasDefault = (i: any) => (i.route ?? []).some((r: any) => r.target === "0.0.0.0" || r.target === "::")
@@ -181,12 +214,22 @@ function cpuPercent(id: string, raw: any): number | undefined {
   return Math.max(0, Math.min(100, (1 - (idle - prev.idle) / (total - prev.total)) * 100))
 }
 const MAX_RATE = 1.25e9 // 10 Gbps 字节/秒；超过视为计数跳变
+const slowCache: Record<string, { at: number; board: any; dump: any }> = {}
 async function wrtOverview(c: Controller): Promise<Overview> {
-  const [board, info, dump, devs, ct, stat] = await Promise.all([
-    ubus(c, "system", "board"), ubus(c, "system", "info"), ubus(c, "network.interface", "dump").catch(() => ({})),
-    ubus(c, "network.device", "status").catch(() => ({})), ubus(c, "file", "read", { path: "/proc/sys/net/netfilter/nf_conntrack_count" }).catch(() => ({})),
-    ubus(c, "file", "read", { path: "/proc/stat" }).catch(() => ({})),
-  ])
+  // board/interface dump 变化极慢，缓存60秒；每秒仅一次批量请求（info、设备统计、/proc/stat、连接数）。
+  const cached = slowCache[c.id], stale = !cached || Date.now() - cached.at > 60000
+  const calls: UbusCall[] = [
+    ["system", "info"], ["network.device", "status"], ["file", "read", { path: "/proc/stat" }], ["file", "read", { path: "/proc/sys/net/netfilter/nf_conntrack_count" }],
+    ...(stale ? [["system", "board"], ["network.interface", "dump"]] as UbusCall[] : []),
+  ]
+  const r = await ubusBatch(c, calls)
+  const info = r[0], devs = r[1] ?? {}, stat = r[2] ?? {}, ct = r[3] ?? {}
+  if (!info) throw new Error("路由器未返回系统信息")
+  if (stale) {
+    if (!r[4] && !cached) throw new Error("路由器未返回系统信息")
+    slowCache[c.id] = { at: Date.now(), board: r[4] ?? cached?.board ?? {}, dump: r[5] ?? cached?.dump ?? {} }
+  }
+  const board = slowCache[c.id].board, dump = slowCache[c.id].dump
   const wan = pickWan(dump)
   const st = devs?.[wan.device]?.statistics ?? {}
   const rx = num(st.rx_bytes), tx = num(st.tx_bytes), now = Date.now()
@@ -557,12 +600,70 @@ export async function dockerAction(c: Controller, id: string, action: "start" | 
 export async function loadFrp(c: Controller): Promise<FrpInfo> {
   const [rc, uci] = await Promise.all([ubus(c, "rc", "list", { name: "frpc" }), ubus(c, "uci", "get", { config: "frpc" })])
   const values: Record<string, any> = uci.values ?? {}, st = rc?.frpc ?? {}
-  const proxies = Object.values(values).filter((v: any) => v?.[".type"] === "conf" && v.type && v.name).map((v: any): FrpProxy => ({
-    name: String(v.name), type: String(v.type), local: `${v.local_ip ?? ""}:${v.local_port ?? ""}`, remote: String(v.remote_port ?? v.custom_domains ?? v.subdomain ?? ""),
+  const proxies = Object.values(values).filter((v: any) => v?.[".type"] === "conf" && v.type && v.name && v[".name"] !== "common").map((v: any): FrpProxy => ({
+    id: String(v[".name"]), name: String(v.name), type: String(v.type), local: `${v.local_ip ?? ""}:${v.local_port ?? ""}`, remote: String(v.remote_port ?? v.custom_domains ?? v.subdomain ?? ""),
   }))
   const common = values.common ?? {}
-  return { running: !!st.running, enabled: !!st.enabled, server: common.server_addr ? `${common.server_addr}:${common.server_port ?? ""}` : "", proxies }
+  return { running: !!st.running, enabled: !!st.enabled, server: common.server_addr ? `${common.server_addr}:${common.server_port ?? ""}` : "", proxies,
+    common: { addr: String(common.server_addr ?? ""), port: String(common.server_port ?? ""), tls: common.tls_enable === "true" || common.tls_enable === "1", hasToken: !!common.token } }
 }
 export async function frpAction(c: Controller, action: "start" | "stop" | "restart") {
   await ubus(c, "rc", "init", { name: "frpc", action })
+}
+
+// ---------- 参数编辑：uci 暂存 → commit → 重启服务；任一步失败则 revert，不留半成品 ----------
+const okName = (v: string) => /^[A-Za-z0-9_.-]{1,40}$/.test(v)
+const okHost = (v: string) => /^[A-Za-z0-9._:-]{1,253}$/.test(v)
+const okPort = (v: string) => /^\d{1,5}$/.test(v) && +v >= 1 && +v <= 65535
+async function uciCommit(c: Controller, config: string, steps: (() => Promise<any>)[]) {
+  try { for (const f of steps) await f(); await ubus(c, "uci", "commit", { config }) }
+  catch (e) { try { await ubus(c, "uci", "revert", { config }) } catch {} throw e }
+}
+export async function saveFrpCommon(c: Controller, v: { addr: string; port: string; tls: boolean; token?: string }) {
+  if (!okHost(v.addr)) throw new Error("服务器地址无效"); if (!okPort(v.port)) throw new Error("服务器端口无效（1-65535）")
+  const values: Record<string, string> = { server_addr: v.addr, server_port: v.port, tls_enable: v.tls ? "true" : "false" }
+  if (v.token) values.token = v.token
+  await uciCommit(c, "frpc", [() => ubus(c, "uci", "set", { config: "frpc", section: "common", values })])
+  await frpAction(c, "restart")
+}
+export async function saveFrpProxy(c: Controller, p: { id?: string; name: string; type: string; local_ip: string; local_port: string; remote_port: string }) {
+  if (!okName(p.name)) throw new Error("规则名只能含字母数字._-"); if (!["tcp", "udp"].includes(p.type)) throw new Error("类型仅支持 tcp/udp")
+  if (!okHost(p.local_ip)) throw new Error("本地 IP 无效"); if (!okPort(p.local_port) || !okPort(p.remote_port)) throw new Error("端口无效（1-65535）")
+  const values = { name: p.name, type: p.type, local_ip: p.local_ip, local_port: p.local_port, remote_port: p.remote_port }
+  await uciCommit(c, "frpc", [() => p.id ? ubus(c, "uci", "set", { config: "frpc", section: p.id, values }) : ubus(c, "uci", "add", { config: "frpc", type: "conf", values })])
+  await frpAction(c, "restart")
+}
+export async function deleteFrpProxy(c: Controller, id: string) {
+  if (!okName(id)) throw new Error("规则标识无效")
+  await uciCommit(c, "frpc", [() => ubus(c, "uci", "delete", { config: "frpc", section: id })])
+  await frpAction(c, "restart")
+}
+export async function loadDockerSettings(c: Controller): Promise<DockerSettings> {
+  const v = (await ubus(c, "uci", "get", { config: "dockerd" })).values ?? {}, g = v.globals ?? {}, p = v.proxies ?? {}
+  return { logLevel: String(g.log_level ?? ""), httpProxy: String(p.http_proxy ?? ""), httpsProxy: String(p.https_proxy ?? ""), noProxy: String(p.no_proxy ?? ""), dataRoot: String(g.data_root ?? "") }
+}
+export async function saveDockerSettings(c: Controller, s: { logLevel: string; httpProxy: string; httpsProxy: string; noProxy: string }) {
+  if (!["debug", "info", "warn", "error", "fatal"].includes(s.logLevel)) throw new Error("日志级别无效")
+  const url = (x: string) => x === "" || /^https?:\/\/[^\s'"`$;&|<>]+$/.test(x)
+  if (!url(s.httpProxy) || !url(s.httpsProxy)) throw new Error("代理地址需为空或 http(s):// 开头且不含空格/特殊符号")
+  if (!/^[A-Za-z0-9.,:/_-]*$/.test(s.noProxy)) throw new Error("no_proxy 含非法字符")
+  const proxies: Record<string, string> = {}, drop: string[] = []
+  for (const [k, v] of [["http_proxy", s.httpProxy], ["https_proxy", s.httpsProxy], ["no_proxy", s.noProxy]]) v ? proxies[k] = v : drop.push(k)
+  const find = async (name: string) => (await ubus(c, "uci", "get", { config: "dockerd", section: name }).catch(() => null)) != null
+  await uciCommit(c, "dockerd", [
+    () => ubus(c, "uci", "set", { config: "dockerd", section: "globals", values: { log_level: s.logLevel } }),
+    async () => { if (Object.keys(proxies).length) { if (await find("proxies")) await ubus(c, "uci", "set", { config: "dockerd", section: "proxies", values: proxies }); else await ubus(c, "uci", "add", { config: "dockerd", type: "proxies", name: "proxies", values: proxies }) } },
+    async () => { if (drop.length && await find("proxies")) await ubus(c, "uci", "delete", { config: "dockerd", section: "proxies", options: drop }) },
+  ])
+  await ubus(c, "rc", "init", { name: "dockerd", action: "restart" })
+}
+export async function loadContainerPolicy(c: Controller, id: string): Promise<string> {
+  if (!/^[0-9a-f]{12,64}$/.test(id)) throw new Error("容器标识无效")
+  const b = dockerBody(await ubus(c, "docker.container", "inspect", { id, query: {} }))
+  return String(b?.HostConfig?.RestartPolicy?.Name || "no")
+}
+export async function saveContainerPolicy(c: Controller, id: string, name: string) {
+  if (!/^[0-9a-f]{12,64}$/.test(id)) throw new Error("容器标识无效")
+  if (!["no", "always", "unless-stopped", "on-failure"].includes(name)) throw new Error("重启策略无效")
+  dockerBody(await ubus(c, "docker.container", "update", { id, body: { RestartPolicy: { Name: name } } }))
 }

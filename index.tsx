@@ -7,7 +7,7 @@ import {
 import {
   VERSION, Controller, Group, Conn, Rule, Overview, Plugin, PLUGINS, listControllers, saveController, removeController, getActive, setActive, getSecret, getClashSecret,
   loadOverview, loadClashOverview, loadWrtInterfaces, loadWrtLeases, WrtIface, WrtLease, loadGroups, selectProxy, testGroup, loadConnections, loadConnectionHosts, closeConnection,
-  closeAllConnections, loadRules, DockerContainer, FrpInfo, loadDockerContainers, dockerAction, loadFrp, frpAction, fmtBytes, fmtSpeed, fmtParts, fmtUptime, fmtDuration, delayColor,
+  closeAllConnections, loadRules, DockerContainer, FrpInfo, FrpProxy, DockerSettings, loadDockerContainers, dockerAction, loadFrp, frpAction, saveFrpCommon, saveFrpProxy, deleteFrpProxy, loadDockerSettings, saveDockerSettings, loadContainerPolicy, saveContainerPolicy, fmtBytes, fmtSpeed, fmtParts, fmtUptime, fmtDuration, delayColor,
 } from "./api"
 
 import { confirmed } from "./dashboard-model"
@@ -46,7 +46,7 @@ function Badge({ icon, color }: { icon: string; color: string }) {
 function Big({ parts }: { parts: [string, string] | null }) {
   const target = parts?.[0] ?? "-", unit = parts?.[1] ?? ""
   const [shown, setShown] = useState(target)
-  const [track] = useState({ value: target, unit })
+  const [track] = useState({ value: target, unit, at: Date.now() })
   useEffect(() => {
     const start = Number(track.value), end = Number(target)
     if (!Number.isFinite(start) || !Number.isFinite(end) || track.unit !== unit) {
@@ -54,8 +54,9 @@ function Big({ parts }: { parts: [string, string] | null }) {
     }
     if (track.value === target) return
     const at = Date.now(), decimals = target.includes(".") ? target.split(".")[1].length : 0
+    const span = Math.max(300, Math.min(2500, at - track.at)); track.at = at // 动画时长跟随实际到样间隔，慢样本时数字不提前停住
     const t = setInterval(() => {
-      const p = Math.min(1, (Date.now() - at) / 950)
+      const p = Math.min(1, (Date.now() - at) / span)
       const next = (start + (end - start) * (p * p * (3 - 2 * p))).toFixed(decimals)
       if (track.value !== next) { track.value = next; setShown(next) }
       if (p === 1) clearInterval(t)
@@ -269,31 +270,85 @@ function WrtLeasesPage({ active, version }: { active: Controller; version: numbe
   </Form>
 }
 
+// Docker 官方品牌图标（Simple Icons，CC0），官方蓝 #2496ED。
+const DOCKER_SVG = (size: number) => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="${size}" height="${size}"><path fill="#2496ED" d="M13.983 11.078h2.119a.186.186 0 00.186-.185V9.006a.186.186 0 00-.186-.186h-2.119a.185.185 0 00-.185.185v1.888c0 .102.083.185.185.185m-2.954-5.43h2.118a.186.186 0 00.186-.186V3.574a.186.186 0 00-.186-.185h-2.118a.185.185 0 00-.185.185v1.888c0 .102.082.185.185.185m0 2.716h2.118a.187.187 0 00.186-.186V6.29a.186.186 0 00-.186-.185h-2.118a.185.185 0 00-.185.185v1.887c0 .102.082.185.185.186m-2.93 0h2.12a.186.186 0 00.184-.186V6.29a.185.185 0 00-.185-.185H8.1a.185.185 0 00-.185.185v1.887c0 .102.083.185.185.186m-2.964 0h2.119a.186.186 0 00.185-.186V6.29a.185.185 0 00-.185-.185H5.136a.186.186 0 00-.186.185v1.887c0 .102.084.185.186.186m5.893 2.715h2.118a.186.186 0 00.186-.185V9.006a.186.186 0 00-.186-.186h-2.118a.185.185 0 00-.185.185v1.888c0 .102.082.185.185.185m-2.93 0h2.12a.185.185 0 00.184-.185V9.006a.185.185 0 00-.184-.186h-2.12a.185.185 0 00-.184.185v1.888c0 .102.083.185.185.185m-2.964 0h2.119a.185.185 0 00.185-.185V9.006a.185.185 0 00-.184-.186h-2.12a.186.186 0 00-.186.186v1.887c0 .102.084.185.186.185m-2.92 0h2.12a.185.185 0 00.184-.185V9.006a.185.185 0 00-.184-.186h-2.12a.185.185 0 00-.184.185v1.888c0 .102.082.185.185.185M23.763 9.89c-.065-.051-.672-.51-1.954-.51-.338.001-.676.03-1.01.087-.248-1.7-1.653-2.53-1.716-2.566l-.344-.199-.226.327c-.284.438-.49.922-.612 1.43-.23.97-.09 1.882.403 2.661-.595.332-1.55.413-1.744.42H.751a.751.751 0 00-.75.748 11.376 11.376 0 00.692 4.062c.545 1.428 1.355 2.48 2.41 3.124 1.18.723 3.1 1.137 5.275 1.137.983.003 1.963-.086 2.93-.266a12.248 12.248 0 003.823-1.389c.98-.567 1.86-1.288 2.61-2.136 1.252-1.418 1.998-2.997 2.553-4.4h.221c1.372 0 2.215-.549 2.68-1.009.309-.293.55-.65.707-1.046l.098-.288Z"/></svg>`
+function DockerLogo({ size = 24 }: { size?: number }) { return <SVG code={DOCKER_SVG(size)} resizable frame={{ width: size, height: size }} /> }
+async function guarded(setBusy: (v: boolean) => void, fn: () => Promise<any>) {
+  setBusy(true)
+  try { await fn() } catch (e: any) { await Dialog.alert({ title: "操作未完成", message: String(e?.message || "路由器未响应或权限不足。").slice(0, 120) }) } finally { setBusy(false) }
+}
+function Field({ title, value, onChanged, keyboard }: { title: string; value: string; onChanged: (v: string) => void; keyboard?: string }) {
+  return <HStack><Text>{title}</Text><Spacer /><TextField title="" value={value} onChanged={onChanged} multilineTextAlignment="trailing" autocorrectionDisabled textInputAutocapitalization="never" /></HStack>
+}
+
 function DockerPage({ active }: { active: Controller }) {
   const [list, setList] = useState<DockerContainer[]>([])
   const [err, setErr] = useState(""), [busy, setBusy] = useState(false), [tick, setTick] = useState(0)
   useEffect(() => { let alive = true; loadDockerContainers(active).then(x => { if (alive) { setList(x); setErr("") } }).catch(() => { if (alive) setErr("Docker 读取不可用：路由器未启用 Docker 或账号权限不足。") }); return () => { alive = false } }, [active.id, tick])
-  const act = async (x: DockerContainer, action: "start" | "stop" | "restart", label: string) => {
+  const act = (x: DockerContainer, action: "start" | "stop" | "restart", label: string) => {
     if (busy) return
-    setBusy(true)
-    try { await confirmed(`${active.name} · ${x.name}`, `${label}容器；会影响该容器承载的服务。`, () => dockerAction(active, x.id, action)); setTick(t => t + 1) }
-    catch { await Dialog.alert({ title: "操作未完成", message: "Docker 未响应或权限不足。" }) }
-    finally { setBusy(false) }
+    void guarded(setBusy, async () => { await confirmed(`${active.name} · ${x.name}`, `${label}容器；会影响该容器承载的服务。`, () => dockerAction(active, x.id, action)); setTick(t => t + 1) })
   }
   return <Form navigationTitle="Docker 管理" navigationBarTitleDisplayMode="inline" toolbar={{ topBarTrailing: <Button title="刷新" systemImage="arrow.clockwise" action={() => setTick(t => t + 1)} /> }}>
     {err ? <Section><Text foregroundStyle="systemRed">{err}</Text></Section> : null}
-    <Section header={<Text>{`容器 ${list.length}`}</Text>}>
-      {list.map(x => <VStack key={x.id} alignment="leading" spacing={3}
+    <Section><NavigationLink destination={<DockerSettingsPage active={active} />}><HStack spacing={10}><DockerLogo size={22} /><Text>Docker 参数</Text></HStack></NavigationLink></Section>
+    <Section header={<Text>{`容器 ${list.length}`}</Text>} footer={<Text>左滑启动、停止或重启；点进容器可改重启策略。</Text>}>
+      {list.map(x => <NavigationLink key={x.id} destination={<ContainerPage active={active} x={x} />}
           trailingSwipeActions={{ allowsFullSwipe: false, actions: [
             x.state === "running" ? <Button title="停止" systemImage="stop.fill" tint="systemRed" action={() => act(x, "stop", "停止")} /> : <Button title="启动" systemImage="play.fill" tint="systemGreen" action={() => act(x, "start", "启动")} />,
             <Button title="重启" systemImage="arrow.clockwise" tint="systemBlue" action={() => act(x, "restart", "重启")} />,
           ] }}>
-        <HStack spacing={6}><Circle fill={x.state === "running" ? "systemGreen" : "systemGray"} frame={{ width: 7, height: 7 }} /><Text fontWeight="semibold">{x.name}</Text></HStack>
-        <Text font={12} foregroundStyle="secondaryLabel">{x.image}</Text>
-        <Text font={12} foregroundStyle="secondaryLabel">{x.status}</Text>
-      </VStack>)}
+        <HStack spacing={10}>
+          <DockerLogo size={26} />
+          <VStack alignment="leading" spacing={3}>
+            <HStack spacing={6}><Text fontWeight="semibold">{x.name}</Text><Circle fill={x.state === "running" ? "systemGreen" : "systemGray"} frame={{ width: 7, height: 7 }} /></HStack>
+            <Text font={12} foregroundStyle="secondaryLabel">{x.image}</Text>
+            <Text font={12} foregroundStyle="secondaryLabel">{x.status}</Text>
+          </VStack>
+        </HStack>
+      </NavigationLink>)}
     </Section>
-    <Section footer={<Text>左滑容器可启动、停止或重启，操作前会确认。</Text>}><Text font={12} foregroundStyle="secondaryLabel">不显示容器命令行与环境变量。</Text></Section>
+  </Form>
+}
+
+function ContainerPage({ active, x }: { active: Controller; x: DockerContainer }) {
+  const [policy, setPolicy] = useState(""), [orig, setOrig] = useState(""), [busy, setBusy] = useState(false), [err, setErr] = useState("")
+  useEffect(() => { let alive = true; loadContainerPolicy(active, x.id).then(v => { if (alive) { setPolicy(v); setOrig(v) } }).catch(() => { if (alive) setErr("读取容器参数失败") }); return () => { alive = false } }, [x.id])
+  const save = () => guarded(setBusy, async () => { await confirmed(`${active.name} · ${x.name}`, `将重启策略改为 ${policy}，不重启容器。`, () => saveContainerPolicy(active, x.id, policy)); setOrig(policy) })
+  return <Form navigationTitle={x.name} navigationBarTitleDisplayMode="inline">
+    {err ? <Section><Text foregroundStyle="systemRed">{err}</Text></Section> : null}
+    <Section header={<Text>信息</Text>}>
+      <HStack><Text>镜像</Text><Spacer /><Text foregroundStyle="secondaryLabel">{x.image}</Text></HStack>
+      <HStack><Text>状态</Text><Spacer /><Text foregroundStyle="secondaryLabel">{x.status}</Text></HStack>
+    </Section>
+    {policy ? <Section header={<Text>参数</Text>} footer={<Text>仅修改重启策略；端口、挂载、环境变量需重建容器，这里不提供。</Text>}>
+      <Picker title="重启策略" pickerStyle="menu" value={policy} onChanged={setPolicy}>
+        <Text tag="no">不自动重启</Text><Text tag="always">总是重启</Text><Text tag="unless-stopped">除非手动停止</Text><Text tag="on-failure">失败时重启</Text>
+      </Picker>
+      <Button title="保存" systemImage="checkmark" disabled={busy || policy === orig} action={save} />
+    </Section> : null}
+  </Form>
+}
+
+function DockerSettingsPage({ active }: { active: Controller }) {
+  const [s, setS] = useState<DockerSettings | null>(null), [busy, setBusy] = useState(false), [err, setErr] = useState("")
+  useEffect(() => { let alive = true; loadDockerSettings(active).then(v => { if (alive) setS(v) }).catch(() => { if (alive) setErr("读取 Docker 参数失败") }); return () => { alive = false } }, [active.id])
+  const set = (k: keyof DockerSettings, v: string) => setS(o => o ? { ...o, [k]: v } : o)
+  const save = () => s && guarded(setBusy, async () => { await confirmed(`${active.name} · dockerd`, "保存后将重启 Docker 服务，所有容器会短暂中断。", () => saveDockerSettings(active, s)) })
+  return <Form navigationTitle="Docker 参数" navigationBarTitleDisplayMode="inline">
+    {err ? <Section><Text foregroundStyle="systemRed">{err}</Text></Section> : null}
+    {s ? <Section header={<Text>常规</Text>} footer={<Text>数据目录为只读（改动会让现有容器消失）。保存会重启 Docker。</Text>}>
+      <HStack><Text>数据目录</Text><Spacer /><Text foregroundStyle="secondaryLabel">{s.dataRoot}</Text></HStack>
+      <Picker title="日志级别" pickerStyle="menu" value={s.logLevel} onChanged={(v: string) => set("logLevel", v)}>
+        {["debug", "info", "warn", "error", "fatal"].map(l => <Text key={l} tag={l}>{l}</Text>)}
+      </Picker>
+    </Section> : null}
+    {s ? <Section header={<Text>代理</Text>} footer={<Text>留空表示不使用。地址需以 http:// 或 https:// 开头。</Text>}>
+      <Field title="HTTP" value={s.httpProxy} onChanged={v => set("httpProxy", v)} />
+      <Field title="HTTPS" value={s.httpsProxy} onChanged={v => set("httpsProxy", v)} />
+      <Field title="不代理" value={s.noProxy} onChanged={v => set("noProxy", v)} />
+    </Section> : null}
+    {s ? <Section><Button title="保存并重启 Docker" systemImage="checkmark" disabled={busy} action={save} /></Section> : null}
   </Form>
 }
 
@@ -301,28 +356,64 @@ function FrpPage({ active }: { active: Controller }) {
   const [info, setInfo] = useState<FrpInfo | null>(null)
   const [err, setErr] = useState(""), [busy, setBusy] = useState(false), [tick, setTick] = useState(0)
   useEffect(() => { let alive = true; loadFrp(active).then(x => { if (alive) { setInfo(x); setErr("") } }).catch(() => { if (alive) setErr("frp 读取不可用：路由器未安装 frpc 或账号权限不足。") }); return () => { alive = false } }, [active.id, tick])
-  const act = async (action: "start" | "stop" | "restart", label: string) => {
+  const act = (action: "start" | "stop" | "restart", label: string) => {
     if (busy) return
-    setBusy(true)
-    try { await confirmed(`${active.name} · frpc`, `${label} frp 客户端；穿透服务会短暂中断。`, () => frpAction(active, action)); setTimeout(() => setTick(t => t + 1), 1500) }
-    catch { await Dialog.alert({ title: "操作未完成", message: "路由器未响应或权限不足。" }) }
-    finally { setBusy(false) }
+    void guarded(setBusy, async () => { await confirmed(`${active.name} · frpc`, `${label} frp 客户端；穿透服务会短暂中断。`, () => frpAction(active, action)); setTimeout(() => setTick(t => t + 1), 1500) })
   }
+  const reload = () => setTimeout(() => setTick(t => t + 1), 1500)
   return <Form navigationTitle="FRP 管理" navigationBarTitleDisplayMode="inline" toolbar={{ topBarTrailing: <Button title="刷新" systemImage="arrow.clockwise" action={() => setTick(t => t + 1)} /> }}>
     {err ? <Section><Text foregroundStyle="systemRed">{err}</Text></Section> : null}
     {info ? <Section header={<Text>服务</Text>}>
       <HStack><Text>状态</Text><Spacer /><HStack spacing={6}><Circle fill={info.running ? "systemGreen" : "systemRed"} frame={{ width: 7, height: 7 }} /><Text foregroundStyle="secondaryLabel">{info.running ? "运行中" : "已停止"}</Text></HStack></HStack>
       <HStack><Text>开机启动</Text><Spacer /><Text foregroundStyle="secondaryLabel">{info.enabled ? "已启用" : "未启用"}</Text></HStack>
-      {info.server ? <HStack><Text>服务端</Text><Spacer /><Text foregroundStyle="secondaryLabel">{info.server}</Text></HStack> : null}
+      <NavigationLink destination={<FrpCommonPage active={active} info={info} onDone={reload} />}><HStack><Text>服务端参数</Text><Spacer /><Text foregroundStyle="secondaryLabel">{info.server}</Text></HStack></NavigationLink>
       <Button title={info.running ? "停止" : "启动"} systemImage={info.running ? "stop.fill" : "play.fill"} disabled={busy} action={() => act(info.running ? "stop" : "start", info.running ? "停止" : "启动")} />
       <Button title="重启" systemImage="arrow.clockwise" disabled={busy} action={() => act("restart", "重启")} />
     </Section> : null}
-    {info ? <Section header={<Text>{`穿透规则 ${info.proxies.length}`}</Text>} footer={<Text>仅展示规则，不显示认证 token。</Text>}>
-      {info.proxies.map(x => <VStack key={x.name} alignment="leading" spacing={2}>
-        <Text fontWeight="semibold">{x.name}</Text>
-        <Text font={12} foregroundStyle="secondaryLabel">{`${x.type.toUpperCase()} · ${x.local} → ${x.remote}`}</Text>
-      </VStack>)}
+    {info ? <Section header={<Text>{`穿透规则 ${info.proxies.length}`}</Text>} footer={<Text>点进可编辑，左滑删除；保存后会重启 frpc。</Text>}>
+      {info.proxies.map(x => <NavigationLink key={x.id} destination={<FrpProxyPage active={active} initial={x} onDone={reload} />}
+          trailingSwipeActions={{ allowsFullSwipe: false, actions: [<Button title="删除" systemImage="trash" tint="systemRed" action={() => { void guarded(setBusy, async () => { await confirmed(`${active.name} · ${x.name}`, "删除该穿透规则并重启 frpc。", () => deleteFrpProxy(active, x.id)); reload() }) }} />] }}>
+        <VStack alignment="leading" spacing={2}>
+          <Text fontWeight="semibold">{x.name}</Text>
+          <Text font={12} foregroundStyle="secondaryLabel">{`${x.type.toUpperCase()} · ${x.local} → ${x.remote}`}</Text>
+        </VStack>
+      </NavigationLink>)}
+      <NavigationLink destination={<FrpProxyPage active={active} onDone={reload} />}><Label title="添加规则" systemImage="plus" /></NavigationLink>
     </Section> : null}
+  </Form>
+}
+
+function FrpCommonPage({ active, info, onDone }: { active: Controller; info: FrpInfo; onDone: () => void }) {
+  const dismiss = Navigation.useDismiss()
+  const [addr, setAddr] = useState(info.common.addr), [port, setPort] = useState(info.common.port), [tls, setTls] = useState(info.common.tls), [token, setToken] = useState(""), [busy, setBusy] = useState(false)
+  const save = () => guarded(setBusy, async () => { if (await confirmed(`${active.name} · frpc`, "保存服务端参数并重启 frpc；穿透会短暂中断，参数错误会导致断连。", () => saveFrpCommon(active, { addr: addr.trim(), port: port.trim(), tls, token: token || undefined }))) { onDone(); dismiss() } })
+  return <Form navigationTitle="服务端参数" navigationBarTitleDisplayMode="inline">
+    <Section footer={<Text>{info.common.hasToken ? "已设置 Token；不显示，留空表示不修改。" : "尚未设置 Token。"}</Text>}>
+      <Field title="服务器地址" value={addr} onChanged={setAddr} />
+      <Field title="服务器端口" value={port} onChanged={setPort} />
+      <Toggle title="启用 TLS" value={tls} onChanged={setTls} />
+      <SecureField title="Token（留空不修改）" value={token} onChanged={setToken} />
+    </Section>
+    <Section><Button title="保存并重启 frpc" systemImage="checkmark" disabled={busy} action={save} /></Section>
+  </Form>
+}
+
+function FrpProxyPage({ active, initial, onDone }: { active: Controller; initial?: FrpProxy; onDone: () => void }) {
+  const dismiss = Navigation.useDismiss()
+  const [rawLocal] = [initial?.local ?? ":"], idx = rawLocal.lastIndexOf(":")
+  const [name, setName] = useState(initial?.name ?? ""), [type, setType] = useState(initial?.type ?? "tcp")
+  const [lip, setLip] = useState(initial ? rawLocal.slice(0, idx) : "10.0.0.1"), [lport, setLport] = useState(initial ? rawLocal.slice(idx + 1) : "")
+  const [rport, setRport] = useState(initial?.remote ?? ""), [busy, setBusy] = useState(false)
+  const save = () => guarded(setBusy, async () => { if (await confirmed(`${active.name} · ${name || "新规则"}`, `${initial ? "修改" : "添加"}穿透规则并重启 frpc。`, () => saveFrpProxy(active, { id: initial?.id, name: name.trim(), type, local_ip: lip.trim(), local_port: lport.trim(), remote_port: rport.trim() }))) { onDone(); dismiss() } })
+  return <Form navigationTitle={initial ? initial.name : "添加规则"} navigationBarTitleDisplayMode="inline">
+    <Section>
+      <Field title="名称" value={name} onChanged={setName} />
+      <Picker title="类型" pickerStyle="menu" value={type} onChanged={setType}><Text tag="tcp">TCP</Text><Text tag="udp">UDP</Text></Picker>
+      <Field title="本地 IP" value={lip} onChanged={setLip} />
+      <Field title="本地端口" value={lport} onChanged={setLport} />
+      <Field title="远程端口" value={rport} onChanged={setRport} />
+    </Section>
+    <Section><Button title="保存并重启 frpc" systemImage="checkmark" disabled={busy} action={save} /></Section>
   </Form>
 }
 
