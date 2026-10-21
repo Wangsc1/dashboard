@@ -678,22 +678,22 @@ function Root() {
         <OverviewPage selected={tab === "home"} key={`home:${active?.id ?? "empty"}`} active={active} version={version} onSwitch={bump} onClose={dismiss} />
       </NavigationStack>
     </Tab>
-    <Tab key="proxies" title="代理" systemImage="point.3.connected.trianglepath.dotted" value="proxies">
+    <Tab key="proxies" title="代理" systemImage="globe" value="proxies">
       <NavigationStack key="proxies-stack">
         {tab === "proxies" ? <ProxiesPage selected onClose={dismiss} key={`proxies:${active?.id ?? "empty"}`} active={active} version={version} /> : null}
       </NavigationStack>
     </Tab>
-    <Tab key="rules" title="规则" systemImage="list.bullet.rectangle" value="rules">
+    <Tab key="rules" title="规则" systemImage="swatchpalette" value="rules">
       <NavigationStack key="rules-stack">
         {tab === "rules" ? <RulesPage selected onClose={dismiss} key={`rules:${active?.id ?? "empty"}`} active={active} version={version} /> : null}
       </NavigationStack>
     </Tab>
-    <Tab key="connections" title="连接" systemImage="arrow.up.arrow.down" value="connections">
+    <Tab key="connections" title="连接" systemImage="arrow.left.arrow.right" value="connections">
       <NavigationStack key="connections-stack">
         {tab === "connections" ? <ConnectionsPage selected onClose={dismiss} key={`connections:${active?.id ?? "empty"}`} active={active} version={version} /> : null}
       </NavigationStack>
     </Tab>
-    <Tab key="more" title="更多" systemImage="ellipsis.circle" value="more">
+    <Tab key="more" title="更多" systemImage="ellipsis" value="more">
       <NavigationStack key="more-stack">
         <MorePage selected={tab === "more"} onClose={dismiss} key={`more:${active?.id ?? "empty"}`} active={active} onChanged={bump} />
       </NavigationStack>
