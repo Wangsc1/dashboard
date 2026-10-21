@@ -5,7 +5,7 @@ import { usePreferences, KernelConfigPage, LogsPage } from "./settings-ui"
 import { savePreferences, cachedIcon, feedback } from "./preferences"
 import { selectable, sortedNodes, historyFor, filterConnections, clientLabels, saveClientLabel, sourceKey, confirmed } from "./dashboard-model"
 const FG = { light: "#41434B", dark: "#CFD0D7" }
-// 新接口异常不展示原始fetch错误、响应正文或带认证地址。
+
 export const safeError = () => "请求未完成：请检查连接、认证与当前内核/Nikki版本支持（404/权限不足可能不支持该操作）。详情不会写入日志。"
 async function attempt(fn: () => Promise<any>) { try { await fn() } catch { await Dialog.alert({ title: "操作未完成", message: safeError() }) } }
 function Card({children,...rest}: {children?:any;animation?:any;transition?:any}) { return <VStack {...rest} alignment="leading" spacing={10} font={14} foregroundStyle={FG} modifiers={modifiers().frame({maxWidth:"infinity",alignment:"leading"}).padding({horizontal:14,vertical:14}).background(<RoundedRectangle cornerRadius={22} fill="secondarySystemBackground"/>)}>{children}</VStack> }

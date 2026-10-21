@@ -1,6 +1,6 @@
-// 仅绘制真实采样之间的几何插值，不写入历史、不改变读数、不外推未采到的数据。
+
 export const CHART_HISTORY = 60
-export const CHART_FRAME_MS = 50 // 共用 20fps 调度器，非每个 SVG 一个定时器
+export const CHART_FRAME_MS = 50
 export interface PlotPoint { x: number; value: number }
 const mix = (a: number, b: number, p: number) => a + (b - a) * p
 export function scrollPoints(previous: number[], current: number[], progress: number, width: number): PlotPoint[] {
@@ -14,7 +14,7 @@ export function scrollPoints(previous: number[], current: number[], progress: nu
 export function plotScale(previous: number[][], current: number[][], progress: number, floor: number) {
   return mix(Math.max(floor, ...previous.flat()), Math.max(floor, ...current.flat()), Math.max(0, Math.min(1, progress)))
 }
-// 每段控制点的 y 坐标只取两端实际值，不会像自由样条那样过冲出负值或制造峰值。
+
 export function smoothPath(points: PlotPoint[], height: number, scale: number, inset = 0): string {
   if (points.length < 2) return ""
   const y = (v: number) => height - inset - v / scale * (height - inset * 2)

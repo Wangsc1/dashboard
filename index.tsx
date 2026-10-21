@@ -19,7 +19,6 @@ import { getPreferences, controllerHealth, cachedIcon, feedback, recordEvent } f
 
 const msg = (e: any) => String(e?.message ?? e ?? "未知错误")
 
-// ---------- 通用：自动定时刷新 ----------
 function useInterval(fn: () => void, ms: number, deps: any[]) {
   useEffect(() => {
     fn()
@@ -32,7 +31,6 @@ function NoController() {
   return <Section><Text foregroundStyle="secondaryLabel">尚未添加控制器，请到“设置”页添加 OpenWrt 路由器。</Text></Section>
 }
 
-// ---------- 概览 ----------
 const MAIN_FG = { light: "#41434B", dark: "#CFD0D7" }
 const CARD_BG = "secondarySystemBackground"
 const cardMods = () => modifiers().frame({ maxWidth: "infinity", alignment: "leading" as any }).padding({ horizontal: 16, vertical: 14 }).background(<RoundedRectangle cornerRadius={22} fill={CARD_BG} />)
@@ -55,7 +53,7 @@ function Big({ parts }: { parts: [string, string] | null }) {
     }
     if (track.value === target) return
     const at = Date.now(), decimals = target.includes(".") ? target.split(".")[1].length : 0
-    const span = Math.max(300, Math.min(2500, at - track.at)); track.at = at // 动画时长跟随实际到样间隔，慢样本时数字不提前停住
+    const span = Math.max(300, Math.min(2500, at - track.at)); track.at = at
     const t = setInterval(() => {
       const p = Math.min(1, (Date.now() - at) / span)
       const next = (start + (end - start) * (p * p * (3 - 2 * p))).toFixed(decimals)
@@ -64,7 +62,7 @@ function Big({ parts }: { parts: [string, string] | null }) {
     }, 16)
     return () => clearInterval(t)
   }, [target, unit])
-  // 普通 Text 保持可见，不再依赖原生 numericText 转场；数字以插值平滑更新。
+
   return <Text font={24} fontWeight="bold" foregroundStyle={MAIN_FG} lineLimit={1}
     frame={{ maxWidth: "infinity", minHeight: 34, alignment: "leading" }}>
     {`${shown}${unit ? " " + unit : ""}`}
@@ -228,12 +226,10 @@ function OverviewPage({ active, version, onSwitch, onClose }: { active: Controll
 
       <RateChart down={dn} up={upH} enabled={showCharts} />
 
-
     </VStack>
   </ScrollView>
 }
 
-// ---------- OpenWrt 页面 ----------
 function WrtInterfacesPage({ active, version }: { active: Controller; version: number }) {
   const [list, setList] = useState<WrtIface[]>([])
   const [err, setErr] = useState("")
@@ -263,7 +259,6 @@ function WrtLeasesPage({ active, version }: { active: Controller; version: numbe
   </Form>
 }
 
-// Docker 官方品牌图标：内嵌 PNG 经 UIImage 显示（同代理组自定义图标的原生图片路径；内联 SVG 在设备上不渲染）。
 let dockerImage: any
 function DockerLogo({ size = 24, mono = false }: { size?: number; mono?: boolean }) {
   dockerImage = dockerImage ?? UIImage.fromBase64String(DOCKER_PNG_BASE64)
@@ -448,7 +443,6 @@ function FrpPage({ active }: { active: Controller }) {
   </Form>
 }
 
-// 仅用于显示：IPv4 地址的最后一段以 *** 代替（域名不变）。
 const maskUrl = (u: string) => u.replace(/(\d{1,3}\.\d{1,3}\.)\d{1,3}\.\d{1,3}(?=[:/]|$)/, "$1*.*")
 function FrpCommonPage({ active, info, onDone }: { active: Controller; info: FrpInfo; onDone: () => void }) {
   const dismiss = Navigation.useDismiss()
@@ -485,7 +479,6 @@ function FrpProxyPage({ active, initial, onDone }: { active: Controller; initial
   </Form>
 }
 
-
 function PkgRow({ p, actions }: { p: Pkg; actions: any[] }) {
   return <VStack alignment="leading" spacing={3} frame={{ maxWidth: "infinity", alignment: "leading" as any }} trailingSwipeActions={{ allowsFullSwipe: false, actions }}>
     <HStack><Text fontWeight="semibold">{p.name}</Text><Spacer /><Text font={12} foregroundStyle="secondaryLabel">{p.upgradeTo ? `${p.version} → ${p.upgradeTo}` : p.version}</Text></HStack>
@@ -509,7 +502,7 @@ function SoftwarePage({ active }: { active: Controller }) {
     if (!await confirmed(`${active.name} · ${title}`, effect, async () => { const r = await fn(); setLog(`${r.code === 0 ? "成功" : "失败（代码 " + r.code + "）"}\n${r.out}`) })) return
     setAvailable(null); setTick(t => t + 1)
   })
-  // 左滑按钮：纯文字，不带图标（与面板设置里的“删除”一致）；点击行不触发操作。
+
   const swipeFor = (p: Pkg): any[] => p.installed
     ? [...(p.upgradeTo ? [<Button title="升级" tint="systemBlue" action={() => run(p.name, `升级到 ${p.upgradeTo}；可能重启相关服务。`, () => pkgUpgrade(active, [p.name]))} />] : []),
        <Button title="卸载" tint="systemRed" action={() => run(p.name, "卸载软件包及其不再需要的依赖；可能导致依赖它的功能失效。", () => pkgRemove(active, [p.name]))} />]
@@ -537,7 +530,6 @@ function SoftwarePage({ active }: { active: Controller }) {
   </Form>
 }
 
-// ---------- 设置 ----------
 function HelpPage() {
   return <Form navigationTitle="使用说明" navigationBarTitleDisplayMode="inline">
     <Section header={<Text>OpenWrt</Text>}>
@@ -617,7 +609,7 @@ function SettingsPage({ active, onChanged }: { active: Controller | null; onChan
   const [revealed, setRevealed] = useState<string[]>([])
   const [list, setList] = useState(listControllers())
   const reload = () => { setList(listControllers()); onChanged() }
-  // 左滑“删除”按钮（同 ScriptGit 的 trailingSwipeActions）；先同步数据源，其余刷新延后避免与动画冲突
+
   function remove(id: string) {
     removeController(id)
     setList(listControllers())
@@ -650,7 +642,6 @@ function SettingsPage({ active, onChanged }: { active: Controller | null; onChan
   </Form>
 }
 
-// ---------- 根：共享 NavigationStack 承载原生 TabView ----------
 type RootTab = "home" | "proxies" | "rules" | "connections" | "more"
 function MorePage({ active, onChanged, onClose }: { active: Controller | null; onChanged: () => void; onClose?: () => void }) {
   return <DashboardMorePage active={active} onChanged={onChanged} onClose={onClose} settings={<Card>
@@ -665,7 +656,7 @@ function Root() {
   const selection = useObservable<RootTab>(() => { const p = getPreferences().defaultPage; return p === "overview" ? "home" : p })
   const tab = selection.value
   const active = getActive(), bump = () => { setVersion(v => v + 1) }
-  // 每Tab独立栈（同ScriptGit）；栈的直接子节点就是业务页，不再包VStack，toolbar只由页面根声明一次。
+
   return <TabView selection={selection} preferredColorScheme={prefs.theme === "system" ? undefined : prefs.theme} font={14} foregroundStyle={MAIN_FG}>
     <Tab key="home" title="主页" systemImage="house.fill" value="home">
       <NavigationStack key="home-stack">

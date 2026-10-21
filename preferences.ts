@@ -1,4 +1,4 @@
-// 本脚本私有设置；不存储登录凭据。官方 Storage / Keychain / fetch 为全局 API。
+
 export interface Preferences {
   theme: "system" | "light" | "dark"; connectionStyle: "standard" | "compact"; proxyStyle: "list" | "compact"
   collapseGesture: boolean; removalFade: boolean; delayGreen: number; delayRed: number
@@ -50,8 +50,7 @@ export function feedback() { if (getPreferences().haptics) { try { HapticFeedbac
 export type LogLevel = "info" | "success" | "warning" | "error"
 export interface AppLog { id: string; at: number; level: LogLevel; category: "NETWORK" | "CONFIG" | "APP"; title: string; detail: string; count: number }
 const LOG_KEY = "dashboard_logs_v140"
-// 日志只接收代码定义的描述和有限数字，绝不接受响应、异常原文、URL、请求正文、名称或 header 值。
-// 白名单事件比对秘密字符串做事后替换更安全（也不需要把凭据复制到日志系统）。
+
 const EVENTS = {
   login: "路由器登录", discovery: "自动获取代理配置", manual: "手动代理配置解析", test: "策略组测速", api: "控制器 API", ubus: "路由器 API",
   start: "脚本启动", fallback: "组测速回退逐节点测速", config: "内核配置更新", controller: "控制器保存", remove: "控制器删除", switch: "切换控制器", cache: "清除图片缓存",
@@ -65,7 +64,7 @@ export function clearLogs() { Storage.remove(LOG_KEY) }
 export function recordEvent(event: LogEvent, ok: boolean, options: { status?: number; duration?: number; operation?: "GET" | "PATCH" | "PUT" | "DELETE" | "POST"; route?: "configs" | "connections" | "proxies" | "rules" | "version" | "delay" | "other"; warning?: boolean } = {}) {
   if (!Object.prototype.hasOwnProperty.call(EVENTS, event)) return
   const p = getPreferences()
-  // 高频成功读取仅详细模式记录；相同事件一分钟内聚合，并限量持久化。
+
   if ((event === "api" || event === "ubus") && ok && !p.detailedAPI && (!options.operation || options.operation === "GET" || event === "ubus")) return
   const level: LogLevel = event === "start" ? "info" : options.warning ? "warning" : ok ? "success" : "error"
   const detail = [["GET", "PATCH", "PUT", "DELETE", "POST"].includes(options.operation ?? "") ? options.operation : "", ["configs", "connections", "proxies", "rules", "version", "delay", "other"].includes(options.route ?? "") ? options.route : "",
@@ -82,7 +81,6 @@ export function recordEvent(event: LogEvent, ok: boolean, options: { status?: nu
 export function logTime(at: number) { const d = new Date(at); return [d.getHours(), d.getMinutes(), d.getSeconds()].map(n => String(n).padStart(2, "0")).join(":") + "." + String(d.getMilliseconds()).padStart(3, "0") }
 export function exportLogs() { return getLogs().map(l => `${new Date(l.at).toISOString()} [${l.level}] ${l.category} ${l.title}${l.count > 1 ? ` ×${l.count}` : ""}${l.detail ? " — " + l.detail : ""}`).join("\n") }
 
-// 自定义请求头单独存于 Keychain；只应用于用户的控制器和 ubus，不应用于图片请求。
 const HEADERS_KEY = "dashboard_headers_v140"
 export function getHeaderText(): string { return Keychain.get(HEADERS_KEY) ?? "{}" }
 export function parseHeaders(text: string): Record<string, string> {
@@ -101,11 +99,11 @@ export function customHeaders() { try { return parseHeaders(getHeaderText()) } c
 export function saveHeaders(text: string) { const h = parseHeaders(text); if (Keychain.set(HEADERS_KEY, JSON.stringify(h)) === false) throw new Error("请求头保存失败") }
 
 export const controllerHealth: Record<string, boolean | undefined> = {}
-// 只管理本脚本以明确键保存的图片，绝不 Storage.clear() 或清理 Keychain。
+
 const IMAGE_INDEX = "dashboard_image_index_v140"
 let imageGeneration = 0
 export async function cachedIcon(url: string): Promise<any> {
-  // 仅拒绝带查询串/片段或用户信息（host部分含@）的地址；路径中的@（如jsDelivr的@master）允许。
+
   if (!/^https:\/\//i.test(url) || /[?#]/.test(url) || /^https:\/\/[^/]*@/i.test(url)) return null
   const key = "dashboard_image_v140_" + encodeURIComponent(url)
   const data = Storage.getData(key)

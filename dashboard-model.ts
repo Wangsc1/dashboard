@@ -8,7 +8,7 @@ export function sortedNodes(g: Group, delays = g.delays) {
   if (sort === "delay") xs.sort((a,b) => (delays[a] > 0 ? delays[a] : Infinity) - (delays[b] > 0 ? delays[b] : Infinity))
   return xs
 }
-// 历史仅在内存中、按数据源隔离，最多保留8个来源、每源300条、最长一小时。
+
 export class ConnectionHistory {
   active: Conn[] = []; closed: Conn[] = []; private at = 0
   sample(xs: Conn[], at: number) {
@@ -17,7 +17,7 @@ export class ConnectionHistory {
     this.active = xs.map(x => { const p = prev.get(x.id); return { ...x, upSpeed: p && dt > 0 ? Math.max(0, x.up-p.up)/dt : 0, downSpeed: p && dt > 0 ? Math.max(0, x.down-p.down)/dt : 0 } })
     this.closed = this.closed.filter(x => at-(x.closedAt ?? at)<3600000).slice(0,300); this.at = at
   }
-  // 暂停/切页的空白时间不推断关闭、不把恢复后大差值当瞬时速度。
+
   resume() { this.active = []; this.at = 0 }
   clear() { this.closed = [] }
 }

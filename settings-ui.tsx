@@ -16,7 +16,6 @@ function Choice({ title, value, values, onChanged, disabled = false }: { title: 
 function Range({ title, value, min, max, step = 1, suffix = "", onChanged }: { title: string; value: number; min: number; max: number; step?: number; suffix?: string; onChanged: (n: number) => void }) {
   return <VStack alignment="leading"><Text>{`${title}：${value}${suffix}`}</Text><Slider min={min} max={max} step={step} value={value} onChanged={onChanged} label={<Text>{title}</Text>} minValueLabel={<Text>{min}</Text>} maxValueLabel={<Text>{max}</Text>} /></VStack>
 }
-function Unavailable({ title, reason }: { title: string; reason: string }) { return <VStack alignment="leading" spacing={4}><Text>{title}</Text><Text font={12} foregroundStyle="secondaryLabel">{reason}</Text></VStack> }
 
 function ThresholdPage() {
   const p = usePreferences()
@@ -66,7 +65,7 @@ function HeadersPage() {
   function save() { try { saveHeaders(text); setStatus("已保存；后续控制器/ubus 请求生效") } catch (e: any) { setStatus(String(e.message)) } }
   return <Form navigationTitle="自定义请求头" navigationBarTitleDisplayMode="inline"><Section footer={<Text>JSON 对象，仅附加到本脚本的控制器与 ubus 请求，不发给外部图片站点。保存在 Keychain；禁止覆盖认证与传输头，不写入运行日志。</Text>}><SecureField title="请求头 JSON" value={text} onChanged={setText} /><Button title="保存请求头" action={save} /><Text foregroundStyle="secondaryLabel">{status}</Text></Section></Form>
 }
-// 本地配置编辑只积累脏字段，保存前确认；打开页面绝不 PATCH。
+
 export function KernelConfigPage({ c }: { c: Controller }) {
   const [cfg, setCfg] = useState<ClashConfig | null>(null), [dirty, setDirty] = useState<Record<string, any>>({}), [err, setErr] = useState(""), [busy, setBusy] = useState(false)
   async function reload() { setBusy(true); try { setCfg(await loadConfig(c)); setDirty({}); setErr("") } catch { setErr("读取内核配置失败，请检查控制器连接与权限后重试") } finally { setBusy(false) } }
@@ -109,23 +108,19 @@ export function GlobalConfigPage({ active }: { active: Controller | null }) {
     try { savePreferences({ testURL: url.trim() }); await Dialog.alert({ message: "测速链接已保存；下一次测速生效" }) } catch { await Dialog.alert({ message: "保存失败" }) }
   }
   return <Form navigationTitle="全局配置" navigationBarTitleDisplayMode="inline">
-    <Section header={<Text>控制器管理</Text>} footer={<Text>此页偏好仅保存在本脚本；开关即时生效。内核配置另页读取并确认保存。</Text>}>{toggle("foldOffline", "自动折叠离线控制器")}<Text font={12} foregroundStyle="secondaryLabel">依据本脚本最近一次实际连接结果折叠地址；点击可展开，不额外探测控制器。</Text>
-      <Unavailable title="桌面快捷控制 · 无原样支持" reason="脚本不能注册独立 App 的桌面长按菜单。可在 Scripting/快捷指令中运行本脚本后切换模式。" />
-      <Unavailable title="根据 Wi-Fi 展示控制器 · 不可用" reason="当前官方 Device API 只有网络接口地址，没有当前 Wi-Fi SSID 读取接口；不伪造自动匹配。" />
-    </Section>
-    <Section header={<Text>切换代理设置</Text>} footer={<Text>开启后成功切换节点才断开该控制器全部现有连接；断开失败将明确提示。</Text>}>{toggle("disconnectOnSwitch", "自动断开旧连接")}</Section>
+    <Section header={<Text>控制器管理</Text>}>{toggle("foldOffline", "自动折叠离线控制器")}</Section>
+    <Section header={<Text>切换代理设置</Text>}>{toggle("disconnectOnSwitch", "自动断开旧连接")}</Section>
     <Section header={<Text>交互体验</Text>}>{toggle("haptics", "触感反馈")}</Section>
-    <Section header={<Text>启动设置</Text>} footer={<Text>下次启动脚本时选择对应底部原生标签页；随时可点“主页”返回 OpenWrt 概览。</Text>}><Choice title="默认打开界面" value={p.defaultPage} values={[["overview", "概览"], ["proxies", "策略组"], ["connections", "连接"], ["rules", "规则"]]} onChanged={v => update({ defaultPage: v as any })} /></Section>
+    <Section header={<Text>启动设置</Text>}><Choice title="默认打开界面" value={p.defaultPage} values={[["overview", "概览"], ["proxies", "策略组"], ["connections", "连接"], ["rules", "规则"]]} onChanged={v => update({ defaultPage: v as any })} /></Section>
     <Section header={<Text>网络请求</Text>}>
       <NavigationLink destination={<HeadersPage />}><Label title="自定义请求头" systemImage="network" /></NavigationLink>
-      <Unavailable title="Surge 智能测速补全 · 不适用" reason="本脚本仅支持 OpenWrt 上的 Mihomo/Clash 控制器，不支持 Surge API；仍保留手动组测速。" />
       {toggle("nestedDelay", "嵌套代理组延迟显示")}
       <Choice title="代理组节点排序" value={p.nodeSort} values={[["default", "默认（配置顺序）"], ["delay", "延迟（超时最后）"], ["name", "名称"]]} onChanged={v => update({ nodeSort: v as any })} />
       {toggle("showGlobal", "显示 Global 代理组")}
       <Range title="连接超时时间" min={1} max={30} value={p.requestTimeout} suffix=" s" onChanged={n => update({ requestTimeout: n })} />
     </Section>
-    <Section header={<Text>测速设置</Text>} footer={<Text>只在点击测速时访问该链接；测量超时与网络请求超时分别控制。</Text>}><TextField title="测速链接" value={url} onChanged={setURL} /><Button title="保存测速链接" action={saveURL} /><Range title="超时时间" min={1000} max={10000} step={100} value={p.testTimeout} suffix=" ms" onChanged={n => update({ testTimeout: n })} /></Section>
-    <Section header={<Text>运行日志</Text>} footer={<Text>仅记录应用连接/操作结果；不存请求正文、响应正文、URL、凭据或异常原文。同类请求一分钟内聚合，关闭详细模式不记录成功轮询。</Text>}><Range title="最大记录条数" min={100} max={2000} step={100} value={p.logLimit} onChanged={n => update({ logLimit: n })} />{toggle("detailedAPI", "记录详细 API 请求（安全摘要）")}</Section>
+    <Section header={<Text>测速设置</Text>}><TextField title="测速链接" value={url} onChanged={setURL} /><Button title="保存测速链接" action={saveURL} /><Range title="超时时间" min={1000} max={10000} step={100} value={p.testTimeout} suffix=" ms" onChanged={n => update({ testTimeout: n })} /></Section>
+    <Section header={<Text>运行日志</Text>}><Range title="最大记录条数" min={100} max={2000} step={100} value={p.logLimit} onChanged={n => update({ logLimit: n })} />{toggle("detailedAPI", "记录详细 API 请求（安全摘要）")}</Section>
     <Section header={<Text>iCloud 同步</Text>}><NavigationLink destination={<CloudSettingsPage />}><Label title="iCloud 控制器与设置备份（手动替代）" systemImage="icloud" /></NavigationLink></Section>
     <Section header={<Text>代理内核</Text>}>{active ? <NavigationLink destination={<KernelConfigPage c={active} />}><Label title="读取 / 修改当前控制器内核配置" systemImage="gearshape.2" /></NavigationLink> : <Text>请先添加控制器</Text>}</Section>
   </Form>

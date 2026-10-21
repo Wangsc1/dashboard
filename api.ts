@@ -1,6 +1,6 @@
-// dashboard 数据层：Clash 外部控制 API 与 OpenWrt（LuCI ubus JSON-RPC）
+
 import { getPreferences, customHeaders, recordEvent, controllerHealth, feedback } from "./preferences"
-export const VERSION = "1.5.36"
+export const VERSION = "1.5.37"
 
 export type Kind = "clash" | "openwrt"
 export type Plugin = "openclash" | "nikki" | "mihomo"
@@ -29,7 +29,6 @@ export interface WrtLease { host: string; ip: string; mac: string; expires: numb
 const K_LIST = "neko_controllers_v1"
 const K_ACTIVE = "neko_active_v1"
 
-// ---------- 控制器存储：地址/名称在 Storage，密钥在 Keychain ----------
 export function listControllers(): Controller[] { return (Storage.get<Controller[]>(K_LIST) ?? []).filter(c => c.kind === "clash" || c.kind === "openwrt") }
 function saveList(l: Controller[]) { Storage.set(K_LIST, l) }
 const clashCache: Record<string, { at: number; c: Controller | null }> = {}
@@ -74,7 +73,6 @@ export function getActive(): Controller | null {
 }
 export function setActive(id: string) { Storage.set(K_ACTIVE, id); feedback(); recordEvent("switch", true) }
 
-// ---------- HTTP ----------
 async function http(c: Controller, path: string, init: { method?: string; body?: any; timeout?: number } = {}): Promise<any> {
   const secret = getSecret(c.id)
   const headers: Record<string, string> = customHeaders()
@@ -109,7 +107,6 @@ async function apiFetch(url: string, init: any, path: string): Promise<any> {
 const enc = encodeURIComponent
 const num = (v: any) => typeof v === "number" && Number.isFinite(v) ? v : 0
 
-// ---------- OpenWrt：LuCI ubus JSON-RPC ----------
 const NULL_SID = "00000000000000000000000000000000"
 const sessions: Record<string, { sid: string; at: number }> = {}
 async function ubusRaw(c: Controller, sid: string, obj: string, method: string, params: any): Promise<any> {
@@ -166,7 +163,7 @@ async function ubus(c: Controller, obj: string, method: string, params: any = {}
     }
   }
 }
-// 批量 ubus：一次 HTTP 请求携带多个调用（路由器已实测支持），失败的单项返回 null，不影响其余项。
+
 type UbusCall = [string, string, any?]
 async function ubusBatchRaw(c: Controller, sid: string, calls: UbusCall[]): Promise<any[]> {
   const r = await fetch(c.url + "/ubus", {
@@ -205,7 +202,7 @@ function pickWan(dump: any): { name: string; device: string } {
   return { name: String(w?.interface ?? ""), device: String(w?.l3_device ?? w?.device ?? "") }
 }
 let lastCpu: Record<string, { total: number; idle: number }> = {}
-// 与 LuCI 一致：由 /proc/stat 总计行的两次采样差计算；首次采样或读取受限时不显示。
+
 function cpuPercent(id: string, raw: any): number | undefined {
   const line = String(raw?.data ?? "").split("\n").find(l => /^cpu\s/.test(l))
   if (!line) return undefined
@@ -216,10 +213,10 @@ function cpuPercent(id: string, raw: any): number | undefined {
   if (!prev || total <= prev.total) return undefined
   return Math.max(0, Math.min(100, (1 - (idle - prev.idle) / (total - prev.total)) * 100))
 }
-const MAX_RATE = 1.25e9 // 10 Gbps 字节/秒；超过视为计数跳变
+const MAX_RATE = 1.25e9
 const slowCache: Record<string, { at: number; board: any; dump: any }> = {}
 async function wrtOverview(c: Controller): Promise<Overview> {
-  // board/interface dump 变化极慢，缓存60秒；每秒仅一次批量请求（info、设备统计、/proc/stat、连接数）。
+
   const cached = slowCache[c.id], stale = !cached || Date.now() - cached.at > 60000
   const calls: UbusCall[] = [
     ["system", "info"], ["network.device", "status"], ["file", "read", { path: "/proc/stat" }], ["file", "read", { path: "/proc/sys/net/netfilter/nf_conntrack_count" }],
@@ -241,10 +238,10 @@ async function wrtOverview(c: Controller): Promise<Overview> {
   let up = 0, down = 0, keep = false
   if (prev && now > prev.t && rx >= prev.rx && tx >= prev.tx && now - prev.t < 10 * 60 * 1000) {
     const dt = (now - prev.t) / 1000
-    if (dt < 0.5) { up = prev.up ?? 0; down = prev.down ?? 0; keep = true } // 间隔过短（并发/重复请求）不重算，避免放大
+    if (dt < 0.5) { up = prev.up ?? 0; down = prev.down ?? 0; keep = true }
     else {
       down = (rx - prev.rx) / dt; up = (tx - prev.tx) / dt
-      if (down > MAX_RATE || up > MAX_RATE) { up = prev.up ?? 0; down = prev.down ?? 0 } // 超过物理上限的跳变计数不当作速率
+      if (down > MAX_RATE || up > MAX_RATE) { up = prev.up ?? 0; down = prev.down ?? 0 }
     }
   }
   if (!keep) Storage.set(key, { t: now, rx, tx, up, down })
@@ -268,7 +265,6 @@ export async function loadWrtLeases(c: Controller): Promise<WrtLease[]> {
   return (j.dhcp_leases ?? []).map((l: any): WrtLease => ({ host: String(l.hostname ?? ""), ip: String(l.ipaddr ?? ""), mac: String(l.macaddr ?? ""), expires: num(l.expires) }))
 }
 
-// ---------- 自动获取 Clash 控制器（通过 ubus uci 读取插件配置）----------
 const UCI: Record<Plugin, { config: string; section: string; port: (v: any) => number; secret: string }> = {
   openclash: { config: "openclash", section: "config", port: v => parseInt(String(v.cn_port ?? ""), 10), secret: "dashboard_password" },
   nikki: { config: "nikki", section: "mixin", port: v => parseInt(String(v.api_listen ?? "").split(":").pop() ?? "", 10), secret: "api_secret" },
@@ -311,8 +307,7 @@ function wsUrl(c: Controller, path: string): string {
   const base = c.url.replace(/^http/i, "ws")
   return base + path + (s ? (path.includes("?") ? "&" : "?") + "token=" + enc(s) : "")
 }
-// Mihomo 的 traffic/memory 同时支持 HTTP NDJSON。使用带认证头的原生 HTTP 流，
-// 避免 WebSocket 失败被吞掉后显示假 0；connections 使用有限频率的 HTTP 快照。
+
 export function subscribeClash(c0: Controller, path: string, onMsg: (j: any) => void): () => void {
   let closed = false, controller: AbortController | null = null, timer: any = null
   const later = (ms: number) => { if (!closed) timer = setTimeout(run, ms) }
@@ -356,7 +351,6 @@ export const subscribeMemory = (c: Controller, onData: (inuse: number) => void) 
 export const subscribeConnCount = (c: Controller, onData: (n: number) => void) =>
   subscribeClash(c, "/connections", j => { if (Array.isArray(j.connections)) onData(j.connections.length) })
 
-// ---------- 概览 ----------
 export async function loadOverview(c: Controller): Promise<Overview> {
   try {
     const o = c.kind === "openwrt" ? await wrtOverview(c) : await loadClashOverview(c)
@@ -377,12 +371,10 @@ export async function loadClashOverview(c0: Controller): Promise<Overview> {
   }
 }
 
-// ---------- 模式 ----------
 export const CLASH_MODES = [["rule", "规则"], ["global", "全局"], ["direct", "直连"]]
 export const modesOf = (_k: Kind) => CLASH_MODES
 export async function setMode(c: Controller, mode: string) { await patchConfig(c, { mode }); feedback() }
 
-// ---------- 策略组 ----------
 export async function loadGroups(c0: Controller): Promise<Group[]> {
   const c = await cc(c0)
   {
@@ -414,7 +406,7 @@ export async function selectProxy(c0: Controller, group: string, name: string) {
     try { await closeAllConnections(c) } catch { throw new Error("代理已切换，但断开旧连接失败，请手动检查连接") }
   }
 }
-// 测速整组，返回 节点→毫秒（0 表示超时/失败）
+
 export async function testGroup(c0: Controller, g: Group): Promise<Record<string, number>> {
   const c = await cc(c0)
   const res: Record<string, number> = {}
@@ -425,7 +417,7 @@ export async function testGroup(c0: Controller, g: Group): Promise<Record<string
       for (const [k, v] of Object.entries<any>(j)) res[k] = num(v)
       recordEvent("test", Object.values(res).some(v => v > 0))
       return res
-    } catch { recordEvent("fallback", false, { warning: true }) /* 非策略组端点或旧内核：逐个测 */ }
+    } catch { recordEvent("fallback", false, { warning: true })  }
     const queue = [...g.all]
     await Promise.all(Array.from({ length: 6 }, async () => {
       while (queue.length) {
@@ -439,7 +431,6 @@ export async function testGroup(c0: Controller, g: Group): Promise<Record<string
   return res
 }
 
-// ---------- 连接 ----------
 export async function loadConnections(c0: Controller): Promise<Conn[]> {
   const c = await cc(c0)
   if (c.kind === "clash") {
@@ -456,7 +447,7 @@ export async function loadConnections(c0: Controller): Promise<Conn[]> {
     })
   }
 }
-// 仅供主页滚动背景：只取主机名，不做全字段转换；/connections 体积大，调用方需放宽间隔。
+
 export async function loadConnectionHosts(c0: Controller, limit = 20): Promise<string[]> {
   const c = await cc(c0)
   if (c.kind !== "clash") return []
@@ -473,7 +464,6 @@ export async function closeAllConnections(c: Controller) {
   await http(await cc(c), "/connections", { method: "DELETE" })
 }
 
-// ---------- 规则 ----------
 export async function loadRules(c0: Controller): Promise<Rule[]> {
   const c = await cc(c0)
   {
@@ -482,7 +472,6 @@ export async function loadRules(c0: Controller): Promise<Rule[]> {
   }
 }
 
-// ---------- 配置（仅 Clash） ----------
 export interface ClashConfig { mode?: string; "log-level"?: string; port?: number; "socks-port"?: number; "mixed-port"?: number; "allow-lan"?: boolean }
 export async function loadConfig(c: Controller): Promise<ClashConfig> { return await http(await cc(c), "/configs") }
 export function validateConfigPatch(patch: Partial<ClashConfig>): Partial<ClashConfig> {
@@ -506,7 +495,6 @@ export async function patchConfig(c: Controller, patch: Partial<ClashConfig>) {
 }
 export const LOG_LEVELS = ["silent", "error", "warning", "info", "debug"]
 
-// ---------- 格式化 ----------
 export function fmtBytes(n: number): string {
   if (!n || n < 0) return "0 B"
   const u = ["B", "KB", "MB", "GB", "TB"]; let i = 0, v = n
@@ -518,7 +506,7 @@ export function fmtUptime(sec: number, detailed = false): string {
   if (detailed) return `${d}天 ${h}时 ${m}分 ${Math.floor(sec % 60)}秒`
   return d ? `${d}天${h}时` : h ? `${h}时${m}分` : `${m}分`
 }
-// 拆成 [数值, 单位]，用于大号数字 + 小号单位的显示
+
 export function fmtParts(n: number, perSec = false): [string, string] {
   const v = Math.max(0, n || 0)
   const u = ["B", "KB", "MB", "GB", "TB"]
@@ -541,8 +529,6 @@ export function delayColor(ms: number | undefined): string {
   return ms < p.delayGreen ? "systemGreen" : ms <= p.delayRed ? "systemYellow" : "systemRed"
 }
 
-
-// ---------- 1.5：经上游固定提交核实的 Mihomo / Nikki 管理契约 ----------
 export interface Provider { name: string; type: string; vehicleType: string; count: number | null; updatedAt: string; behavior?: string; format?: string }
 export function parseProviders(j: any, kind: "proxies" | "rules"): Provider[] {
   return Object.entries<any>(j?.providers ?? {}).map(([name,p]) => ({ name, type: String(p.type ?? "未提供"), vehicleType: String(p.vehicleType ?? "未提供"),
@@ -580,14 +566,13 @@ export async function loadNikkiManagement(c: Controller): Promise<NikkiManagemen
 export async function updateNikkiSubscription(c: Controller, id: string) { requireNikki(c); if (!/^[a-zA-Z0-9_]+$/.test(id)) throw new Error("订阅标识无效"); const j = await ubus(c,"luci.nikki","update_subscription",{section_id:id}); if (j.success !== true) throw new Error("Nikki报告订阅更新失败") }
 export async function webpage(c: Controller, page: "home"|"profile"|"mixin"|"log"|"editor" = "home") {
   if (page !== "home") requireNikki(c)
-  // 无 token、session 或账号信息，浏览器使用自己的 LuCI 登录；不复制 API 密钥。
+
   const base = c.kind === "openwrt" ? c.url : (await cc(c)).url
   if (!/^https?:\/\/[^/?#@]+\/?$/.test(base)) throw new Error("当前地址含路径或认证参数，不允许交给浏览器")
   return base.replace(/\/$/,"") + (c.kind === "openwrt" ? "/cgi-bin/luci/"+(page === "home" ? "" : "admin/services/nikki/"+page) : "/ui/")
 }
 export async function nikkiServiceStatus(c: Controller): Promise<boolean | null> { requireNikki(c); const j = await ubus(c,"rc","list",{name:"nikki"}); return typeof j.nikki?.running === "boolean" ? j.nikki.running : null }
 
-// ---------- Docker / frp 管理（走 OpenWrt ubus，仅暴露展示所需字段；不读取容器命令行、环境变量）----------
 const dockerBody = (j: any) => { if (!j || typeof j.code !== "number" || j.code >= 400) throw new Error("Docker 请求失败（" + String(j?.code ?? "无响应") + "）"); return j.body }
 export async function loadDockerContainers(c: Controller): Promise<DockerContainer[]> {
   const body = dockerBody(await ubus(c, "docker.container", "list", { query: { all: "true" } }))
@@ -614,7 +599,6 @@ export async function frpAction(c: Controller, action: "start" | "stop" | "resta
   await ubus(c, "rc", "init", { name: "frpc", action })
 }
 
-// ---------- 参数编辑：uci 暂存 → commit → 重启服务；任一步失败则 revert，不留半成品 ----------
 const okName = (v: string) => /^[A-Za-z0-9_.-]{1,40}$/.test(v)
 const okHost = (v: string) => /^[A-Za-z0-9._:-]{1,253}$/.test(v)
 const okPort = (v: string) => /^\d{1,5}$/.test(v) && +v >= 1 && +v <= 65535
@@ -711,7 +695,6 @@ export async function dockerImageRemove(c: Controller, id: string, force: boolea
   dockerBody(await ubus(c, "docker.image", "remove", { id, query: force ? { force: "true" } : {} }))
 }
 
-// ---------- 软件管理（对应 LuCI Software：/cgi-bin/cgi-exec + package-manager-call，ACL 仅放行这几个子命令）----------
 export interface Pkg { name: string; version: string; size: number; desc: string; installed: boolean; upgradeTo?: string }
 const PKG = "/usr/libexec/package-manager-call"
 const okPkg = (n: string) => /^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$/.test(n)
@@ -776,5 +759,5 @@ export async function loadDiskUsage(c: Controller): Promise<{ size: number; used
   const r = await ubus(c, "luci", "getMountPoints")
   const list: any[] = r?.result ?? []
   const m = list.find(x => x.mount === "/overlay") ?? list.find(x => x.mount === "/")
-  return m ? { size: num(m.size), used: num(m.size) - num(m.avail), avail: num(m.avail) } : null // 路由器返回的已是字节（实测）
+  return m ? { size: num(m.size), used: num(m.size) - num(m.avail), avail: num(m.avail) } : null
 }
