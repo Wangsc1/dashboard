@@ -429,13 +429,13 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) { const lazy = ['proxies','rules','connections'].includes(ids[i]) && ids[i] !== id; assert.equal(nodes(tree, types[i]).length, lazy ? 0 : 1); if (!lazy) assert.equal(nodes(tree, types[i])[0].props.selected, ids[i] === id) }
     }
-    assert.equal(api.VERSION, '1.5.99'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.5.100'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('独立导航栈保留业务owner和身份，只有选中页提供可见工具栏', () => {
     pref.savePreferences({ defaultPage: 'overview' })
     let rootTree = render(app.Root, {}, true)
     const pagesByTab = { home: app.OverviewPage, proxies: app.ProxiesPage, rules: app.RulesPage, connections: app.ConnectionsPage, more: app.MorePage }
-    const commands = { home: ['面板管理','外观设置','全局配置'], proxies: ['刷新'], rules: ['搜索规则','刷新规则'], connections: ['搜索连接','暂停监控','客户端标签','筛选客户端','清理已断开连接','打断全部连接'] }
+    const commands = { home: ['面板管理','外观设置','全局配置'], proxies: ['全部更新'], rules: ['搜索规则','全部更新','刷新规则'], connections: ['搜索连接','暂停监控','客户端标签','筛选客户端','清理已断开连接','打断全部连接'] }
     // 仅展开组件声明，不运行effect/网络；各页独立hooks，不能与Root共用hooks槽位。
     function inspectPage(node) {
       const saved = { hooks, hookIndex, effects, cleanups }
@@ -1071,6 +1071,19 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     const tree = render(pages.RulesPage, { active: c, version: 0 })
     assert.ok(!text(tree).includes('已展示')); assert.ok(button(tree, '加载更多')); unmount(); responder = () => ({ status: 204 })
   })
+  await test('规则页与代理页菜单“全部更新”：只更新可更新的提供者，不弹确认，完成后刷新', async () => {
+    const prov = { providers: { A: { type: 'Rule', vehicleType: 'HTTP', ruleCount: 1, proxies: [] }, B: { type: 'Rule', vehicleType: 'HTTP', ruleCount: 2, proxies: [] }, L: { type: 'Rule', vehicleType: 'Inline', ruleCount: 3, proxies: [] } } }
+    responder = url => ({ body: url.includes('/providers/') ? prov : url.endsWith('/rules') ? { rules: [] } : { proxies: {} } })
+    for (const [Page, kind, title] of [[pages.RulesPage, 'rules', '全部更新'], [pages.ProxiesPage, 'proxies', '全部更新']]) {
+      render(Page, { active: c, version: 0 }, true); await flush()
+      const tree = render(Page, { active: c, version: 0 })
+      const before = confirms.length; calls.length = 0
+      await nodes(trailing(tree.props.toolbar), 'Button').find(n => n.props.title === title).props.action(); await flush(); await flush()
+      const puts = calls.filter(x => x.init?.method === 'PUT' && x.url.includes('/providers/' + kind + '/')).map(x => x.url.split('/').pop()).sort()
+      assert.deepEqual(puts, ['A', 'B']); assert.equal(confirms.length, before); unmount()
+    }
+    responder = () => ({ status: 204 })
+  })
   await test('代理页缓存：重新进入立即显示上次策略组，读取完成前不提示空', async () => {
     responder = url => ({ body: url.includes('/providers/') ? { providers: {} } : { proxies: { CacheGroup: { type: 'Selector', now: 'X', all: ['X'] }, X: { type: 'Shadowsocks' } } } })
     render(pages.ProxiesPage, { active: c, version: 0 }, true); await flush(); unmount()
@@ -1092,7 +1105,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       const diagnostic = logs.filter(x => x.startsWith('[preferences-icon]'))
       for (const stage of ['change','accepted','proxies-render','group-render']) assert.ok(diagnostic.some(x => x.includes('stage=' + stage) && x.includes('enabled=false')))
       assert.ok(diagnostic.every(x => !x.includes('private.invalid') && !x.includes('private-group-name') && !x.includes('secret-')))
-      assert.ok(diagnostic.every(x => x.includes('build=1.5.99') && /instance=[a-z0-9]+/.test(x)))
+      assert.ok(diagnostic.every(x => x.includes('build=1.5.100') && /instance=[a-z0-9]+/.test(x)))
       assert.equal(new Set(diagnostic.map(x => x.match(/instance=([^ ]+)/)[1])).size, 1)
     } finally { context.console = originalConsole; unmount(); pref.savePreferences({ customIcons: true, testURL: 'https://www.gstatic.com/generate_204' }) }
   })
