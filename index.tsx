@@ -273,9 +273,9 @@ function WrtLeasesPage({ active, version }: { active: Controller; version: numbe
 
 // Docker 官方品牌图标：内嵌 PNG 经 UIImage 显示（同代理组自定义图标的原生图片路径；内联 SVG 在设备上不渲染）。
 let dockerImage: any
-function DockerLogo({ size = 24 }: { size?: number }) {
+function DockerLogo({ size = 24, mono = false }: { size?: number; mono?: boolean }) {
   dockerImage = dockerImage ?? UIImage.fromBase64String(DOCKER_PNG_BASE64)
-  return dockerImage ? <Image image={dockerImage} resizable scaleToFit frame={{ width: size, height: size }} /> : <Image systemName="shippingbox" frame={{ width: size, height: size }} />
+  return dockerImage ? <Image image={dockerImage} resizable scaleToFit renderingMode={mono ? "template" : "original"} foregroundStyle={mono ? MAIN_FG : undefined} frame={{ width: size, height: size }} /> : <Image systemName="shippingbox" frame={{ width: size, height: size }} />
 }
 async function guarded(setBusy: (v: boolean) => void, fn: () => Promise<any>) {
   setBusy(true)
@@ -348,7 +348,7 @@ function ContainerPage({ active, x }: { active: Controller; x: DockerContainer }
       <Picker title="重启策略" pickerStyle="menu" value={policy} onChanged={setPolicy}>
         <Text tag="no">不自动重启</Text><Text tag="always">总是重启</Text><Text tag="unless-stopped">除非手动停止</Text><Text tag="on-failure">失败时重启</Text>
       </Picker>
-      <Button title="保持" disabled={busy || policy === orig} action={save} />
+      <Button title="保存" disabled={busy || policy === orig} action={save} />
     </Section> : null}
   </Form>
 }
@@ -371,7 +371,7 @@ function DockerSettingsPage({ active }: { active: Controller }) {
       <Field title="HTTPS" value={s.httpsProxy} onChanged={v => set("httpsProxy", v)} />
       <Field title="不代理" value={s.noProxy} onChanged={v => set("noProxy", v)} />
     </Section> : null}
-    {s ? <Section><Button title="保持" disabled={busy} action={save} /></Section> : null}
+    {s ? <Section><Button title="保存" disabled={busy} action={save} /></Section> : null}
   </Form>
 }
 
@@ -393,7 +393,7 @@ function FrpPage({ active }: { active: Controller }) {
       <Button title={info.running ? "停止" : "启动"} systemImage={info.running ? "stop.fill" : "play.fill"} disabled={busy} action={() => act(info.running ? "stop" : "start", info.running ? "停止" : "启动")} />
       <Button title="重启" systemImage="arrow.clockwise" disabled={busy} action={() => act("restart", "重启")} />
     </Section> : null}
-    {info ? <Section header={<Text>{`穿透规则 ${info.proxies.length}`}</Text>} footer={<Text>点进可编辑，左滑删除；保存后会重启 frpc。</Text>}>
+    {info ? <Section header={<Text>{`穿透规则 ${info.proxies.length}`}</Text>}>
       {info.proxies.map(x => <NavigationLink key={x.id} destination={<FrpProxyPage active={active} initial={x} onDone={reload} />}
           trailingSwipeActions={{ allowsFullSwipe: false, actions: [<Button title="删除" systemImage="trash" tint="systemRed" action={() => { void guarded(setBusy, async () => { await confirmed(`${active.name} · ${x.name}`, "删除该穿透规则并重启 frpc。", () => deleteFrpProxy(active, x.id)); reload() }) }} />] }}>
         <VStack alignment="leading" spacing={2}>
@@ -418,7 +418,7 @@ function FrpCommonPage({ active, info, onDone }: { active: Controller; info: Frp
       <Field title="Token" value={token} onChanged={setToken} />
 
     </Section>
-    <Section><Button title="保持" disabled={busy} action={save} /></Section>
+    <Section><Button title="保存" disabled={busy} action={save} /></Section>
   </Form>
 }
 
@@ -437,7 +437,7 @@ function FrpProxyPage({ active, initial, onDone }: { active: Controller; initial
       <Field title="本地端口" value={lport} onChanged={setLport} />
       <Field title="远程端口" value={rport} onChanged={setRport} />
     </Section>
-    <Section><Button title="保持" disabled={busy} action={save} /></Section>
+    <Section><Button title="保存" disabled={busy} action={save} /></Section>
   </Form>
 }
 
@@ -540,7 +540,7 @@ function SettingsPage({ active, onChanged }: { active: Controller | null; onChan
     {active ? <Section header={<Text>路由器详情</Text>}>
       <NavigationLink destination={<WrtInterfacesPage active={active} version={0} />}><Label title="网络接口" systemImage="network" /></NavigationLink>
       <NavigationLink destination={<WrtLeasesPage active={active} version={0} />}><Label title="在线设备" systemImage="laptopcomputer.and.iphone" /></NavigationLink>
-      <NavigationLink destination={<DockerPage active={active} />}><HStack spacing={10}><DockerLogo size={22} /><Text>Docker 管理</Text></HStack></NavigationLink>
+      <NavigationLink destination={<DockerPage active={active} />}><HStack spacing={10}><DockerLogo size={22} mono /><Text>Docker 管理</Text></HStack></NavigationLink>
       <NavigationLink destination={<FrpPage active={active} />}><Label title="FRP 管理" systemImage="arrow.left.arrow.right" /></NavigationLink>
     </Section> : null}
   </Form>
