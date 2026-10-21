@@ -197,7 +197,7 @@ function OverviewPage({ active, version, onSwitch, onClose }: { active: Controll
   if (!active) return <Form navigationTitle="dashboard" navigationBarTitleDisplayMode="inline" toolbar={toolbar} navigationDestination={destination}><NoController /></Form>
   return <ScrollView onAppear={() => setVisible(true)} onDisappear={() => setVisible(false)} navigationTitle="OpenWrt 状态" navigationBarTitleDisplayMode="inline" toolbar={toolbar} navigationDestination={destination}>
     <VStack spacing={12} padding={{ horizontal: 14, top: 2, bottom: 8 }}>
-      <HStack spacing={4} frame={{ maxWidth: "infinity" }}>
+      <HStack spacing={4} frame={{ maxWidth: "infinity" }} padding={{ top: -14 }}>
         <Spacer />
         <Circle fill={err ? "systemRed" : "systemGreen"} frame={{ width: 5, height: 5 }} />
         <Text font={11} foregroundStyle={err ? "systemRed" : "systemGreen"}>{err ? "连接失败" : ov ? "运行正常" : "连接中"}</Text>
