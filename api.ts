@@ -1,6 +1,6 @@
 // dashboard 数据层：Clash 外部控制 API 与 OpenWrt（LuCI ubus JSON-RPC）
 import { getPreferences, customHeaders, recordEvent, controllerHealth, feedback } from "./preferences"
-export const VERSION = "1.5.22"
+export const VERSION = "1.5.23"
 
 export type Kind = "clash" | "openwrt"
 export type Plugin = "openclash" | "nikki" | "mihomo"
@@ -20,6 +20,8 @@ export interface WrtIface { name: string; proto: string; up: boolean; ip: string
 export interface DockerContainer { id: string; name: string; image: string; state: string; status: string }
 export interface FrpProxy { id: string; name: string; type: string; local: string; remote: string }
 export interface FrpInfo { running: boolean; enabled: boolean; server: string; proxies: FrpProxy[]; common: { addr: string; port: string; tls: boolean; token: string } }
+export interface DockerContainerDetail { id: string; name: string; state: string; image: string; network: string; ports: string; command: string; created: number; paused: boolean; policy: string }
+export interface DockerImage { id: string; tags: string[]; size: number; created: number; containers: string[] }
 export interface DockerOverview { version: string; api: string; threads: number; memTotal: number; root: string; index: string; mirrors: string[]; containers: number; running: number; images: number }
 export interface DockerSettings { logLevel: string; httpProxy: string; httpsProxy: string; noProxy: string; dataRoot: string }
 export interface WrtLease { host: string; ip: string; mac: string; expires: number }
@@ -678,4 +680,33 @@ export async function loadDockerOverview(c: Controller): Promise<DockerOverview>
     root: String(i?.DockerRootDir ?? ""), index: String(i?.IndexServerAddress ?? ""), mirrors, containers: num(i?.Containers), running: num(i?.ContainersRunning),
     images: Array.isArray(im) ? im.length : num(i?.Images),
   }
+}
+
+export async function loadContainerDetail(c: Controller, id: string): Promise<DockerContainerDetail> {
+  if (!/^[0-9a-f]{12,64}$/.test(id)) throw new Error("容器标识无效")
+  const b = dockerBody(await ubus(c, "docker.container", "inspect", { id, query: {} })) ?? {}
+  const ports = Object.entries(b.NetworkSettings?.Ports ?? {}).map(([k, v]: [string, any]) => v?.[0]?.HostPort ? `${v[0].HostPort}→${k}` : k).join(", ")
+  const cmd = [b.Path, ...(Array.isArray(b.Args) ? b.Args : [])].filter(Boolean).join(" ")
+  return {
+    id: String(b.Id ?? id), name: String(b.Name ?? "").replace(/^\//, ""), state: String(b.State?.Status ?? ""), image: String(b.Config?.Image ?? ""),
+    network: String(b.HostConfig?.NetworkMode ?? ""), ports, command: cmd, created: Date.parse(b.Created) || 0, paused: !!b.State?.Paused, policy: String(b.HostConfig?.RestartPolicy?.Name || "no"),
+  }
+}
+export async function dockerContainerOp(c: Controller, id: string, op: "pause" | "unpause" | "kill" | "remove" | "force-remove") {
+  if (!/^[0-9a-f]{12,64}$/.test(id)) throw new Error("容器标识无效")
+  if (op === "pause" || op === "unpause") dockerBody(await ubus(c, "docker.container", op, { id }))
+  else if (op === "kill") dockerBody(await ubus(c, "docker.container", "kill", { id, query: {} }))
+  else dockerBody(await ubus(c, "docker.container", "remove", { id, query: op === "force-remove" ? { force: "true" } : {} }))
+}
+export async function loadDockerImages(c: Controller): Promise<DockerImage[]> {
+  const [imgs, ctrs] = await ubusBatch(c, [["docker.image", "list", { query: {} }], ["docker.container", "list", { query: { all: "true" } }]])
+  const list = dockerBody(imgs), cs = ctrs ? dockerBody(ctrs) : []
+  return (Array.isArray(list) ? list : []).map((x: any): DockerImage => ({
+    id: String(x.Id ?? ""), tags: Array.isArray(x.RepoTags) ? x.RepoTags.map(String) : [], size: num(x.Size), created: num(x.Created) * 1000,
+    containers: (Array.isArray(cs) ? cs : []).filter((k: any) => k.ImageID === x.Id).map((k: any) => String((k.Names?.[0] ?? "").replace(/^\//, ""))),
+  })).filter(x => x.id)
+}
+export async function dockerImageRemove(c: Controller, id: string, force: boolean) {
+  if (!/^sha256:[0-9a-f]{64}$/.test(id) && !/^[0-9a-f]{12,64}$/.test(id)) throw new Error("镜像标识无效")
+  dockerBody(await ubus(c, "docker.image", "remove", { id, query: force ? { force: "true" } : {} }))
 }

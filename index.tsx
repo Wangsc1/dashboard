@@ -7,7 +7,7 @@ import {
 import {
   VERSION, Controller, Group, Conn, Rule, Overview, Plugin, PLUGINS, listControllers, saveController, removeController, getActive, setActive, getSecret, getClashSecret,
   loadOverview, loadClashOverview, loadWrtInterfaces, loadWrtLeases, WrtIface, WrtLease, loadGroups, selectProxy, testGroup, loadConnections, loadConnectionHosts, closeConnection,
-  closeAllConnections, loadRules, DockerContainer, FrpInfo, FrpProxy, DockerSettings, loadDockerContainers, loadDockerOverview, DockerOverview, dockerAction, loadFrp, frpAction, saveFrpCommon, saveFrpProxy, deleteFrpProxy, loadDockerSettings, saveDockerSettings, loadContainerPolicy, saveContainerPolicy, fmtBytes, fmtSpeed, fmtParts, fmtUptime, fmtDuration, delayColor,
+  closeAllConnections, loadRules, DockerContainer, FrpInfo, FrpProxy, DockerSettings, loadDockerContainers, loadContainerDetail, dockerContainerOp, DockerContainerDetail, loadDockerImages, dockerImageRemove, DockerImage, loadDockerOverview, DockerOverview, dockerAction, loadFrp, frpAction, saveFrpCommon, saveFrpProxy, deleteFrpProxy, loadDockerSettings, saveDockerSettings, loadContainerPolicy, saveContainerPolicy, fmtBytes, fmtSpeed, fmtParts, fmtUptime, fmtDuration, delayColor,
 } from "./api"
 
 import { confirmed } from "./dashboard-model"
@@ -220,9 +220,9 @@ function OverviewPage({ active, version, onSwitch, onClose }: { active: Controll
       {prefs.showWrt ? <Card>
         <InfoItem icon="cpu" color="#10B981" title="目标平台" value={w?.target || "-"} />
         <InfoItem icon="shippingbox" color="#A855F7" title="内核版本" value={w?.kernel || "-"} />
-        <InfoItem icon="gauge.medium" color="#EF4444" title="CPU 使用率" value={w?.cpu !== undefined ? `${w.cpu.toFixed(0)}%` : "-"} />
-        <InfoItem icon="clock" color="#3B82F6" title="运行时间" value={w ? fmtUptime(w.uptime, true) : "-"} />
         <InfoItem icon="waveform.path.ecg" color="#F59E0B" title="系统负载" value={w ? w.load.map(v => v.toFixed(2)).join(" ") : "-"} />
+        <InfoItem icon="clock" color="#3B82F6" title="运行时间" value={w ? fmtUptime(w.uptime, true) : "-"} />
+        <InfoItem icon="gauge.medium" color="#EF4444" title="CPU 使用率" value={w?.cpu !== undefined ? `${w.cpu.toFixed(0)}%` : "-"} />
       </Card> : null}
 
       <HStack spacing={12}>
@@ -288,8 +288,9 @@ function Field({ title, value, onChanged, keyboard }: { title: string; value: st
 const gi = (n: number) => (n / 1073741824).toFixed(2) + " Gi"
 function DockerPage({ active }: { active: Controller }) {
   const [ov, setOv] = useState<DockerOverview | null>(null)
-  const [list, setList] = useState<DockerContainer[]>([])
+  const [list, setList] = useState<DockerContainer[]>([]), [images, setImages] = useState<DockerImage[]>([])
   const [err, setErr] = useState(""), [busy, setBusy] = useState(false), [tick, setTick] = useState(0)
+  useEffect(() => { let alive = true; loadDockerImages(active).then(x => { if (alive) setImages(x) }).catch(() => {}); return () => { alive = false } }, [active.id, tick])
   useEffect(() => { let alive = true; loadDockerContainers(active).then(x => { if (alive) { setList(x); setErr("") } }).catch(() => { if (alive) setErr("Docker 读取不可用：路由器未启用 Docker 或账号权限不足。") }); return () => { alive = false } }, [active.id, tick])
   useEffect(() => { let alive = true; loadDockerOverview(active).then(x => { if (alive) setOv(x) }).catch(() => {}); return () => { alive = false } }, [active.id, tick])
   const act = (x: DockerContainer, action: "start" | "stop" | "restart", label: string) => {
@@ -315,7 +316,7 @@ function DockerPage({ active }: { active: Controller }) {
       <VStack alignment="leading" spacing={4}><Text>Registry 镜像</Text>{ov.mirrors.length ? ov.mirrors.map(m => <Text key={m} font={13} foregroundStyle="secondaryLabel">{m}</Text>) : <Text font={13} foregroundStyle="secondaryLabel">无</Text>}</VStack>
     </Section> : null}
     <Section><NavigationLink destination={<DockerSettingsPage active={active} />}><Label title="Docker 参数" systemImage="slider.horizontal.3" /></NavigationLink></Section>
-    <Section header={<Text>{`容器 ${list.length}`}</Text>} footer={<Text>左滑启动、停止或重启；点进容器可改重启策略。</Text>}>
+    <Section header={<Text>容器</Text>}>
       {list.map(x => <NavigationLink key={x.id} destination={<ContainerPage active={active} x={x} />}
           trailingSwipeActions={{ allowsFullSwipe: false, actions: [
             x.state === "running" ? <Button title="停止" systemImage="stop.fill" tint="systemRed" action={() => act(x, "stop", "停止")} /> : <Button title="启动" systemImage="play.fill" tint="systemGreen" action={() => act(x, "start", "启动")} />,
@@ -331,19 +332,68 @@ function DockerPage({ active }: { active: Controller }) {
         </HStack>
       </NavigationLink>)}
     </Section>
+    <Section header={<Text>镜像</Text>}>
+      {images.map(x => <NavigationLink key={x.id} destination={<ImagePage active={active} x={x} onDone={() => setTick(t => t + 1)} />}>
+        <HStack spacing={10}>
+          <DockerLogo size={26} />
+          <VStack alignment="leading" spacing={3}>
+            <Text fontWeight="semibold">{x.tags[0] ?? x.id.replace("sha256:", "").slice(0, 12)}</Text>
+            <Text font={12} foregroundStyle="secondaryLabel">{`${mib(x.size)} · ${x.containers.length ? x.containers.join(", ") : "未使用"}`}</Text>
+          </VStack>
+        </HStack>
+      </NavigationLink>)}
+    </Section>
+  </Form>
+}
+
+const mib = (n: number) => n >= 1073741824 ? (n / 1073741824).toFixed(2) + " GiB" : (n / 1048576).toFixed(2) + " MiB"
+const when = (ms: number) => { if (!ms) return "-"; const d = new Date(ms), p = (v: number) => String(v).padStart(2, "0"); return `${d.getFullYear()}/${p(d.getMonth() + 1)}/${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}` }
+function Row({ title, value }: { title: string; value: string }) { return <VStack alignment="leading" spacing={2}><Text font={12} foregroundStyle="secondaryLabel">{title}</Text><Text>{value || "-"}</Text></VStack> }
+
+function ImagePage({ active, x, onDone }: { active: Controller; x: DockerImage; onDone: () => void }) {
+  const dismiss = Navigation.useDismiss(), [busy, setBusy] = useState(false)
+  const del = (force: boolean) => guarded(setBusy, async () => { if (await confirmed(`${active.name} · ${x.tags[0] ?? x.id.slice(7, 19)}`, `${force ? "强制" : ""}删除镜像；${x.containers.length ? "仍有容器使用它，" : ""}不可恢复。`, () => dockerImageRemove(active, x.id, force))) { onDone(); dismiss() } })
+  return <Form navigationTitle="镜像" navigationBarTitleDisplayMode="inline">
+    <Section header={<Text>镜像文件概览</Text>}>
+      <Row title="标签" value={x.tags.join("\n")} />
+      <Row title="容器" value={x.containers.join(", ")} />
+      <Row title="大小" value={mib(x.size)} />
+      <Row title="创建时间" value={when(x.created)} />
+      <Row title="ID" value={x.id.replace("sha256:", "").slice(0, 12)} />
+    </Section>
+    <Section>
+      <Button title="删除" tint="systemRed" disabled={busy} action={() => del(false)} />
+      <Button title="强制删除" tint="systemRed" disabled={busy} action={() => del(true)} />
+    </Section>
   </Form>
 }
 
 function ContainerPage({ active, x }: { active: Controller; x: DockerContainer }) {
-  const [policy, setPolicy] = useState(""), [orig, setOrig] = useState(""), [busy, setBusy] = useState(false), [err, setErr] = useState("")
-  useEffect(() => { let alive = true; loadContainerPolicy(active, x.id).then(v => { if (alive) { setPolicy(v); setOrig(v) } }).catch(() => { if (alive) setErr("读取容器参数失败") }); return () => { alive = false } }, [x.id])
+  const dismiss = Navigation.useDismiss()
+  const [d, setD] = useState<DockerContainerDetail | null>(null), [policy, setPolicy] = useState(""), [orig, setOrig] = useState(""), [busy, setBusy] = useState(false), [err, setErr] = useState(""), [tick, setTick] = useState(0)
+  useEffect(() => { let alive = true; loadContainerDetail(active, x.id).then(v => { if (alive) { setD(v); setPolicy(v.policy); setOrig(v.policy); setErr("") } }).catch(() => { if (alive) setErr("读取容器信息失败") }); return () => { alive = false } }, [x.id, tick])
+  const op = (label: string, effect: string, fn: () => Promise<any>, leave = false) => guarded(setBusy, async () => { if (await confirmed(`${active.name} · ${x.name}`, effect, fn)) { if (leave) dismiss(); else setTimeout(() => setTick(t => t + 1), 800) } })
   const save = () => guarded(setBusy, async () => { await confirmed(`${active.name} · ${x.name}`, `将重启策略改为 ${policy}，不重启容器。`, () => saveContainerPolicy(active, x.id, policy)); setOrig(policy) })
   return <Form navigationTitle={x.name} navigationBarTitleDisplayMode="inline">
     {err ? <Section><Text foregroundStyle="systemRed">{err}</Text></Section> : null}
-    <Section header={<Text>信息</Text>}>
-      <HStack><Text>镜像</Text><Spacer /><Text foregroundStyle="secondaryLabel">{x.image}</Text></HStack>
-      <HStack><Text>状态</Text><Spacer /><Text foregroundStyle="secondaryLabel">{x.status}</Text></HStack>
-    </Section>
+    {d ? <Section header={<Text>容器概览</Text>}>
+      <Row title="容器" value={d.name} />
+      <Row title="状态" value={d.paused ? "paused" : d.state} />
+      <Row title="ID" value={d.id.slice(0, 12)} />
+      <Row title="映像" value={d.image} />
+      <Row title="网络" value={d.network} />
+      <Row title="端口" value={d.ports} />
+      <Row title="命令" value={d.command} />
+      <Row title="创建时间" value={when(d.created)} />
+    </Section> : null}
+    {d ? <Section>
+      <Button title={d.paused ? "恢复" : "暂停"} disabled={busy} action={() => op("", `${d.paused ? "恢复" : "暂停"}容器。`, () => dockerContainerOp(active, x.id, d.paused ? "unpause" : "pause"))} />
+      <Button title="重启" disabled={busy} action={() => op("", "重启容器；服务会短暂中断。", () => dockerAction(active, x.id, "restart"))} />
+      <Button title="停止" disabled={busy} action={() => op("", "停止容器；服务会中断。", () => dockerAction(active, x.id, "stop"))} />
+      <Button title="强制结束" tint="systemRed" disabled={busy} action={() => op("", "向容器发送 KILL 信号，立即终止进程。", () => dockerContainerOp(active, x.id, "kill"))} />
+      <Button title="删除" tint="systemRed" disabled={busy} action={() => op("", "删除容器（需先停止）；不可恢复。", () => dockerContainerOp(active, x.id, "remove"), true)} />
+      <Button title="强制删除" tint="systemRed" disabled={busy} action={() => op("", "强制删除容器，即使正在运行；不可恢复。", () => dockerContainerOp(active, x.id, "force-remove"), true)} />
+    </Section> : null}
     {policy ? <Section header={<Text>参数</Text>} footer={<Text>仅修改重启策略；端口、挂载、环境变量需重建容器，这里不提供。</Text>}>
       <Picker title="重启策略" pickerStyle="menu" value={policy} onChanged={setPolicy}>
         <Text tag="no">不自动重启</Text><Text tag="always">总是重启</Text><Text tag="unless-stopped">除非手动停止</Text><Text tag="on-failure">失败时重启</Text>
@@ -393,7 +443,7 @@ function FrpPage({ active }: { active: Controller }) {
       <Button title={info.running ? "停止" : "启动"} systemImage={info.running ? "stop.fill" : "play.fill"} disabled={busy} action={() => act(info.running ? "stop" : "start", info.running ? "停止" : "启动")} />
       <Button title="重启" systemImage="arrow.clockwise" disabled={busy} action={() => act("restart", "重启")} />
     </Section> : null}
-    {info ? <Section header={<Text>{`穿透规则 ${info.proxies.length}`}</Text>}>
+    {info ? <Section header={<Text>穿透规则</Text>}>
       {info.proxies.map(x => <NavigationLink key={x.id} destination={<FrpProxyPage active={active} initial={x} onDone={reload} />}
           trailingSwipeActions={{ allowsFullSwipe: false, actions: [<Button title="删除" systemImage="trash" tint="systemRed" action={() => { void guarded(setBusy, async () => { await confirmed(`${active.name} · ${x.name}`, "删除该穿透规则并重启 frpc。", () => deleteFrpProxy(active, x.id)); reload() }) }} />] }}>
         <VStack alignment="leading" spacing={2}>
