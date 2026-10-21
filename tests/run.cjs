@@ -220,16 +220,15 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
   await test('共享NavigationStack内原生TabView五入口、selection默认值/切换与根X', () => {
     pref.savePreferences({ defaultPage: 'overview', connectionBackground: false })
     let tree = render(app.Root, {}, true)
-    assert.equal(tree.type, 'NavigationStack'); assert.equal(tree.props.children[0].type,'TabView');assert.equal(tree.props.toolbar,undefined);assert.equal(tree.props.children[0].props.toolbar,undefined); assert.equal(nodes(tree,'TabView')[0].props.selection.value, 'home')
+    assert.equal(tree.type, 'TabView'); assert.equal(nodes(tree,'TabView')[0].props.selection.value, 'home')
     const tabs = nodes(tree, 'Tab')
     assert.deepEqual(tabs.map(t => t.props.title), ['主页', '代理', '规则', '连接', '更多'])
     assert.deepEqual(tabs.map(t => t.props.value), ['home', 'proxies', 'rules', 'connections', 'more'])
-    assert.equal(nodes(tree, 'NavigationStack').length, 1)
+    assert.equal(nodes(tree, 'NavigationStack').length, 5)
     for (const tab of tabs) {
-      assert.equal(tab.props.children[0].type, 'VStack')
-      assert.equal(nodes(tab, 'NavigationStack').length, 0)
+      assert.equal(tab.props.children[0].type, 'NavigationStack'); assert.equal(nodes(tab, 'NavigationStack').length, 1)
       assert.equal(tab.props.children[0].props.toolbar, undefined)
-      for (const child of tab.props.children[0].props.children) assert.equal(typeof child.props.onClose, 'function')
+      for (const child of tab.props.children[0].props.children) if (child) assert.equal(typeof child.props.onClose, 'function')
     }
     assert.equal(nodes(tree, app.OverviewPage).length, 1); assert.equal(nodes(tree, app.ProxiesPage).length, 0)
     // 系统点击/拖动通过同一个 Observable selection 回传；脚本不实现手势。
@@ -241,7 +240,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     const source = fs.readFileSync(path.join(root, 'index.tsx'), 'utf8')
     for (const removed of ['FloatingBar', 'safeAreaInset', 'UIGlass', 'GlassEffectContainer']) assert.ok(!source.includes(removed))
     const rootSource = source.slice(source.indexOf('function Root()'))
-    assert.ok(!rootSource.includes('onDragGesture')); assert.ok(!rootSource.includes('onTapGesture')); assert.ok(rootSource.includes('<NavigationStack>\n    <TabView'))
+    assert.ok(!rootSource.includes('onDragGesture')); assert.ok(!rootSource.includes('onTapGesture')); assert.ok(!rootSource.includes('<NavigationStack>\n    <TabView'))
     const overview = source.slice(source.indexOf('function OverviewPage'), source.indexOf('// ---------- OpenWrt 页面'))
     assert.ok(!overview.includes('loadClashOverview')); assert.ok(!overview.includes('运行模式')); assert.ok(!overview.includes('<NavigationLink'))
   })
@@ -251,12 +250,12 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     const ids = ['home', 'proxies', 'rules', 'connections', 'more'], types = [app.OverviewPage, app.ProxiesPage, app.RulesPage, app.ConnectionsPage, app.MorePage]
     for (const id of [...ids, 'home', 'connections', 'home']) {
       nodes(tree,'TabView')[0].props.selection.setValue(id); tree = render(app.Root, {})
-      assert.equal(nodes(tree, 'NavigationStack').length, 1)
+      assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) assert.equal(nodes(tree, types[i]).length, ids[i] === id ? 1 : 0)
     }
-    assert.equal(api.VERSION, '1.5.4'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.5.5'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
-  await test('1.5.4 共享栈/简单ToolBarProps：唯一业务页owner、隐藏Tab无注册', () => {
+  await test('1.5.5 共享栈/简单ToolBarProps：唯一业务页owner、隐藏Tab无注册', () => {
     pref.savePreferences({ defaultPage: 'overview' })
     let rootTree = render(app.Root, {}, true)
     const pagesByTab = { home: app.OverviewPage, proxies: app.ProxiesPage, rules: app.RulesPage, connections: app.ConnectionsPage, more: app.MorePage }
@@ -273,11 +272,11 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       let menus=0
       for (const tab of nodes(rootTree,'Tab')) {
         const id=tab.props.value, owner=tab.props.children[0]
-        assert.equal(nodes(tab,'NavigationStack').length,0)
+        assert.equal(owner.type,'NavigationStack')
         const identity=[tab.props.key,owner.props.key].join('/')
         if(roots.has(id))assert.equal(identity,roots.get(id));else roots.set(id,identity)
         assert.equal(owner.props.toolbar,undefined)
-        const children=owner.props.children
+        const children=owner.props.children.filter(Boolean)
         if(id!==selected){assert.equal(children.length,0);continue}
         assert.equal(children.length,1);assert.equal(children[0].type,pagesByTab[id]);assert.ok(children[0].props.key.startsWith(id+':'))
         let page=inspectPage(children[0]);if(id==='more')page=inspectPage(page);const owners=[]
@@ -300,7 +299,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     assert.ok(!source.includes('const content ='));assert.ok(!source.includes('ROOT_TABS.map'));assert.ok(!source.includes('toolbar={'));assert.ok(!source.includes('topBarLeading'))
     const helper=fs.readFileSync(path.join(root,'root-toolbar.tsx'),'utf8');assert.ok(!helper.includes('ToolbarItem'));assert.ok(!helper.includes('<Toolbar'));assert.ok(!helper.includes('key='));assert.ok(!helper.includes('id='))
   })
-  await test('1.5.4 编辑控制器仍进管理页；共享栈push详情不附根X', () => {
+  await test('1.5.5 编辑控制器仍进管理页；共享栈push详情不附根X', () => {
     let closes=0
     let page=render(app.OverviewPage,{active:c,version:0,onSwitch(){},onClose(){closes++}},true)
     button(trailing(page.props.toolbar),'编辑控制器').props.action()
