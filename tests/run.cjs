@@ -334,6 +334,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     const before = confirms.length
     render(ui.KernelConfigPage, { c }, true); await flush(); let tree = render(ui.KernelConfigPage, { c })
     assert.equal(calls.length, 1); assert.equal(calls[0].init.method, 'GET')
+    for(const note of ['规则：根据配置规则分流','端口范围 0–65535','TUN 模式可实现透明代理'])assert.ok(!text(tree).includes(note));
     assert.ok(!text(tree).includes('先读取')); assert.ok(!nodes(tree, 'Button').some(n => /保存修改字段|重新读取/.test(n.props.title ?? '')))
     let mixed = nodes(tree, 'TextField').find(n => n.props.title === '混合端口')
     mixed.props.onChanged('789'); mixed.props.onChanged('7892'); assert.equal(calls.length, 1)
@@ -568,7 +569,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) { const lazy = ['proxies','rules','connections'].includes(ids[i]) && ids[i] !== id; assert.equal(nodes(tree, types[i]).length, lazy ? 0 : 1); if (!lazy) assert.equal(nodes(tree, types[i])[0].props.selected, ids[i] === id) }
     }
-    assert.equal(api.VERSION, '1.5.123'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.5.124'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('独立导航栈保留业务owner和身份，只有选中页提供可见工具栏', () => {
     pref.savePreferences({ defaultPage: 'overview' })
@@ -979,7 +980,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     responder=(url,init)=>{if(url.endsWith('/ubus')){const p=JSON.parse(init.body).params;return {body:{result:[0,p[1]==='session'?{ubus_rpc_session:'runtime-ui-session'}:p[2]==='version'?{app:'1.26.2',core:'alpha-94b13ae'}:{}]}}}return {body:url.endsWith('/version')?{version:'alpha-94b13ae'}:{mode:'rule'}}}
     render(pages.MorePage,{active:n,onChanged(){}},true);await flush();let tree=render(pages.MorePage,{active:n,onChanged(){}})
     for(const value of ['1.26.2','alpha-94b13ae']){const t=nodes(tree,'Text').find(x=>text(x)===value);assert.ok(t);assert.equal(t.props.fixedSize.horizontal,true)}
-    const versionRow=nodes(tree,'HStack').find(x=>text(x).includes('alpha-94b13ae'));assert.ok(!text(versionRow).includes('运行时间'))
+    const versionRow=nodes(tree,'HStack').find(x=>text(x).includes('alpha-94b13ae')&&!text(x).includes('运行时间'));assert.ok(!text(versionRow).includes('运行时间'))
     assert.equal(tree.props.background,'systemBackground');unmount()
     for(const [Page,props] of [[pages.DNSPage,{c:n}],[pages.ManagementPage,{c:n,kind:'profile'}],[ui.KernelConfigPage,{c:n}],[ui.GlobalConfigPage,{active:n}],[ui.LogsPage,{}],[app.SettingsPage,{active:n,onChanged(){}}]]){
       tree=render(Page,props,true);assert.equal(tree.props.background,'systemBackground');if(tree.type==='Form')assert.equal(tree.props.scrollContentBackground,'hidden');unmount()
@@ -998,19 +999,34 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     assert.equal(api.linuxProcessSeconds('4214450 0',stat.replace('(mihomo)','(mi)ho mo)'),100,10883),804946)
     assert.equal(api.linuxProcessSeconds('1 0',stat,100,10883),null);assert.equal(api.linuxProcessSeconds('4214450 0',stat,100,9),null);assert.equal(api.linuxProcessSeconds('bad',stat,100,10883),null)
   })
+  await test('Nikki启动标记独立于内核及路由器时长，缺失/未来/旧标记不伪造',()=>{
+    assert.equal(api.nikkiStartedSeconds('btime 1788359842','4215137.95 0',1792549767),25212)
+    for(const stamp of [undefined,null,'1792549767',1788359841,1792575000,NaN])assert.equal(api.nikkiStartedSeconds('btime 1788359842','4215137.95 0',stamp),null)
+    assert.equal(api.nikkiStartedSeconds('','4215137.95 0',1792549767),null)
+  })
   await test('Nikki进程时长只读RPC、真实PID路径、无权限/停服不伪造开机时长', async () => {
     const n={...c,id:'runtime-proc',kind:'openwrt',plugin:'nikki',host:'proc.invalid',url:'http://proc.invalid',auto:false,cport:9090}
     const aux=Buffer.alloc(32);aux.writeBigUInt64LE(17n,0);aux.writeBigUInt64LE(100n,8)
     const stat='10883 (mihomo) S 1 1 1 0 -1 4194560 2188599 0 0 0 189179 108801 0 0 20 0 22 0 340950391'
     let alive=true,denied=false
-    responder=(url,init)=>{const p=JSON.parse(init.body).params;if(p[1]==='session')return {body:{result:[0,{ubus_rpc_session:'proc-session'}]}};if(denied)return {body:{result:[6]}};if(p[1]==='service')return {body:{result:[0,{nikki:{instances:alive?{nikki:{running:true,pid:10883}}:{}}}]}};return {body:{result:[0,{data:({'/proc/self/auxv':aux.toString('base64'),'/proc/10883/stat':stat,'/proc/uptime':'4214450 0','/proc/10883/comm':'mihomo'})[p[3].path]}]}}}
-    calls.length=0;const rt=await api.loadNikkiRuntime(n);assert.equal(rt.coreSeconds,804946);assert.equal(rt.serviceSeconds,804946);assert.equal(rt.measuredAt,now)
-    assert.ok(calls.every(x=>JSON.parse(x.init.body).params[2]!=='exec'));assert.deepEqual(calls.filter(x=>JSON.parse(x.init.body).params[1]==='file').map(x=>JSON.parse(x.init.body).params[3].path).sort(),['/proc/10883/comm','/proc/10883/stat','/proc/self/auxv','/proc/uptime'].sort())
+    responder=(url,init)=>{const p=JSON.parse(init.body).params;if(p[1]==='session')return {body:{result:[0,{ubus_rpc_session:'proc-session'}]}};if(denied)return {body:{result:[6]}};if(p[1]==='service')return {body:{result:[0,{nikki:{instances:alive?{nikki:{running:true,pid:10883}}:{}}}]}};if(p[2]==='stat')return {body:{result:[0,{type:'file',mtime:1792549767}]}};return {body:{result:[0,{data:({'/proc/self/auxv':aux.toString('base64'),'/proc/10883/stat':stat,'/proc/uptime':'4214450 0','/proc/10883/comm':'mihomo','/proc/stat':'btime 1788359842'})[p[3].path]}]}}}
+    calls.length=0;const rt=await api.loadNikkiRuntime(n);assert.equal(rt.coreSeconds,804946);assert.equal(rt.serviceSeconds,24525);assert.equal(rt.measuredAt,now)
+    assert.ok(calls.every(x=>JSON.parse(x.init.body).params[2]!=='exec'));assert.deepEqual(calls.filter(x=>JSON.parse(x.init.body).params[1]==='file').map(x=>JSON.parse(x.init.body).params[3].path).sort(),['/proc/10883/comm','/proc/10883/stat','/proc/self/auxv','/proc/uptime','/proc/stat','/var/run/nikki/started.flag'].sort())
+    const full=responder
+    responder=(url,init)=>JSON.parse(init.body).params[2]==='stat'?{body:{result:[6]}}:full(url,init)
+    const flagDenied=await api.loadNikkiRuntime(n);assert.equal(flagDenied.coreSeconds,804946);assert.equal(flagDenied.serviceSeconds,null)
+    responder=(url,init)=>JSON.parse(init.body).params[3]?.path==='/proc/self/auxv'?{body:{result:[6]}}:full(url,init)
+    const coreDenied=await api.loadNikkiRuntime(n);assert.equal(coreDenied.coreSeconds,null);assert.equal(coreDenied.serviceSeconds,24525)
+    responder=full
     alive=false;assert.equal((await api.loadNikkiRuntime(n)).coreSeconds,null);denied=true;await assert.rejects(()=>api.loadNikkiRuntime(n));calls.length=0;await assert.rejects(()=>api.loadNikkiRuntime(c));assert.equal(calls.length,0)
     denied=false;alive=true
     const read=responder;responder=(url,init)=>url.endsWith('/ubus')?read(url,init):{body:url.endsWith('/version')?{version:'core-live'}:{mode:'rule'}}
     render(pages.MorePage,{active:n,onChanged(){}},true);await flush();let tree=render(pages.MorePage,{active:n,onChanged(){}});await flush()
-    assert.ok(text(tree).includes('9天 7时 35分 46秒'));assert.ok(text(tree).includes('Nikki 服务'))
+    assert.ok(text(tree).includes('9天 7时 35分 46秒'));assert.ok(text(tree).includes('Nikki 服务（运行时间：0天 6时 48分 45秒）'))
+    for(const icon of ['desktopcomputer','shippingbox']){
+      const row=nodes(tree,'HStack').find(x=>x.props.children?.some(y=>y?.type==='Image'&&y.props.systemName===icon))
+      assert.ok(row);assert.equal(row.props.alignment,'center');assert.ok(row.props.children.some(y=>y?.type==='VStack'&&text(y).includes('运行时间')))
+    }
     assert.ok(nodes(tree,'VStack').some(x=>x.props.background?.props?.fill==='secondarySystemBackground'))
     now+=5000;[...intervals.values()].find(x=>x.ms===1000).fn();tree=render(pages.MorePage,{active:n,onChanged(){}});assert.ok(text(tree).includes('9天 7时 35分 51秒'))
     tree.props.onDisappear();render(pages.MorePage,{active:n,onChanged(){}});await flush();assert.equal(intervals.size,0);unmount()
@@ -1401,7 +1417,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       const diagnostic = logs.filter(x => x.startsWith('[preferences-icon]'))
       for (const stage of ['change','accepted','proxies-render','group-render']) assert.ok(diagnostic.some(x => x.includes('stage=' + stage) && x.includes('enabled=false')))
       assert.ok(diagnostic.every(x => !x.includes('private.invalid') && !x.includes('private-group-name') && !x.includes('secret-')))
-      assert.ok(diagnostic.every(x => x.includes('build=1.5.123') && /instance=[a-z0-9]+/.test(x)))
+      assert.ok(diagnostic.every(x => x.includes('build=1.5.124') && /instance=[a-z0-9]+/.test(x)))
       assert.equal(new Set(diagnostic.map(x => x.match(/instance=([^ ]+)/)[1])).size, 1)
     } finally { context.console = originalConsole; unmount(); pref.savePreferences({ customIcons: true, testURL: 'https://www.gstatic.com/generate_204' }) }
   })

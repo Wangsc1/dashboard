@@ -1,6 +1,6 @@
 
 import { getPreferences, customHeaders, recordEvent, controllerHealth, feedback } from "./preferences"
-export const VERSION = "1.5.123"
+export const VERSION = "1.5.124"
 
 export type Kind = "clash" | "openwrt"
 export type Plugin = "openclash" | "nikki" | "mihomo"
@@ -613,22 +613,36 @@ export function linuxProcessSeconds(uptime: string, stat: string, ticks: number,
   const seconds=now-start/ticks
   return seconds>=0?Math.floor(seconds):null
 }
+// started.flag is touched by Nikki after service setup, independently of core restarts.
+// btime + uptime supplies remote UTC epoch seconds; ubus system.info.localtime is timezone-shifted.
+export function nikkiStartedSeconds(procStat: string, uptime: string, mtime: unknown): number | null {
+  const boot=Number(procStat.match(/^btime (\d+)$/m)?.[1]),up=Number(uptime.trim().split(/\s+/)[0])
+  if(!Number.isSafeInteger(boot)||boot<=0||!Number.isFinite(up)||up<0||typeof mtime!=="number"||!Number.isSafeInteger(mtime)||mtime<boot||mtime>boot+up)return null
+  return Math.floor(boot+up-mtime)
+}
 export interface NikkiRuntime { coreSeconds:number|null;serviceSeconds:number|null;measuredAt:number }
 export async function loadNikkiRuntime(c: Controller): Promise<NikkiRuntime> {
   requireNikki(c)
-  const unknown=()=>({coreSeconds:null,serviceSeconds:null,measuredAt:Date.now()})
+  const result:NikkiRuntime={coreSeconds:null,serviceSeconds:null,measuredAt:Date.now()}
   const services=await ubus(c,"service","list",{name:"nikki"})
   const instance:any=Object.values(services.nikki?.instances??{}).find((x:any)=>x.running===true&&Number.isInteger(x.pid)&&x.pid>0)
-  if(!instance)return unknown()
+  if(!instance)return result
   const pid=instance.pid
-  // Only fixed proc paths and this validated service PID are read; no shell commands.
-  const [aux,stat,uptime,comm]=await Promise.all([
-    ubus(c,"file","read",{path:"/proc/self/auxv",base64:true}),ubus(c,"file","read",{path:`/proc/${pid}/stat`}),
-    ubus(c,"file","read",{path:"/proc/uptime"}),ubus(c,"file","read",{path:`/proc/${pid}/comm`})])
-  const ticks=linuxClockTicks(String(aux.data??""))
-  if(ticks===null)return unknown()
-  const seconds=linuxProcessSeconds(String(uptime.data??""),String(stat.data??""),ticks,pid)
-  return {coreSeconds:String(comm.data??"").trim()==="mihomo"?seconds:null,serviceSeconds:seconds,measuredAt:Date.now()}
+  const uptime=await ubus(c,"file","read",{path:"/proc/uptime"})
+  await Promise.all([
+    (async()=>{try{
+      const [aux,stat,comm]=await Promise.all([
+        ubus(c,"file","read",{path:"/proc/self/auxv",base64:true}),ubus(c,"file","read",{path:`/proc/${pid}/stat`}),ubus(c,"file","read",{path:`/proc/${pid}/comm`})])
+      const ticks=linuxClockTicks(String(aux.data??""))
+      if(ticks!==null&&String(comm.data??"").trim()==="mihomo")result.coreSeconds=linuxProcessSeconds(String(uptime.data??""),String(stat.data??""),ticks,pid)
+    }catch{}})(),
+    (async()=>{try{
+      const [flag,stat]=await Promise.all([ubus(c,"file","stat",{path:"/var/run/nikki/started.flag"}),ubus(c,"file","read",{path:"/proc/stat"})])
+      if(flag.type==="file")result.serviceSeconds=nikkiStartedSeconds(String(stat.data??""),String(uptime.data??""),flag.mtime)
+    }catch{}})()
+  ])
+  result.measuredAt=Date.now()
+  return result
 }
 export async function nikkiService(c: Controller, action: "start"|"stop"|"restart"|"reload") { requireNikki(c); if (!["start","stop","restart","reload"].includes(action)) throw new Error("不支持的服务动作"); await ubus(c,"rc","init",{name:"nikki",action}) }
 export type CoreAction = "restart"|"reload"|"geo"|"dns"|"fakeip"

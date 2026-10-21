@@ -269,12 +269,10 @@ export function KernelConfigPage({ c }: { c: Controller }) {
           <HStack padding={{ vertical: 15 }}><Text>{title}</Text><Spacer />{(dirty.mode ?? cfg?.mode) === value ? <Image systemName="checkmark" font={18} foregroundStyle="systemBlue" /> : null}</HStack>
         </Button>
       </VStack>))}
-      <Text font={12} foregroundStyle="secondaryLabel" padding={{ horizontal: 14, bottom: 14 }}>{"规则：根据配置规则分流\n全局：所有流量走代理\n直连：所有流量直连"}{!provided("mode") ? " 当前控制器未提供模式。" : ""}</Text>
       {heading("端口配置")}
       {card(([ ["mixed-port", "混合端口"], ["port", "HTTP 端口"], ["socks-port", "SOCKS5 端口"], ["redir-port", "透明代理端口"], ["tproxy-port", "TProxy 端口"] ]).map(([key, title], i) => <VStack key={key} spacing={0}>
         {i ? separator() : null}<HStack padding={{ vertical: 10 }}><Text>{title}</Text><Spacer />{field(key, title)}</HStack>
       </VStack>))}
-      <Text font={12} foregroundStyle="secondaryLabel" padding={{ horizontal: 14, bottom: 14 }}>端口范围 0–65535，0 表示关闭；未提供的字段不会写回。</Text>
       {heading("网络设置")}
       {card(<>
         <HStack spacing={12} padding={{ vertical: 12 }}>{icon("wifi", "systemBlue")}{toggle("allow-lan", "允许局域网连接")}</HStack>
@@ -285,7 +283,6 @@ export function KernelConfigPage({ c }: { c: Controller }) {
       </>)}
       {heading("TUN 模式")}
       {card(<HStack spacing={12} padding={{ vertical: 12 }}>{icon("shield", "systemPurple")}{toggle("tun", "TUN 模式")}</HStack>)}
-      <Text font={12} foregroundStyle="secondaryLabel" padding={{horizontal:14,bottom:14}}>TUN 模式可实现透明代理，需要相应的系统权限。</Text>
       {heading("日志")}
       {card(<HStack spacing={12} padding={{ vertical: 12 }}>{icon("doc.text", "systemGray")}<Text>日志级别</Text><Spacer />
         <Menu disabled={busy || !provided("log-level")} label={<HStack spacing={6}><Text foregroundStyle="secondaryLabel">{({silent:"静默",error:"错误",warning:"警告",info:"信息",debug:"调试"} as Record<string,string>)[dirty["log-level"] ?? cfg?.["log-level"] ?? ""] ?? "未提供"}</Text><Image systemName="chevron.up.chevron.down" font={12} foregroundStyle="secondaryLabel" /></HStack>}>
