@@ -75,22 +75,25 @@ export function GroupSection({c,g,onChanged,expanded=false}:{c:Controller;g:Grou
   </Card>
 }
 const PROXY_MODE_OPTIONS = [["rule","规则模式"],["direct","直连模式"],["global","全局模式"]] as const
+const PROXY_MODE_NONE="__none__"
 // Memory-only last confirmed core mode per source; never persisted or shared across sources.
 const proxyModeCache=new Map<string,string>()
+export const proxyModeCacheForTest=(c:Controller)=>proxyModeCache.get(sourceKey(c))
 export function ProxyModeControl({c,enabled,version,onMode}:{c:Controller;enabled:boolean;version:number;onMode?:(mode:string|null)=>void}) {
-  type Session = {source:string;cacheKey:string;controller:Controller;alive:boolean;visible:boolean;mode:string|null;loading:boolean;busy:boolean;error:string;read:number}
+  type Session = {source:string;cacheKey:string;controller:Controller;alive:boolean;visible:boolean;mode:string|null;pending:string|null;loading:boolean;busy:boolean;error:string;read:number}
   const [holder]=useState<{current:Session|null}>({current:null}),[,redraw]=useState(0)
   const source=JSON.stringify(c)
-  if(holder.current?.source!==source){const cacheKey=sourceKey(c),known=proxyModeCache.get(cacheKey)??null;holder.current={source,cacheKey,controller:{...c},alive:true,visible:enabled,mode:known,loading:enabled&&!known,busy:false,error:"",read:0}}
+  if(holder.current?.source!==source){const cacheKey=sourceKey(c),known=proxyModeCache.get(cacheKey)??null;holder.current={source,cacheKey,controller:{...c},alive:true,visible:enabled,mode:known,pending:null,loading:enabled&&!known,busy:false,error:"",read:0}}
   const session=holder.current!
   if(session.visible!==enabled){session.visible=enabled;session.read++;if(!session.busy){session.mode=proxyModeCache.get(session.cacheKey)??null;session.loading=enabled&&!session.mode}}
   const current=()=>session.alive&&session.visible&&holder.current===session
   const paint=()=>{if(current())redraw(n=>n+1)}
-  async function readMode(message="",retainMessage=false,silent=false) {
+  // initial: unknown until read. silent: keep a known value and hide failures.
+  // verify: keep the Picker mounted while confirming a write, but clear if it cannot be confirmed.
+  async function readMode(message="",retainMessage=false,kind:"initial"|"silent"|"verify"="initial") {
     if(!current())return
-    const read=++session.read,quiet=silent&&!!session.mode
-    // Quiet refresh keeps the last confirmed mode visible; every other read starts from unknown.
-    if(!quiet){session.mode=null;proxyModeCache.delete(session.cacheKey);session.loading=true;session.error="";paint()}
+    const read=++session.read,keepVisible=kind==="verify"||(kind==="silent"&&!!session.mode),quiet=kind==="silent"&&!!session.mode
+    if(!keepVisible){session.mode=null;proxyModeCache.delete(session.cacheKey);session.loading=true;session.error="";paint()}
     try {
       const cfg=await loadConfig(session.controller)
       if(!current()||read!==session.read)return
@@ -103,23 +106,24 @@ export function ProxyModeControl({c,enabled,version,onMode}:{c:Controller;enable
   // Report only read-back confirmed modes; unknown/loading/failed states report null.
   useEffect(()=>{if(current())onMode?.(session.mode)},[session,session.mode,enabled])
   useEffect(()=>()=>{session.alive=false;session.read++},[session])
-  useEffect(()=>{if(enabled&&!session.busy)void readMode("",false,true)},[session,enabled,version])
+  useEffect(()=>{if(enabled&&!session.busy)void readMode("",false,"silent")},[session,enabled,version])
   async function change(value:string) {
     if(!current()||session.busy||session.loading||!session.mode||value===session.mode||!PROXY_MODE_OPTIONS.some(([mode])=>mode===value))return
     // Lock synchronously; stale callbacks cannot queue a second PATCH or use a new source.
-    session.busy=true;session.error="";proxyModeCache.delete(session.cacheKey);paint()
+    // Keep the confirmed value/cache and Picker mounted; only the displayed target is optimistic.
+    session.busy=true;session.pending=value;session.error="";paint()
     try {
       try {await setControllerMode(session.controller,value)}
-      catch {await readMode("代理模式切换失败，已尝试重新读取当前模式",true);return}
-      await readMode("切换请求已发送")
+      catch {await readMode("代理模式切换失败，已尝试重新读取当前模式",true,"verify");return}
+      await readMode("切换请求已发送",false,"verify")
       if(current()&&session.mode===value)session.error=""
       else if(current()&&session.mode)session.error="内核当前模式与请求不一致，已显示实际模式。"
-    } finally {session.busy=false;paint()}
+    } finally {session.busy=false;session.pending=null;paint()}
   }
   return <VStack alignment="leading" spacing={10} frame={{maxWidth:"infinity"}}>
     <HStack><Text font={20} fontWeight="bold" padding={{top:6}}>代理模式</Text><Spacer/></HStack>
-    {session.mode?<Picker title="代理模式" pickerStyle="segmented" value={session.mode} disabled={!enabled||session.busy||session.loading} onChanged={change}>{PROXY_MODE_OPTIONS.map(([value,title])=><Text key={value} tag={value}>{title}</Text>)}</Picker>:null}
-    {session.loading&&!session.busy?<HStack><ProgressView/><Hint>正在读取代理模式…</Hint></HStack>:null}
+    {/* Always mounted so layout never jumps; unknown mode uses a tag that matches no segment (no highlight) and is disabled. */}
+    <Picker title="代理模式" pickerStyle="segmented" value={session.pending??session.mode??PROXY_MODE_NONE} disabled={!enabled||session.busy||session.loading||!session.mode} onChanged={change}>{PROXY_MODE_OPTIONS.map(([value,title])=><Text key={value} tag={value}>{title}</Text>)}</Picker>
     {session.error?<Text font={12} foregroundStyle="systemRed">{session.error}</Text>:null}
     {!session.loading&&!session.busy&&!session.mode?<Button title="重试读取代理模式" disabled={!enabled} action={()=>readMode()}/>:null}
   </VStack>
