@@ -579,7 +579,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) { const lazy = ['proxies','rules','connections'].includes(ids[i]) && ids[i] !== id; assert.equal(nodes(tree, types[i]).length, lazy ? 0 : 1); if (!lazy) assert.equal(nodes(tree, types[i])[0].props.selected, ids[i] === id) }
     }
-    assert.equal(api.VERSION, '1.5.151'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.5.152'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('独立导航栈保留业务owner和身份，只有选中页提供可见工具栏', () => {
     pref.savePreferences({ defaultPage: 'overview' })
@@ -1307,15 +1307,27 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationLink').length, 0)
       const head = nodes(tree, 'Button').find(n => n.props.frame?.alignment === 'leading')
       assert.ok(head); assert.ok(text(head).includes(name)); assert.ok(text(head).includes('A'))
-      const foldedArrow=nodes(tree,'Image').find(n=>n.props.systemName==='chevron.right');assert.ok(foldedArrow);assert.equal(foldedArrow.props.contentTransition,'symbolEffectReplace');assert.equal(foldedArrow.props.animation.value,false)
+      const foldedArrow=nodes(tree,pages.GroupChevron)[0];assert.ok(foldedArrow);assert.equal(foldedArrow.props.expanded,false)
       head.props.action(); tree = render(pages.GroupSection, props); await flush()
-      const expandedArrow=nodes(tree,'Image').find(n=>n.props.systemName==='chevron.down');assert.ok(expandedArrow);assert.equal(expandedArrow.props.contentTransition,'symbolEffectReplace');assert.equal(expandedArrow.props.animation.value,true)
+      const expandedArrow=nodes(tree,pages.GroupChevron)[0];assert.ok(expandedArrow);assert.equal(expandedArrow.props.expanded,true)
       nodes(tree, 'Button').find(n => n.props.frame?.alignment === 'leading').props.action(); tree = render(pages.GroupSection, props); await flush()
       assert.equal(nodes(tree, 'Button').filter(n => n.props.systemImage === 'bolt.fill').length, 1)
       unmount(); tree = render(pages.GroupSection, props, true); assert.equal(nodes(tree, pages.GroupIcon).length, 0); await flush()
       pref.savePreferences({ customIcons: true }); tree = render(pages.GroupSection, props); assert.equal(nodes(tree, pages.GroupIcon).length, 1)
       unmount()
     }
+  })
+  await test('策略组保留完整交互，不调用动画工厂、旋转修饰符或状态包装器',()=>{
+    const src=fs.readFileSync(path.join(root,'dashboard-pages.tsx'),'utf8'),group=src.slice(src.indexOf('export function GroupChevron'),src.indexOf('const PROXY_MODE_OPTIONS'));
+    assert.ok(!/Animation\.|rotationEffect|animation=|withAnimation|Transition\.move|setInterval|setTimeout|<SVG/.test(group));
+    const props={c,g:{name:'compat-group',type:'Selector',all:['A'],now:'A',delays:{A:10}},onChanged(){}};
+    for(const expanded of [false,true]){const tree=render(pages.GroupSection,{...props,expanded},true);assert.ok(text(tree).includes('compat-group'));assert.equal(nodes(tree,pages.GroupChevron)[0].props.expanded,expanded);assert.equal(nodes(tree,'Button').filter(b=>b.props.systemImage==='bolt.fill').length,1);unmount()}
+  })
+  await test('箭头采用官方原生符号内容过渡，无逐帧计时器且两个方向均可渲染',async()=>{
+    const baseline=intervals.size;
+    let tree=render(pages.GroupChevron,{expanded:false},true);await flush();let image=nodes(tree,'Image')[0];assert.ok(image);assert.equal(image.props.systemName,'chevron.right');assert.equal(image.props.contentTransition,'symbolEffect');assert.equal(image.props.animation,undefined);assert.equal(image.props.rotationEffect,undefined);assert.equal(image.props.font,12);assert.equal(image.props.frame.width,28);assert.equal(intervals.size,baseline);
+    for(const expanded of [true,false,true,false]){tree=render(pages.GroupChevron,{expanded});await flush();image=nodes(tree,'Image')[0];assert.equal(image.props.systemName,expanded?'chevron.down':'chevron.right');assert.equal(image.props.contentTransition,'symbolEffect');assert.equal(intervals.size,baseline)}
+    assert.equal(nodes(tree,'SVG').length,0);unmount();assert.equal(intervals.size,baseline);
   })
   await test('策略组小闪电直接测速，不弹确认', async () => {
     const g = { name: 'BoltGroup', type: 'Selector', all: ['A'], now: 'A', delays: {} }
@@ -1351,7 +1363,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     assert.equal(cards(tree).length, 0)
     nodes(tree, 'Button').find(n => n.props.frame?.alignment === 'leading').props.action(); tree = render(pages.GroupSection, props); await flush()
     assert.equal(cards(tree).length, 2); assert.ok(text(tree).includes('Shadowsocks')); assert.ok(text(tree).includes('Snell'))
-    const arrow = t => nodes(t, 'Button').find(n => !n.props.frame && n.props.buttonStyle === 'plain' && nodes(n, 'Image').some(i => i.props.systemName.startsWith('chevron.')))
+    const arrow = t => nodes(t, 'Button').find(n => !n.props.frame && n.props.buttonStyle === 'plain' && nodes(n,pages.GroupChevron).length===1)
     arrow(tree).props.action(); tree = render(pages.GroupSection, props); await flush(); assert.equal(cards(tree).length, 0)
     arrow(tree).props.action(); tree = render(pages.GroupSection, props); await flush(); assert.equal(cards(tree).length, 2)
     responder = u => ({ body: { delay: u.includes('/proxies/A/') ? 51 : 62 } })
@@ -1559,7 +1571,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       const diagnostic = logs.filter(x => x.startsWith('[preferences-icon]'))
       for (const stage of ['change','accepted','proxies-render','group-render']) assert.ok(diagnostic.some(x => x.includes('stage=' + stage) && x.includes('enabled=false')))
       assert.ok(diagnostic.every(x => !x.includes('private.invalid') && !x.includes('private-group-name') && !x.includes('secret-')))
-      assert.ok(diagnostic.every(x => x.includes('build=1.5.151') && /instance=[a-z0-9]+/.test(x)))
+      assert.ok(diagnostic.every(x => x.includes('build=1.5.152') && /instance=[a-z0-9]+/.test(x)))
       assert.equal(new Set(diagnostic.map(x => x.match(/instance=([^ ]+)/)[1])).size, 1)
     } finally { context.console = originalConsole; unmount(); pref.savePreferences({ customIcons: true, testURL: 'https://www.gstatic.com/generate_204' }) }
   })
@@ -1572,9 +1584,9 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     assert.equal(nodes(tree, pages.GroupIcon).length, 1)
     pref.savePreferences({ customIcons: false }); tree = render(pages.GroupSection, props); await flush()
     assert.equal(nodes(tree, pages.GroupIcon).length, 0)
-    assert.ok(nodes(tree, 'Image').some(n => n.props.systemName === 'chevron.down')); assert.ok(text(tree).includes('42ms'))
+    assert.ok(nodes(tree,pages.GroupChevron).some(n=>n.props.expanded===true)); assert.ok(text(tree).includes('42ms'))
     pref.savePreferences({ customIcons: true }); tree = render(pages.GroupSection, props); await flush()
-    assert.equal(nodes(tree, pages.GroupIcon).length, 1); assert.ok(nodes(tree, 'Image').some(n => n.props.systemName === 'chevron.down'))
+    assert.equal(nodes(tree, pages.GroupIcon).length, 1); assert.ok(nodes(tree,pages.GroupChevron).some(n=>n.props.expanded===true))
     unmount(); pref.savePreferences({ collapseGesture: false })
   })
   await test('更多从预挂载未选中切到选中，无需onAppear或进入子页就启动读取，隐藏即停',async()=>{
