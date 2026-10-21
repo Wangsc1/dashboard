@@ -1,6 +1,6 @@
 
 import { getPreferences, customHeaders, recordEvent, controllerHealth, feedback } from "./preferences"
-export const VERSION = "1.5.46"
+export const VERSION = "1.5.47"
 
 export type Kind = "clash" | "openwrt"
 export type Plugin = "openclash" | "nikki" | "mihomo"
@@ -507,12 +507,12 @@ export function fmtUptime(sec: number, detailed = false): string {
   return d ? `${d}天${h}时` : h ? `${h}时${m}分` : `${m}分`
 }
 
-export function fmtParts(n: number, perSec = false): [string, string] {
+export function fmtParts(n: number, perSec = false, decimals?: number): [string, string] {
   const v = Math.max(0, n || 0)
   const u = ["B", "KB", "MB", "GB", "TB"]
   let i = perSec ? 1 : 0, x = perSec ? v / 1024 : v
   while (x >= 1024 && i < u.length - 1) { x /= 1024; i++ }
-  return [i === 0 ? x.toFixed(0) : x.toFixed(perSec && i === 1 ? 1 : 2), u[i] + (perSec ? "/s" : "")]
+  return [x.toFixed(decimals ?? (i === 0 ? 0 : perSec && i === 1 ? 1 : 2)), u[i] + (perSec ? "/s" : "")]
 }
 export const fmtSpeed = (n: number) => fmtBytes(n) + "/s"
 export function fmtDuration(startMs: number): string {

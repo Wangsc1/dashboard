@@ -221,7 +221,7 @@ function OverviewPage({ active, version, onSwitch, onClose }: { active: Controll
       </HStack>
       <HStack spacing={12}>
         <StatCard enabled={showCharts} icon="link" color="#A855F7" title="活动连接" connectionHosts={hosts} parts={ov ? [String(ov.connCount), ""] : null} />
-        <StatCard enabled={showCharts} icon="square.stack.3d.up.fill" color="#F59E0B" title="内存使用" parts={w ? fmtParts(memUsed) : null} />
+        <StatCard enabled={showCharts} icon="square.stack.3d.up.fill" color="#F59E0B" title="内存使用" parts={w ? fmtParts(memUsed, false, 1) : null} />
       </HStack>
 
       <RateChart down={dn} up={upH} enabled={showCharts} />

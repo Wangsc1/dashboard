@@ -259,7 +259,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) assert.equal(nodes(tree, types[i]).length, ids[i] === id ? 1 : 0)
     }
-    assert.equal(api.VERSION, '1.5.46'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.5.47'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('1.5.46 共享栈/简单ToolBarProps：唯一业务页owner、隐藏Tab无注册', () => {
     pref.savePreferences({ defaultPage: 'overview' })
@@ -631,6 +631,13 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     unmount(); pref.savePreferences({ showWrt: true })
     const src = fs.readFileSync(path.join(root, 'settings-ui.tsx'), 'utf8'), body = src.slice(src.indexOf('export function AppearancePage'), src.indexOf('function HeaderFields'))
     assert.ok(!body.includes('编辑组图标')); assert.ok(!body.includes('IconsPage')); assert.ok(body.includes('自定义代理组图标'))
+  })
+  await test('主页内存固定一位小数，流量默认精度不变', () => {
+    assert.deepEqual(Array.from(api.fmtParts(128.56 * 1048576, false, 1)), ['128.6', 'MB'])
+    assert.deepEqual(Array.from(api.fmtParts(128 * 1048576, false, 1)), ['128.0', 'MB'])
+    assert.deepEqual(Array.from(api.fmtParts(1.25 * 1073741824, false, 1)), ['1.3', 'GB'])
+    assert.deepEqual(Array.from(api.fmtParts(128 * 1048576)), ['128.00', 'MB'])
+    assert.ok(fs.readFileSync(path.join(root, 'index.tsx'), 'utf8').includes('title="内存使用" parts={w ? fmtParts(memUsed, false, 1) : null}'))
   })
   await test('首页关键行为（速度图表、数字动画）', () => {
     const source=fs.readFileSync(path.join(root,'index.tsx'),'utf8')
