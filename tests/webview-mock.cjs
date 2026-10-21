@@ -10,16 +10,19 @@ class Element {
   setRangeText(text,start,end){this.value=this.value.slice(0,start)+text+this.value.slice(end);this.selectionStart=this.selectionEnd=start+text.length}
 }
 class MockWebViewController {
-  constructor(options){this.options=options;this.handlers={};this.disposed=false;this.pendingMessages=[];this.deferMessages=false;this.loads=0}
+  constructor(options){this.options=options;this.handlers={};this.disposed=false;this.pendingMessages=[];this.deferMessages=false;this.loads=0;this.loadMode=MockWebViewController.loadMode;this.initialization=MockWebViewController.initialization}
   async addScriptMessageHandler(name,fn){this.handlers[name]=fn}
   async loadHTML(html){
     this.loads++;this.html=html
     const elements={body:new Element(true),numbers:new Element(),gutter:new Element()}
     const document={getElementById:id=>elements[id],documentElement:{dataset:{}}}
-    const window={webkit:{messageHandlers:new Proxy({}, {get:(_target,name)=>({postMessage:message=>{if(this.deferMessages&&name==='editorChanged'){this.pendingMessages.push([name,message]);return}return this.handlers[name]?.(message)}})})}}
+    const window={webkit:{messageHandlers:new Proxy({}, {get:(_target,name)=>({postMessage:message=>{if(name==='editorReady'&&this.initialization==='silent')return undefined;if(this.deferMessages&&name==='editorChanged'){this.pendingMessages.push([name,message]);return}return this.handlers[name]?.(message)}})})}}
     this.page={document,window,elements};this.vm=vm.createContext({document,window})
     const script=html.match(/<script>([\s\S]*?)<\/script>/)[1]
-    vm.runInContext(script,this.vm)
+    this.runDocument=()=>vm.runInContext(script,this.vm)
+    if(this.loadMode==='beforeDocument')return true
+    this.runDocument()
+    if(this.loadMode==='pendingAfterDocument')return new Promise(()=>{})
     return true
   }
   async evaluateJavaScript(code){if(this.disposed||!this.vm)throw Error('no local document');return vm.runInContext(this.evaluationMode==='expression'?code:'(function(){'+code+'\n})()',this.vm)}

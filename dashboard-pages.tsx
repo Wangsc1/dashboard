@@ -40,11 +40,13 @@ async function updateAllProviders(c:Controller,kind:"proxies"|"rules",ps:Provide
   await attempt(async()=>{const rs=await Promise.allSettled(list.map(x=>updateProvider(c,kind,x.name)));done();if(rs.some(r=>r.status==="rejected"))throw new Error("partial")})
   done()
 }
+// Same visual label for provider and Nikki refresh actions; color stays caller-owned.
+function providerRefreshLabel(busy:boolean,color:string="systemBlue") {return busy?<ProgressView progressViewStyle="circular" frame={{width:34,height:34}} background={<Circle fill="tertiarySystemFill"/>}/>:<Image systemName="arrow.triangle.2.circlepath" font={14} foregroundStyle={color} frame={{width:34,height:34}} background={<Circle fill="tertiarySystemFill"/>}/>}
 export function ProviderCard({c,p,kind,onChanged}:{c:Controller;p:Provider;kind:"proxies"|"rules";onChanged:()=>void}) {
   const [busy,setBusy]=useState(false),[guard]=useState({alive:true});useEffect(()=>()=>{guard.alive=false},[])
   const refreshable=["http","file"].includes(p.vehicleType.toLowerCase()), label=p.vehicleType.toLowerCase()==="http"?"远程订阅":p.vehicleType
   const ago=(t:string)=>{const m=Math.max(0,Math.floor((Date.now()-Date.parse(t))/60000));return m<1?"刚刚":m<60?`${m}分钟前`:m<1440?`${Math.floor(m/60)}小时前`:`${Math.floor(m/1440)}天前`}
-  return <Card><HStack alignment="top"><VStack alignment="leading" spacing={8}><Text font={16} fontWeight="semibold">{p.name}</Text><HStack spacing={12}><HStack spacing={4}><Image systemName="cloud.fill" font={12} foregroundStyle="secondaryLabel"/><Text font={12} foregroundStyle="secondaryLabel">{kind==="rules"&&p.behavior?`${label} · ${p.behavior}`:label}</Text></HStack><HStack spacing={4}><Image systemName="square.stack.3d.up" font={12} foregroundStyle="secondaryLabel"/><Text font={12} foregroundStyle="secondaryLabel">{p.count===null?"数量未提供":`${p.count} ${kind==="proxies"?"节点":"条规则"}`}</Text></HStack></HStack></VStack><Spacer/><VStack alignment="trailing" spacing={8}><Button disabled={busy || !refreshable} buttonStyle="plain" action={async()=>{if(busy)return;setBusy(true);await attempt(async()=>{await updateProvider(c,kind,p.name);if(guard.alive)onChanged()});if(guard.alive)setBusy(false)}}>{busy?<ProgressView progressViewStyle="circular" frame={{width:34,height:34}} background={<Circle fill="tertiarySystemFill"/>}/>:<Image systemName="arrow.triangle.2.circlepath" font={14} foregroundStyle="systemBlue" frame={{width:34,height:34}} background={<Circle fill="tertiarySystemFill"/>}/>}</Button><Text font={11} foregroundStyle="secondaryLabel">{p.updatedAt?`更新于 ${ago(p.updatedAt)}`:"更新时间未提供"}</Text></VStack></HStack>{!refreshable?<Hint>内联/兼容提供者不提供可下载订阅，更新不可用。</Hint>:null}</Card>
+  return <Card><HStack alignment="top"><VStack alignment="leading" spacing={8}><Text font={16} fontWeight="semibold">{p.name}</Text><HStack spacing={12}><HStack spacing={4}><Image systemName="cloud.fill" font={12} foregroundStyle="secondaryLabel"/><Text font={12} foregroundStyle="secondaryLabel">{kind==="rules"&&p.behavior?`${label} · ${p.behavior}`:label}</Text></HStack><HStack spacing={4}><Image systemName="square.stack.3d.up" font={12} foregroundStyle="secondaryLabel"/><Text font={12} foregroundStyle="secondaryLabel">{p.count===null?"数量未提供":`${p.count} ${kind==="proxies"?"节点":"条规则"}`}</Text></HStack></HStack></VStack><Spacer/><VStack alignment="trailing" spacing={8}><Button disabled={busy || !refreshable} buttonStyle="plain" action={async()=>{if(busy)return;setBusy(true);await attempt(async()=>{await updateProvider(c,kind,p.name);if(guard.alive)onChanged()});if(guard.alive)setBusy(false)}}>{providerRefreshLabel(busy)}</Button><Text font={11} foregroundStyle="secondaryLabel">{p.updatedAt?`更新于 ${ago(p.updatedAt)}`:"更新时间未提供"}</Text></VStack></HStack>{!refreshable?<Hint>内联/兼容提供者不提供可下载订阅，更新不可用。</Hint>:null}</Card>
 }
 const testedDelays=new Map<string,Record<string,number>>(),testedNodes=new Map<string,number>(),probing=new Set<string>()
 export function GroupSection({c,g,onChanged,expanded=false}:{c:Controller;g:Group;onChanged:()=>void;expanded?:boolean}) {
@@ -280,11 +282,11 @@ export function NikkiManagementPage({c,kind}:{c:Controller;kind:"profile"|"subsc
         {data&&kind==="rule"?<>
           {data.rules.length===0?<VStack spacing={14} frame={{maxWidth:"infinity",minHeight:360}}><Image systemName="text.badge.plus" font={56} foregroundStyle="secondaryLabel"/><Text font="title2" fontWeight="bold">没有规则</Text><Note>点击右上角菜单添加规则</Note></VStack>:<><Note>{`总开关：${data.appendRules?"启用":"禁用"} · 提交可能自动重载 Nikki 服务`}</Note>{data.rules.map(r=><Panel key={r.id}><HStack><Text fontWeight="semibold">{r.type}</Text><Spacer/><Badge>{r.enabled?"启用":"禁用"}</Badge></HStack><Text>{r.matcher||"所有请求"}</Text><Note>{`${r.node}${r.noResolve?" · no-resolve":""}`}</Note><HStack><Button title="编辑" disabled={work.busy} action={()=>openEdit({kind:"rule",value:r})}/><Spacer/><Button title="删除规则" systemImage="trash" role="destructive" disabled={work.busy} action={()=>work.run(()=>work.commitConfirm(`删除规则「${r.type} · ${r.matcher}」？`,async()=>{await deleteNikkiRule(work.owner,data,r.id);if(work.current())refresh()}))}/></HStack></Panel>)}</>}
         </>:null}
-        {data&&kind==="subscription"?<>{data.subscriptions.length===0?<Note>暂无订阅，请点击右上角 + 添加</Note>:data.subscriptions.map(s=>subscriptionCard({s,busy:work.busy,edit:()=>openEdit({kind:"subscription",value:s}),update:()=>update(s),remove:()=>removeSubscription(s)}))}<Button title="刷新" disabled={work.busy} action={refresh}/><Note>新增后可更新订阅。设置提交可能自动重载 Nikki，远程优先订阅可能在重载时下载；提交前会再次确认。</Note></>:null}
+        {data&&kind==="subscription"?<>{data.subscriptions.length===0?<Note>暂无订阅，请点击右上角 + 添加</Note>:data.subscriptions.map(s=>subscriptionCard({s,busy:work.busy,edit:()=>openEdit({kind:"subscription",value:s}),update:()=>update(s),remove:()=>removeSubscription(s)}))}<HStack><Spacer/><Button title="刷新" buttonStyle="plain" disabled={work.busy} action={refresh}>{providerRefreshLabel(false,"label")}</Button></HStack><Note>新增后可更新订阅。设置提交可能自动重载 Nikki，远程优先订阅可能在重载时下载；提交前会再次确认。</Note></>:null}
         {data&&kind==="profile"?<>
           <Note>左右滑动切换，点击卡片启用</Note>
           {data.filesError?<Note error>部分目录无读取权限，文件列表或元信息可能不完整。</Note>:null}
-          {data.files.length===0?<Note>没有配置文件，请先在订阅管理添加并更新订阅，或通过原有设备文件管理上传本地配置。</Note>:<TabView tabViewStyle="page" frame={{height:370}}>{data.files.map(f=><VStack key={f.key} padding={{horizontal:6,vertical:12}}><Panel><Button buttonStyle="plain" disabled={work.busy} action={()=>enable(f)}><VStack alignment="leading" spacing={18} frame={{maxWidth:"infinity",minHeight:200,alignment:"leading"}}><HStack><Badge>{f.origin==="subscription"?"订阅":"本地"}</Badge><Spacer/>{data.profile===f.key?<Image systemName="checkmark.circle.fill" foregroundStyle="systemGreen"/>:null}</HStack><Text font="title2" fontWeight="bold" lineLimit={2}>{f.name}</Text><Note>{data.profile===f.key?"当前选用":"点击启用"}</Note><Note>{`更新于 ${f.mtime&&f.mtime>0?new Date(f.mtime*1000).toLocaleString():"未提供"}`}</Note><Note>{f.size===null?"文件大小未提供（可能尚未下载）":fmtBytes(f.size)}</Note></VStack></Button><Button title="编辑" systemImage="square.and.pencil" disabled={work.busy||f.size===null} action={()=>openEdit({kind:"file",value:f})}/></Panel></VStack>)}</TabView>}
+          {data.files.length===0?<Note>没有配置文件，请先在订阅管理添加并更新订阅，或通过原有设备文件管理上传本地配置。</Note>:<TabView tabViewStyle="page" frame={{height:370}}>{data.files.map(f=><VStack key={f.key} padding={{horizontal:6,vertical:12}}><Panel><Button buttonStyle="plain" disabled={work.busy} action={()=>enable(f)}><VStack alignment="leading" spacing={18} frame={{maxWidth:"infinity",minHeight:200,alignment:"leading"}}><HStack><Badge>{f.origin==="subscription"?"订阅":"本地"}</Badge><Spacer/>{data.profile===f.key?<Image systemName="checkmark.circle.fill" foregroundStyle="systemGreen"/>:null}</HStack><Text font="title2" fontWeight="bold" lineLimit={2}>{f.name}</Text><Note>{data.profile===f.key?"当前选用":"点击启用"}</Note><Note>{`更新于 ${f.mtime&&f.mtime>0?new Date(f.mtime*1000).toLocaleString():"未提供"}`}</Note><Note>{f.size===null?"文件大小未提供（可能尚未下载）":fmtBytes(f.size)}</Note></VStack></Button><Button title="编辑" systemImage="pencil" buttonStyle="plain" disabled={work.busy||f.size===null} action={()=>openEdit({kind:"file",value:f})}>{nikkiEditLabel()}</Button></Panel></VStack>)}</TabView>}
           <Note>勾选来自 Nikki 已保存的配置选择，不代表已核验内核运行配置。列表不读取配置正文。</Note>
         </>:null}
       </>}
@@ -308,17 +310,18 @@ export function nikkiRelativeUpdate(value:string,now=Date.now()):string {
   if(seconds<86400)return Math.floor(seconds/3600)+"小时前"
   return Math.floor(seconds/86400)+"天前"
 }
+function nikkiEditLabel() {return <HStack spacing={5} padding={{horizontal:10,vertical:7}} foregroundStyle="label" background={<RoundedRectangle cornerRadius={8} fill="tertiarySystemFill"/>}><Image systemName="pencil" font={13}/><Text font={13}>编辑</Text></HStack>}
 function subscriptionCard({s,busy,edit,update,remove}:{s:NikkiSubscription;busy:boolean;edit:()=>void;update:()=>void;remove:()=>void}) {
-  const buttonBackground=()=> <RoundedRectangle cornerRadius={11} fill="tertiarySystemBackground" stroke={{shapeStyle:{light:"#D8D8DD",dark:"#48484D"},strokeStyle:{lineWidth:1}}}/>
   return <Panel key={s.id}>
     <HStack spacing={5} padding={{horizontal:8,vertical:5}} background={<RoundedRectangle cornerRadius={7} fill="tertiarySystemBackground"/>}><Image systemName="link" font={12}/><Text font={12}>订阅</Text></HStack>
     <Text font={24} fontWeight="bold" lineLimit={2}>{s.name}</Text>
     <Text font={13} foregroundStyle="secondaryLabel" lineLimit={1}>{s.url||"未设置URL"}</Text>
     <HStack spacing={6} foregroundStyle="secondaryLabel"><Image systemName="clock" font={12}/><Text font={12}>{`更新: ${nikkiRelativeUpdate(s.updated)}`}</Text></HStack>
     <HStack spacing={10}>
-      <Button title="编辑" systemImage="pencil" buttonStyle="plain" foregroundStyle="label" frame={{maxWidth:"infinity",height:46}} background={buttonBackground()} disabled={busy} action={edit}/>
-      <Button title="更新订阅" systemImage="arrow.clockwise" labelStyle="iconOnly" buttonStyle="plain" foregroundStyle="label" frame={{width:46,height:46}} background={buttonBackground()} disabled={busy} action={update}/>
-      <Button title="删除订阅" systemImage="trash" labelStyle="iconOnly" buttonStyle="plain" foregroundStyle="label" frame={{width:46,height:46}} background={buttonBackground()} disabled={busy} action={remove}/>
+      <Button title="编辑" systemImage="pencil" buttonStyle="plain" disabled={busy} action={edit}>{nikkiEditLabel()}</Button>
+      <Spacer/>
+      <Button title="更新订阅" buttonStyle="plain" disabled={busy} action={update}>{providerRefreshLabel(busy,"label")}</Button>
+      <Button title="删除订阅" buttonStyle="plain" disabled={busy} action={remove}><Image systemName="trash" font={14} foregroundStyle="label" frame={{width:34,height:34}} background={<Circle fill="tertiarySystemFill"/>}/></Button>
     </HStack>
   </Panel>
 }
@@ -369,8 +372,8 @@ export function reconcileNikkiText(previous:string,input:string):string {
   const newline=previous.match(/\r\n|\r|\n/)?.[0]??"\n"
   return previous.slice(0,rawOffset(start))+next.slice(start,next.length-end).replace(/\n/g,newline)+previous.slice(rawOffset(normalized.length-end))
 }
-export function nikkiEditorHTML():string {
-  // Static, self-contained document. Config text is injected as a JS string only after load,
+export function nikkiEditorHTML(generation=0):string {
+  // Static, self-contained document. Config text arrives through the ready-message reply,
   // never interpolated into HTML, URLs, persistent storage, logs, or an external editor.
   return `<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'none'; form-action 'none'; base-uri 'none'"><style>
 :root{color-scheme:light dark;--bg:#fff;--fg:#252529;--gutter:#f2f2f7;--muted:#787880;--border:#dedee3}
@@ -400,39 +403,65 @@ export function nikkiEditorHTML():string {
     unlock:function(){body.readOnly=false;}
   };
   lines();
+  // The page itself confirms script readiness. Do not infer DOM readiness from loadHTML.
+  Promise.resolve(window.webkit.messageHandlers.editorReady.postMessage({generation:${generation}})).then(function(initial){
+    if(!initial||initial.generation!==${generation})return;
+    window.nikkiEditor.setText(initial.text,initial.generation,initial.theme);
+    window.webkit.messageHandlers.editorInitialized.postMessage({generation:initial.generation});
+  }).catch(function(){window.webkit.messageHandlers.editorInitError.postMessage({generation:${generation}});});
 })();
 </script></body></html>`
 }
 export function NikkiFileEditor({c,base,file,done,entryKey="direct"}:{c:Controller;base:NikkiManagement;file:NikkiFile;done:(saved?:boolean)=>void;entryKey?:string}) {
-  const work=useWork(c),p=usePreferences(["theme"]),[original,setOriginal]=useState<string|null>(null),[text,setText]=useState(""),[loadError,setLoadError]=useState(""),[tick,setTick]=useState(0),[ready,setReady]=useState(false)
-  const [host]=useState(()=>({controller:new WebViewController({ephemeral:true}),alive:true,generation:0,revision:0,theme:p.theme,registration:null as Promise<unknown>|null,snapshotRequest:0,snapshot:null as null|((value:{text:string;revision:number;generation:number})=>void)}))
+  const work=useWork(c),p=usePreferences(["theme"]),[original,setOriginal]=useState<string|null>(null),[text,setText]=useState(""),[loadError,setLoadError]=useState(""),[tick,setTick]=useState(0),[ready,setReady]=useState(false),[appeared,setAppeared]=useState(false)
+  const [host]=useState(()=>({controller:new WebViewController({ephemeral:true}),alive:true,generation:0,revision:0,theme:p.theme,registration:null as Promise<unknown>|null,initial:null as null|{text:string;generation:number;theme:string},initialized:null as null|((error?:string)=>void),snapshotRequest:0,snapshot:null as null|((value:{text:string;revision:number;generation:number})=>void)}))
   host.theme=p.theme
   const sameSource=()=>host.alive&&work.guard.alive&&work.guard.source===source(work.owner)
   useEffect(()=>{
     host.alive=true
-    host.controller.shouldAllowRequest=async request=>request.url==="about:blank"
-    host.registration=Promise.all([host.controller.addScriptMessageHandler("editorSnapshot",(value?:{text:string;revision:number;generation:number;request:number})=>{if(value&&value.generation===host.generation&&value.request===host.snapshotRequest)host.snapshot?.(value)}),host.controller.addScriptMessageHandler("editorChanged",(message?:{text:string;revision:number;generation:number})=>{
+    // No navigation URL is needed: loadHTML is entirely inline and CSP forbids all
+    // external resources. Filtering the host's internal load URL can block the page itself.
+    host.registration=Promise.all([
+      host.controller.addScriptMessageHandler("editorReady",(value?:{generation:number})=>sameSource()&&value?.generation===host.generation?host.initial:null),
+      host.controller.addScriptMessageHandler("editorInitialized",(value?:{generation:number})=>{if(sameSource()&&value?.generation===host.generation)host.initialized?.()}),
+      host.controller.addScriptMessageHandler("editorInitError",(value?:{generation:number})=>{if(sameSource()&&value?.generation===host.generation)host.initialized?.("本地行号编辑器脚本初始化失败")}),host.controller.addScriptMessageHandler("editorSnapshot",(value?:{text:string;revision:number;generation:number;request:number})=>{if(value&&value.generation===host.generation&&value.request===host.snapshotRequest)host.snapshot?.(value)}),host.controller.addScriptMessageHandler("editorChanged",(message?:{text:string;revision:number;generation:number})=>{
       if(sameSource()&&message?.generation===host.generation&&Number.isInteger(message.revision)&&message.revision>host.revision&&typeof message.text==="string"){host.revision=message.revision;setText(message.text)}
     })])
     return()=>{host.alive=false;host.controller.dispose()}
   },[])
   useEffect(()=>{
-    let alive=true;const generation=++host.generation;host.revision=0;setOriginal(null);setText("");setReady(false);setLoadError("")
+    if(!appeared)return
+    let alive=true;const generation=++host.generation;host.revision=0;host.initial=null;setOriginal(null);setText("");setReady(false);setLoadError("")
+    const current=()=>alive&&sameSource()&&generation===host.generation
+    const timers=new Set<ReturnType<typeof setTimeout>>()
+    function bounded<T>(promise:Promise<T>,ms:number,message:string):Promise<T>{
+      return new Promise((resolve,reject)=>{
+        const timer=setTimeout(()=>{timers.delete(timer);reject(new NikkiManagementError(message))},ms);timers.add(timer)
+        promise.then(resolve,reject).finally(()=>{clearTimeout(timer);timers.delete(timer)})
+      })
+    }
     async function load(){
       try{
-        const t=await readNikkiFile(work.owner,file.key)
-        if(!alive||!sameSource()||generation!==host.generation)return
-        await host.registration
-        if(!alive||!sameSource()||generation!==host.generation)return
-        if(!await host.controller.loadHTML(nikkiEditorHTML()))throw new NikkiManagementError("本地行号编辑器加载失败；未修改设备文件")
-        if(!alive||!sameSource()||generation!==host.generation)return
-        const encoded=JSON.stringify(t).replace(/</g,"\\u003c").replace(/\u2028/g,"\\u2028").replace(/\u2029/g,"\\u2029")
-        await host.controller.evaluateJavaScript(`window.nikkiEditor.setText(${encoded},${generation},${JSON.stringify(host.theme)});`)
-        if(alive&&sameSource()&&generation===host.generation){setOriginal(t);if(host.revision===0)setText(t);setReady(true)}
-      }catch(e){if(alive&&sameSource()&&generation===host.generation)setLoadError(errorText(e))}
+        const t=await bounded(readNikkiFile(work.owner,file.key),20000,"完整正文读取超时；未写入文件，请重试读取")
+        if(!current())return
+        // Keep the verified full body independently of WebView; initialization failure must
+        // never hide a successfully read file behind an indefinite white loading panel.
+        setOriginal(t);setText(t);host.initial={text:t,generation,theme:host.theme}
+        await bounded((async()=>{
+          await host.registration
+          if(!current())return
+          await new Promise<void>((resolve,reject)=>{
+            host.initialized=error=>error?reject(new NikkiManagementError(error)):resolve()
+            // Completion of this promise is NOT the readiness signal. The inline script
+            // replies only after accepting the full body and constructing the line gutter.
+            host.controller.loadHTML(nikkiEditorHTML(generation)).then(ok=>{if(!ok)reject(new NikkiManagementError("本地行号编辑器加载失败"))},()=>reject(new NikkiManagementError("本地行号编辑器加载失败")))
+          })
+        })(),10000,"本地行号编辑器初始化超时；完整正文已保留，可重试或查看只读正文")
+        if(current())setReady(true)
+      }catch(e){if(current()){host.initial=null;host.initialized=null;setLoadError(errorText(e))}}
     }
-    void load();return()=>{alive=false}
-  },[file.key,entryKey,tick])
+    void load();return()=>{alive=false;host.initialized=null;for(const timer of timers)clearTimeout(timer)}
+  },[file.key,entryKey,tick,appeared])
   useEffect(()=>{if(ready)void host.controller.evaluateJavaScript(`window.nikkiEditor.setTheme(${JSON.stringify(p.theme)});`).catch(()=>{})},[p.theme,ready])
   async function save(){
     if(original===null||!ready)return
@@ -464,10 +493,10 @@ export function NikkiFileEditor({c,base,file,done,entryKey="direct"}:{c:Controll
       }finally{if(sameSource()&&host.generation===generation)try{await host.controller.evaluateJavaScript("window.nikkiEditor.unlock();")}catch{}}
     })
   }
-  return <VStack alignment="leading" spacing={12} padding={16} background="systemBackground" frame={{maxWidth:"infinity",maxHeight:"infinity"}} navigationTitle={file.name} navigationBarTitleDisplayMode="inline" toolbar={EditorActions({work,done,save,disabled:!ready||original===null||original===text})} onAppear={work.onAppear} onDisappear={work.onDisappear}>
+  return <VStack alignment="leading" spacing={12} padding={16} background="systemBackground" frame={{maxWidth:"infinity",maxHeight:"infinity"}} navigationTitle={file.name} navigationBarTitleDisplayMode="inline" toolbar={EditorActions({work,done,save,disabled:!ready||original===null||original===text})} onAppear={()=>{work.onAppear();setAppeared(true)}} onDisappear={work.onDisappear}>
     <Note>{base.profile===file.key?"当前选用 · 保存不会自动应用":"未选用"}</Note><HStack><Image systemName="doc.text"/><Text>{file.filename}</Text></HStack>
-    {loadError?<><Note error>{loadError}</Note><Button title="重试读取" action={()=>setTick(t=>t+1)}/></>:!ready?<Note>正在完整读取配置与加载本地行号编辑器…</Note>:null}
-    <WebView controller={host.controller} frame={{maxWidth:"infinity",maxHeight:"infinity",minHeight:280}}/>
+    {loadError?<><Note error>{loadError}</Note><Button title="重试读取" action={()=>setTick(t=>t+1)}/>{original!==null?<><Note>完整正文（只读恢复显示；行号编辑器未就绪，不能保存）</Note><ScrollView frame={{maxHeight:"infinity"}}><Text font={13} fontDesign="monospaced">{text}</Text></ScrollView></>:null}</>:!ready?<Note>{original===null?"正在完整读取配置正文…":"正文已完整读取，正在初始化本地行号编辑器…"}</Note>:null}
+    {!loadError?<WebView controller={host.controller} frame={{maxWidth:"infinity",maxHeight:"infinity",minHeight:280}}/>:null}
     <Status work={work}/>{work.changed?<Note error>来源已改变，请取消后重新进入</Note>:null}
   </VStack>
 }
