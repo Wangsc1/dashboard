@@ -155,8 +155,6 @@ export function GlobalConfigPage({ active }: { active: Controller | null }) {
     </Section>
     <Section header={<Text>测速设置</Text>}><TextField title="测速链接" value={url} onChanged={setURL} /><Button title="保存测速链接" action={saveURL} /><Range title="超时时间" min={1000} max={10000} step={100} value={p.testTimeout} suffix=" ms" onChanged={n => update({ testTimeout: n })} /></Section>
     <Section header={<Text>运行日志</Text>}><Range title="最大记录条数" min={100} max={2000} step={100} value={p.logLimit} onChanged={n => update({ logLimit: n })} />{toggle("detailedAPI", "记录详细 API 请求（安全摘要）")}</Section>
-    <Section header={<Text>iCloud 同步</Text>}><NavigationLink destination={<CloudSettingsPage />}><Label title="iCloud 控制器与设置备份（手动替代）" systemImage="icloud" /></NavigationLink></Section>
-    <Section header={<Text>代理内核</Text>}>{active ? <NavigationLink destination={<KernelConfigPage c={active} />}><Label title="读取 / 修改当前控制器内核配置" systemImage="gearshape.2" /></NavigationLink> : <Text>请先添加控制器</Text>}</Section>
   </Form>
 }
 function CloudSettingsPage() {
