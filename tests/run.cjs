@@ -569,7 +569,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) { const lazy = ['proxies','rules','connections'].includes(ids[i]) && ids[i] !== id; assert.equal(nodes(tree, types[i]).length, lazy ? 0 : 1); if (!lazy) assert.equal(nodes(tree, types[i])[0].props.selected, ids[i] === id) }
     }
-    assert.equal(api.VERSION, '1.5.126'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.5.127'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('独立导航栈保留业务owner和身份，只有选中页提供可见工具栏', () => {
     pref.savePreferences({ defaultPage: 'overview' })
@@ -1073,7 +1073,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       nodes(tree.props.overlay.content,'Button')[0].props.action();tree=render(pages.MorePage,{active:n,onChanged(){}});assert.equal(text(tree.props.overlay?.content),'')
       context.confirmResult=false
       for(const [name,msg] of [['刷新DNS缓存','DNS 缓存已清除'],['刷新FakeIP缓存','FakeIP 缓存已清除']]){
-        const prev=alerts.length;await button(tree,name).props.action();tree=render(pages.MorePage,{active:n,onChanged(){}});assert.ok(text(tree.props.overlay.content).includes(msg));assert.equal(alerts.length,prev);assert.equal(confirms.length,before);assert.ok(tree.props.overlay.content.props.animation);assert.ok(nodes(tree.props.overlay.content,'HStack')[0].props.transition)
+        const prev=alerts.length;await button(tree,name).props.action();tree=render(pages.MorePage,{active:n,onChanged(){}});assert.ok(text(tree.props.overlay.content).includes(msg));assert.equal(alerts.length,prev);assert.equal(confirms.length,before);assert.equal(tree.props.overlay.content.props.animation,undefined);assert.equal(nodes(tree.props.overlay.content,'HStack')[0].props.transition,undefined)
       }
       context.confirmResult=true
       const prev=alerts.length;await button(tree,'启动').props.action();tree=render(pages.MorePage,{active:n,onChanged(){}});assert.ok(text(tree.props.overlay.content).includes('启动服务请求已发送'));assert.equal(alerts.length,prev);await flush()
@@ -1104,6 +1104,14 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       await button(tree,'重启核心').props.action();tree=render(pages.MorePage,{active:n,onChanged(){}})
       assert.equal(posts,1);assert.ok(text(tree.props.overlay.content).includes('核心重启成功'));assert.ok(!text(tree.props.overlay.content).includes('请求已发送'))
     }finally{context.setTimeout=original;unmount()}
+  })
+  await test('更多页不调用未验证原生动画工厂，未通知时不挂载空overlay',()=>{
+    const oldAnimation=scripting.Animation,oldTransition=scripting.Transition
+    scripting.Animation={easeOut(){throw Error('native animation unavailable')}};scripting.Transition={opacity(){throw Error('native transition unavailable')}}
+    try{
+      const tree=render(pages.MorePage,{active:c,onChanged(){}},true)
+      assert.ok(text(tree).includes('运行信息'));assert.ok(text(tree).includes('代理配置'));assert.equal(tree.props.overlay,undefined)
+    }finally{scripting.Animation=oldAnimation;scripting.Transition=oldTransition;unmount()}
   })
   await test('更多代理模式立即复用同来源真实读数，首次读取显示读取中，失败不伪造',async()=>{
     const n={...c,id:'mode-cache-fixture',url:'http://mode-cache.invalid'},other={...c,id:'mode-cache-other',url:'http://mode-cache-other.invalid'}
@@ -1503,7 +1511,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       const diagnostic = logs.filter(x => x.startsWith('[preferences-icon]'))
       for (const stage of ['change','accepted','proxies-render','group-render']) assert.ok(diagnostic.some(x => x.includes('stage=' + stage) && x.includes('enabled=false')))
       assert.ok(diagnostic.every(x => !x.includes('private.invalid') && !x.includes('private-group-name') && !x.includes('secret-')))
-      assert.ok(diagnostic.every(x => x.includes('build=1.5.126') && /instance=[a-z0-9]+/.test(x)))
+      assert.ok(diagnostic.every(x => x.includes('build=1.5.127') && /instance=[a-z0-9]+/.test(x)))
       assert.equal(new Set(diagnostic.map(x => x.match(/instance=([^ ]+)/)[1])).size, 1)
     } finally { context.console = originalConsole; unmount(); pref.savePreferences({ customIcons: true, testURL: 'https://www.gstatic.com/generate_204' }) }
   })
