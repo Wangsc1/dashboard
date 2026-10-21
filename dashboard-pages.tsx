@@ -414,7 +414,7 @@ export function NikkiSubscriptionEditor({c,base,value,done,entryKey="direct"}:{c
     <Section header={<Text>基本信息</Text>}><TextField title="名称" value={name} onChanged={setName}/><TextField title="URL" value={url} onChanged={setUrl}/></Section>
     <Section header={<Text>User Agent</Text>}><Picker title="User Agent" pickerStyle="segmented" value={ua} onChanged={setUA}><Text tag="clash">Clash</Text><Text tag="clash.meta">Clash Meta</Text><Text tag="mihomo">Mihomo</Text></Picker>{!["clash","clash.meta","mihomo"].includes(ua)?<Note error>当前是自定义值，请明确选择后再保存</Note>:null}</Section>
     <Section header={<Text>配置优先级</Text>}><Picker title="配置优先级" pickerStyle="segmented" value={prefer} onChanged={setPrefer}><Text tag="remote">远程优先</Text><Text tag="local">本地优先</Text></Picker></Section>
-    <Section><Note>返回时保存修改，其他未知字段保持不变。提交设置可能自动重载 Nikki；保存前会说明影响并确认。</Note><Status work={work}/>{work.changed?<Note error>来源已改变，请返回后重新进入</Note>:null}</Section>
+    {work.error||work.notice||work.changed?<Section><Status work={work}/>{work.changed?<Note error>来源已改变，请返回后重新进入</Note>:null}</Section>:null}
   </Form>
 }
 export function NikkiRuleEditor({c,base,value,done}:{c:Controller;base:NikkiManagement;value:NikkiRule|null;done:(saved?:boolean)=>void}) {

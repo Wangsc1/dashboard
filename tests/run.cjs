@@ -339,6 +339,27 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     const invalid = clone(backup); invalid.controllers[0].port = 70000
     assert.throws(() => cloud.restoreBackup(invalid)); assert.equal(api.listControllers().length, before)
   })
+  await test('代理配置加载前后保留输入/勾选/开关和状态区尺寸，不靠动画隐藏重排', async () => {
+    let release; const wait = new Promise(r => { release = r })
+    calls.length = 0
+    responder = () => ({ wait, body: { mode: 'rule', port: 80, 'socks-port': 1080, 'mixed-port': 7890, 'redir-port': 0, 'tproxy-port': 0, 'allow-lan': false, ipv6: true, 'bind-address': '*', tun: { enable: false }, 'log-level': 'info' } })
+    const check = tree => {
+      assert.ok(nodes(tree, 'TextField').every(n => n.props.frame.height === 22))
+      assert.equal(nodes(tree, 'ZStack').filter(n => n.props.frame?.width === 20 && n.props.frame?.height === 20).length, 3)
+      assert.equal(nodes(tree, 'VStack').filter(n => n.props.frame?.minHeight === 20).length, 1)
+      const cards = nodes(tree, 'VStack').filter(n => n.props.background?.props?.cornerRadius === 16)
+      assert.equal(cards.length, 5); assert.ok(cards.every(n => n.props.frame.maxWidth === 'infinity'))
+    }
+    let tree = render(ui.KernelConfigPage, { c }, true); check(tree)
+    assert.equal(nodes(tree, 'Toggle').length, 0)
+    assert.equal(nodes(tree, 'HStack').filter(n => n.props.frame?.minHeight === 31 && n.props.frame?.maxHeight === 31).length, 3)
+    assert.ok(nodes(tree, 'TextField').every(n => n.props.disabled && n.props.value === ''))
+    await flush(); check(render(ui.KernelConfigPage, { c })); release(); await flush()
+    tree = render(ui.KernelConfigPage, { c }); check(tree)
+    assert.equal(nodes(tree, 'Toggle').length, 3); assert.ok(nodes(tree, 'Toggle').every(n => n.props.frame.height === 31))
+    assert.equal(nodes(tree, 'TextField')[0].props.value, '7890'); assert.equal(calls.length, 1)
+    assert.equal(calls[0].init.method, 'GET'); unmount()
+  })
   await test('代理配置输入完成才自动保存，不弹确认且移除底部三块', async () => {
     responder = () => ({ body: { mode: 'rule', 'mixed-port': 7890, 'allow-lan': false } }); calls.length = 0
     const before = confirms.length
@@ -579,7 +600,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) { const lazy = ['proxies','rules','connections'].includes(ids[i]) && ids[i] !== id; assert.equal(nodes(tree, types[i]).length, lazy ? 0 : 1); if (!lazy) assert.equal(nodes(tree, types[i])[0].props.selected, ids[i] === id) }
     }
-    assert.equal(api.VERSION, '1.5.152'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.5.153'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('独立导航栈保留业务owner和身份，只有选中页提供可见工具栏', () => {
     pref.savePreferences({ defaultPage: 'overview' })
@@ -1571,7 +1592,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       const diagnostic = logs.filter(x => x.startsWith('[preferences-icon]'))
       for (const stage of ['change','accepted','proxies-render','group-render']) assert.ok(diagnostic.some(x => x.includes('stage=' + stage) && x.includes('enabled=false')))
       assert.ok(diagnostic.every(x => !x.includes('private.invalid') && !x.includes('private-group-name') && !x.includes('secret-')))
-      assert.ok(diagnostic.every(x => x.includes('build=1.5.152') && /instance=[a-z0-9]+/.test(x)))
+      assert.ok(diagnostic.every(x => x.includes('build=1.5.153') && /instance=[a-z0-9]+/.test(x)))
       assert.equal(new Set(diagnostic.map(x => x.match(/instance=([^ ]+)/)[1])).size, 1)
     } finally { context.console = originalConsole; unmount(); pref.savePreferences({ customIcons: true, testURL: 'https://www.gstatic.com/generate_204' }) }
   })

@@ -254,19 +254,19 @@ export function KernelConfigPage({ c }: { c: Controller }) {
   const err = Object.values(session.errors).join("\n")
   const icon = (name: string, color: string) => <Image systemName={name} font={21} foregroundStyle={color} frame={{ width: 24 }} />
   const separator = () => <RoundedRectangle cornerRadius={0} fill={{ light: "#E8E8ED", dark: "#38383A" }} frame={{ maxWidth: "infinity", height: 0.5 }} />
-  const card = (children: any) => <VStack spacing={0} padding={{ horizontal: 14 }} background={<RoundedRectangle cornerRadius={16} fill={{ light: "#F2F2F7", dark: "#1C1C1E" }} stroke={{ shapeStyle: { light: "#ECECF1", dark: "#38383A" }, strokeStyle: { lineWidth: 0.5 } }} />}>{children}</VStack>
+  const card = (children: any) => <VStack spacing={0} padding={{ horizontal: 14 }} frame={{maxWidth:"infinity",alignment:"leading"}} background={<RoundedRectangle cornerRadius={16} fill={{ light: "#F2F2F7", dark: "#1C1C1E" }} stroke={{ shapeStyle: { light: "#ECECF1", dark: "#38383A" }, strokeStyle: { lineWidth: 0.5 } }} />}>{children}</VStack>
   const heading = (title: string) => <Text font={13} foregroundStyle="secondaryLabel" padding={{ leading: 14 }}>{title}</Text>
-  const field = (key: string, title: string, port = true) => <TextField key={key} title={title} value={String(dirty[key] ?? (cfg as any)?.[key] ?? "")} prompt="未提供" onChanged={(v: string) => change(key, v, false)} onBlur={() => commit(key)} onSubmit={() => commit(key)} submitLabel="done" disabled={busy || !provided(key)} keyboardType={port ? "numberPad" : "default"} autocorrectionDisabled textInputAutocapitalization="never" multilineTextAlignment="trailing" frame={{ width: port ? 100 : 142 }} padding={{ horizontal: 10, vertical: 8 }} background={{ style: { light: "#E5E5EA", dark: "#2C2C2E" }, shape: { type: "rect", cornerRadius: 8 } }} />
+  const field = (key: string, title: string, port = true) => <TextField key={key} title={title} value={String(dirty[key] ?? (cfg as any)?.[key] ?? "")} prompt="未提供" onChanged={(v: string) => change(key, v, false)} onBlur={() => commit(key)} onSubmit={() => commit(key)} submitLabel="done" disabled={busy || !provided(key)} keyboardType={port ? "numberPad" : "default"} autocorrectionDisabled textInputAutocapitalization="never" multilineTextAlignment="trailing" frame={{ width: port ? 100 : 142, height: 22 }} padding={{ horizontal: 10, vertical: 8 }} background={{ style: { light: "#E5E5EA", dark: "#2C2C2E" }, shape: { type: "rect", cornerRadius: 8 } }} />
   const toggle = (key: string, title: string) => provided(key)
-    ? <Toggle title={title} value={key === "tun" ? (dirty.tun?.enable ?? cfg?.tun?.enable) : (dirty[key] ?? (cfg as any)?.[key])} onChanged={(v: boolean) => change(key, key === "tun" ? { enable: v } : v)} disabled={busy} />
-    : <HStack><Text>{title}</Text><Spacer /><Text font={14} foregroundStyle="secondaryLabel">未提供</Text></HStack>
+    ? <Toggle title={title} value={key === "tun" ? (dirty.tun?.enable ?? cfg?.tun?.enable) : (dirty[key] ?? (cfg as any)?.[key])} onChanged={(v: boolean) => change(key, key === "tun" ? { enable: v } : v)} disabled={busy} frame={{height:31}} />
+    : <HStack frame={{minHeight:31,maxHeight:31,maxWidth:"infinity"}}><Text>{title}</Text><Spacer /><Text font={14} foregroundStyle="secondaryLabel">未提供</Text></HStack>
   return <ScrollView navigationTitle="代理配置" navigationBarTitleDisplayMode="inline" background="systemBackground">
-    <VStack alignment="leading" spacing={10} padding={{ horizontal: 20, vertical: 16 }}>
+    <VStack alignment="leading" spacing={10} padding={{ horizontal: 20, vertical: 16 }} frame={{maxWidth:"infinity",alignment:"leading"}}>
       {heading("代理模式")}
       {card(([ ["rule", "规则模式"], ["global", "全局模式"], ["direct", "直连模式"] ]).map(([value, title], i) => <VStack key={value} spacing={0}>
         {i ? separator() : null}
         <Button disabled={busy || !provided("mode")} buttonStyle="plain" action={() => change("mode", value)}>
-          <HStack padding={{ vertical: 15 }}><Text>{title}</Text><Spacer />{(dirty.mode ?? cfg?.mode) === value ? <Image systemName="checkmark" font={18} foregroundStyle="systemBlue" /> : null}</HStack>
+          <HStack padding={{ vertical: 15 }}><Text>{title}</Text><Spacer /><ZStack frame={{width:20,height:20}}>{(dirty.mode ?? cfg?.mode) === value ? <Image systemName="checkmark" font={18} foregroundStyle="systemBlue" /> : null}</ZStack></HStack>
         </Button>
       </VStack>))}
       {heading("端口配置")}
@@ -289,9 +289,11 @@ export function KernelConfigPage({ c }: { c: Controller }) {
           {LOG_LEVELS.map(value => <Button key={value} title={({silent:"静默",error:"错误",warning:"警告",info:"信息",debug:"调试"} as Record<string,string>)[value]??value} action={() => change("log-level", value)} />)}
         </Menu>
       </HStack>)}
-      {busy ? <Text foregroundStyle="secondaryLabel">读取中…</Text> : null}
-      {session.saving ? <Text font={13} foregroundStyle="secondaryLabel">保存中…</Text> : null}
-      {err ? <Text font={13} foregroundStyle="secondaryLabel">{err}</Text> : null}
+      <VStack alignment="leading" spacing={4} frame={{minHeight:20,maxWidth:"infinity",alignment:"leading"}}>
+        {busy ? <Text font={13} foregroundStyle="secondaryLabel">读取中…</Text> : null}
+        {session.saving ? <Text font={13} foregroundStyle="secondaryLabel">保存中…</Text> : null}
+        {err ? <Text font={13} foregroundStyle="secondaryLabel">{err}</Text> : null}
+      </VStack>
     </VStack>
   </ScrollView>
 }
