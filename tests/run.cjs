@@ -262,7 +262,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) assert.equal(nodes(tree, types[i]).length, ids[i] === id ? 1 : 0)
     }
-    assert.equal(api.VERSION, '1.5.53'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.5.54'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('1.5.46 共享栈/简单ToolBarProps：唯一业务页owner、隐藏Tab无注册', () => {
     pref.savePreferences({ defaultPage: 'overview' })
@@ -739,6 +739,26 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     tree = render(pages.GroupIcon, { g }); assert.ok(tree.props.image)
     pref.savePreferences({ customIcons: false }); assert.equal(render(pages.GroupIcon, { g }), null); await flush()
     unmount(); pref.savePreferences({ customIcons: true, groupIcons: {} })
+  })
+  await test('关闭图标在策略组父布局卸载组件，保留文字、节点入口和测速按钮', async () => {
+    responder = () => ({ contentType: 'image/png', data: 'cached-group-image' })
+    const icon = 'https://icons.invalid/parent-toggle.png'; await pref.cachedIcon(icon)
+    for (const name of ['PROXY','EMBY','AI','STEAM']) {
+      pref.savePreferences({ customIcons: true })
+      const props = { c, g: { name, icon, type: 'Selector', all: ['A'], now: 'A', delays: {} }, onChanged() {} }
+      let tree = render(pages.GroupSection, props, true); await flush()
+      assert.equal(nodes(tree, pages.GroupIcon).length, 1)
+      pref.savePreferences({ customIcons: false }); tree = render(pages.GroupSection, props); await flush()
+      assert.equal(nodes(tree, pages.GroupIcon).length, 0)
+      const link = nodes(tree, 'NavigationLink')[0]
+      assert.equal(link.props.destination.type, pages.GroupNodesPage)
+      assert.ok(text(link).includes(name)); assert.ok(text(link).includes('A'))
+      assert.equal(nodes(link, 'Image').length, 1); assert.equal(nodes(link, 'Image')[0].props.systemName, 'chevron.right')
+      assert.equal(nodes(tree, 'Button').filter(n => n.props.systemImage === 'bolt.fill').length, 1)
+      unmount(); tree = render(pages.GroupSection, props, true); assert.equal(nodes(tree, pages.GroupIcon).length, 0); await flush()
+      pref.savePreferences({ customIcons: true }); tree = render(pages.GroupSection, props); assert.equal(nodes(tree, pages.GroupIcon).length, 1)
+      unmount()
+    }
   })
   await test('主页内存固定一位小数，流量默认精度不变', () => {
     assert.deepEqual(Array.from(api.fmtParts(128.56 * 1048576, false, 1)), ['128.6', 'MB'])
