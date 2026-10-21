@@ -429,7 +429,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) { const lazy = ['proxies','rules','connections'].includes(ids[i]) && ids[i] !== id; assert.equal(nodes(tree, types[i]).length, lazy ? 0 : 1); if (!lazy) assert.equal(nodes(tree, types[i])[0].props.selected, ids[i] === id) }
     }
-    assert.equal(api.VERSION, '1.5.98'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.5.99'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('独立导航栈保留业务owner和身份，只有选中页提供可见工具栏', () => {
     pref.savePreferences({ defaultPage: 'overview' })
@@ -1054,6 +1054,23 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     const d = (await api.loadGroups(c)).find(x => x.name === 'AIG').delays
     assert.equal(d.A, 167); assert.equal(d.B, 196); assert.equal(d.C, 88); assert.equal(d.D, undefined); unmount(); responder = () => ({ status: 204 })
   })
+  await test('规则页：刷新/更新提供者重新读取时保留已显示的规则和提供者，不先清空；不显示“已展示”', async () => {
+    responder = url => ({ body: url.includes('/providers/') ? { providers: { RP: { type: 'Rule', vehicleType: 'HTTP', ruleCount: 5, behavior: 'domain' } } } : { rules: [{ type: 'DomainSuffix', payload: 'keep.invalid', proxy: 'DIRECT' }] } })
+    render(pages.RulesPage, { active: c, version: 0 }, true); await flush()
+    let tree = render(pages.RulesPage, { active: c, version: 0 }); assert.ok(text(tree).includes('keep.invalid')); assert.ok(!text(tree).includes('已展示'))
+    let release; responder = () => ({ wait: new Promise(r => { release = r }), body: { rules: [], providers: {} } })
+    const refresh = nodes(trailing(tree.props.toolbar), 'Button').find(n => n.props.title === '刷新规则'); refresh.props.action(); await flush()
+    tree = render(pages.RulesPage, { active: c, version: 0 }); assert.ok(text(tree).includes('keep.invalid'))
+    nodes(tree, 'Picker')[0].props.onChanged('providers'); tree = render(pages.RulesPage, { active: c, version: 0 }); assert.equal(nodes(tree, pages.ProviderCard).length, 1)
+    if (release) release(); await flush(); unmount(); responder = () => ({ status: 204 })
+  })
+  await test('规则页：条数超过上限时只有“加载更多”，没有“已展示”文字', async () => {
+    const many = Array.from({ length: 100 }, (_, i) => ({ type: 'Domain', payload: 'r' + i + '.invalid', proxy: 'DIRECT' }))
+    responder = url => ({ body: url.includes('/providers/') ? { providers: {} } : { rules: many } })
+    render(pages.RulesPage, { active: c, version: 0 }, true); await flush()
+    const tree = render(pages.RulesPage, { active: c, version: 0 })
+    assert.ok(!text(tree).includes('已展示')); assert.ok(button(tree, '加载更多')); unmount(); responder = () => ({ status: 204 })
+  })
   await test('代理页缓存：重新进入立即显示上次策略组，读取完成前不提示空', async () => {
     responder = url => ({ body: url.includes('/providers/') ? { providers: {} } : { proxies: { CacheGroup: { type: 'Selector', now: 'X', all: ['X'] }, X: { type: 'Shadowsocks' } } } })
     render(pages.ProxiesPage, { active: c, version: 0 }, true); await flush(); unmount()
@@ -1075,7 +1092,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       const diagnostic = logs.filter(x => x.startsWith('[preferences-icon]'))
       for (const stage of ['change','accepted','proxies-render','group-render']) assert.ok(diagnostic.some(x => x.includes('stage=' + stage) && x.includes('enabled=false')))
       assert.ok(diagnostic.every(x => !x.includes('private.invalid') && !x.includes('private-group-name') && !x.includes('secret-')))
-      assert.ok(diagnostic.every(x => x.includes('build=1.5.98') && /instance=[a-z0-9]+/.test(x)))
+      assert.ok(diagnostic.every(x => x.includes('build=1.5.99') && /instance=[a-z0-9]+/.test(x)))
       assert.equal(new Set(diagnostic.map(x => x.match(/instance=([^ ]+)/)[1])).size, 1)
     } finally { context.console = originalConsole; unmount(); pref.savePreferences({ customIcons: true, testURL: 'https://www.gstatic.com/generate_204' }) }
   })
