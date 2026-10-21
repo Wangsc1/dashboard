@@ -693,7 +693,7 @@ function Root() {
         {tab === "connections" ? <ConnectionsPage selected onClose={dismiss} key={`connections:${active?.id ?? "empty"}`} active={active} version={version} /> : null}
       </NavigationStack>
     </Tab>
-    <Tab key="more" title="更多" systemImage="circle.grid.2x2" value="more">
+    <Tab key="more" title="更多" systemImage="square.split.2x2" value="more">
       <NavigationStack key="more-stack">
         <MorePage selected={tab === "more"} onClose={dismiss} key={`more:${active?.id ?? "empty"}`} active={active} onChanged={bump} />
       </NavigationStack>

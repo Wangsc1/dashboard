@@ -1,3 +1,7 @@
+## 1.5.120
+
+- 按用户要求将更多标签图标换为 square.split.2x2，其他图标与导航结构不变。原生标签栏的最终渲染效果待真机确认。
+
 ## 1.5.119
 
 - 按指定名称设置底部标签图标：主页 apple.homekit、代理 network、规则 shuffle、连接 arrowshape.zigzag.forward、更多 circle.grid.2x2。保持统一原生 Tab 导航结构不变。
