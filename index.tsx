@@ -120,21 +120,15 @@ function InfoItem({ icon, color, title, value }: { icon: string; color: string; 
 function RateChart({ down, up, enabled = true }: { down: number[]; up: number[]; enabled?: boolean }) {
   const W = 300, H = 120
   const plot = useSmoothPlot(down, up, enabled, W, H, undefined, undefined, true)
-  // Download needs its own linear axis: a busy upload (or the 1 KiB/s floor)
-  // otherwise compresses genuine low-rate RX changes into a sub-pixel line.
-  // Keep the existing upload scale; only the blue download path is rescaled.
-  const downloadFloor = down.some(v => v > 0) ? Number.EPSILON : 1
-  const downloadPlot = useSmoothPlot(down, undefined, enabled, W, H, downloadFloor)
-  const max = downloadPlot.scale
-  const paths = [downloadPlot.paths[0], plot.paths[1]]
-  const line = (i: number, color: string) => paths[i] ? `<path d="${paths[i]}" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round"/>` : ""
+  const max = plot.scale
+  const line = (i: number, color: string) => plot.paths[i] ? `<path d="${plot.paths[i]}" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round"/>` : ""
   const code = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">${line(0, "#3B82F6")}${line(1, "#34C759")}</svg>`
-  const label = (f: number) => max < 1 ? `${(max * f).toPrecision(2)} B/s` : fmtSpeed(max * f)
+  const label = (f: number) => fmtSpeed(max * f)
   return <Card>
     <HStack>
       <HStack spacing={8}><Badge icon="chart.xyaxis.line" color="#6366F1" /><Text fontWeight="semibold" font={15}>速度</Text></HStack>
       <Spacer />
-      <HStack spacing={4}><Circle fill="#3B82F6" frame={{ width: 5, height: 5 }} /><Text font={12} foregroundStyle="secondaryLabel">下载·左轴</Text></HStack><HStack spacing={4}><Circle fill="#34C759" frame={{ width: 5, height: 5 }} /><Text font={12} foregroundStyle="secondaryLabel">上传·右轴</Text></HStack>
+      <HStack spacing={4}><Circle fill="#3B82F6" frame={{ width: 5, height: 5 }} /><Text font={12} foregroundStyle="secondaryLabel">下载</Text></HStack><HStack spacing={4}><Circle fill="#34C759" frame={{ width: 5, height: 5 }} /><Text font={12} foregroundStyle="secondaryLabel">上传</Text></HStack>
     </HStack>
     <HStack alignment="top" spacing={8} frame={{ maxWidth: "infinity" }}>
       <VStack alignment="leading" spacing={0} frame={{ width: 72, height: H }}>
@@ -144,12 +138,6 @@ function RateChart({ down, up, enabled = true }: { down: number[]; up: number[];
         </VStack>)}
       </VStack>
       <SVG code={code} resizable frame={{ maxWidth: "infinity", height: H }} />
-      <VStack alignment="trailing" spacing={0} frame={{ width: 72, height: H }}>
-        {[1, 0.75, 0.5, 0.25].map(f => <VStack key={String(f)} spacing={0}>
-          <HStack spacing={0}><Spacer /><Text font={11} lineLimit={1} fixedSize={{ horizontal: true, vertical: false }} foregroundStyle="secondaryLabel">{fmtSpeed(plot.scale * f)}</Text></HStack>
-          <Spacer />
-        </VStack>)}
-      </VStack>
     </HStack>
   </Card>
 }
@@ -672,6 +660,14 @@ function Root() {
   const dismiss = Navigation.useDismiss()
   const [version, setVersion] = useState(0)
   const selection = useObservable<RootTab>(() => { const p = getPreferences().defaultPage; return p === "overview" ? "home" : p })
+  // Native TabView updates the binding without necessarily rebuilding this
+  // already-retained JS owner. Explicitly invalidate derived selected props.
+  const [, refreshSelection] = useState(0)
+  useEffect(() => {
+    const changed = () => refreshSelection(n => n + 1)
+    selection.subscribe(changed)
+    return () => selection.unsubscribe(changed)
+  }, [selection])
   const tab = selection.value
   const active = getActive(), bump = () => { setVersion(v => v + 1) }
 

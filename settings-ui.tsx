@@ -183,16 +183,29 @@ export function KernelConfigPage({ c }: { c: Controller }) {
     </Section>
   </Form>
 }
+function TestURLField() {
+  const p = usePreferences(["testURL"])
+  const [url, setURL] = useState(() => p.testURL), [error, setError] = useState("")
+  const [draft] = useState({ value: p.testURL, editing: false })
+  useEffect(() => { if (!draft.editing) { draft.value = p.testURL; setURL(p.testURL) } }, [p.testURL])
+  function save() {
+    const value = draft.value.trim()
+    if (value === getPreferences().testURL) { setError(""); return }
+    if (!/^https?:\/\/[^\s]+$/i.test(value) || /https?:\/\/[^/]*@/i.test(value)) { setError("请输入不含账号密码的 HTTP(S) 测速链接"); return }
+    try { savePreferences({ testURL: value }); draft.value = value; setURL(value); setError("") }
+    catch { setError("本地设置保存失败，请重试") }
+  }
+  return <VStack alignment="leading" spacing={4}>
+    <TextField title="测速链接" value={url} onFocus={() => { draft.editing = true }} onChanged={(value: string) => { draft.value = value; setURL(value); setError("") }} onBlur={() => { draft.editing = false; save() }} onSubmit={save} submitLabel="done" />
+    {error ? <Text font={12} foregroundStyle="systemRed">{error}</Text> : null}
+  </VStack>
+}
 export function GlobalConfigPage({ active }: { active: Controller | null }) {
-  const p = usePreferences(), [url, setURL] = useState(() => p.testURL)
+  const p = usePreferences()
   const toggle = (key: keyof Preferences, title: string) => <Toggle key={key} title={title} value={!!p[key]} onChanged={(v: boolean) => update({ [key]: v })} />
   async function clear() {
     if (!await Dialog.confirm({ title: "清除图片缓存", message: "仅删除本脚本缓存的代理组图片；不会删除账号、密码、密钥、设置或日志。", confirmLabel: "清除" })) return
     const n = clearImageCache(); await Dialog.alert({ message: `已清除 ${n} 项脚本图片缓存；已显示图片在重新进入代理页后重载。` })
-  }
-  async function saveURL() {
-    if (!/^https?:\/\/[^\s]+$/i.test(url) || /https?:\/\/[^/]*@/i.test(url)) return Dialog.alert({ message: "请输入不含账号密码的 HTTP(S) 测速链接" })
-    try { savePreferences({ testURL: url.trim() }); await Dialog.alert({ message: "测速链接已保存；下一次测速生效" }) } catch { await Dialog.alert({ message: "保存失败" }) }
   }
   return <Form navigationTitle="全局配置" navigationBarTitleDisplayMode="inline">
     <Section header={<Text>主题</Text>}><Choice title="外观模式" value={p.theme} values={[["system", "跟随系统"], ["light", "浅色"], ["dark", "深色"]]} onChanged={v => update({ theme: v as any })} /></Section>
@@ -212,7 +225,7 @@ export function GlobalConfigPage({ active }: { active: Controller | null }) {
       }}><HStack><Text foregroundStyle="label">代理组节点排序</Text><Spacer /><Text foregroundStyle="secondaryLabel">{NODE_SORT_OPTIONS.find(([key]) => key === p.nodeSort)?.[1]}</Text></HStack></Button>
       <Range title="连接超时时间" min={1} max={30} value={p.requestTimeout} suffix=" s" onChanged={n => update({ requestTimeout: n })} />
     </Section>
-    <Section header={<Text>测速设置</Text>}><TextField title="测速链接" value={url} onChanged={setURL} /><Button title="保存测速链接" action={saveURL} /><Range title="超时时间" min={1000} max={10000} step={100} value={p.testTimeout} suffix=" ms" onChanged={n => update({ testTimeout: n })} /></Section>
+    <Section header={<Text>测速设置</Text>}><TestURLField /><Range title="超时时间" min={1000} max={10000} step={100} value={p.testTimeout} suffix=" ms" onChanged={n => update({ testTimeout: n })} /></Section>
     <Section header={<Text>运行日志</Text>}><Range title="最大记录条数" min={100} max={2000} step={100} value={p.logLimit} onChanged={n => update({ logLimit: n })} />{toggle("detailedAPI", "记录详细 API 请求")}</Section>
   </Form>
 }

@@ -14,7 +14,13 @@ const scripting = new Proxy({
   AppEvents: { scenePhase: { addListener: fn => sceneListeners.add(fn), removeListener: fn => sceneListeners.delete(fn) } },
   useMemo(fn, deps) { const i = hookIndex++, old = hooks[i]; if (!old || deps.some((v, j) => v !== old.deps[j])) hooks[i] = { deps, value: fn() }; return hooks[i].value },
   useState(v) { const i = hookIndex++; if (!(i in hooks)) hooks[i] = typeof v === 'function' ? v() : v; return [hooks[i], v => { if (failNextState) { failNextState = false; throw Error("mock native setter failed") }; hooks[i] = typeof v === 'function' ? v(hooks[i]) : v }] },
-  useObservable(v) { const [o] = scripting.useState(() => ({ value: typeof v === "function" ? v() : v, setValue(value) { this.value = value } })); return o },
+  useObservable(v) { const [o] = scripting.useState(() => {
+    const listeners = new Set()
+    return { value: typeof v === "function" ? v() : v,
+      setValue(value) { const old = this.value; this.value = value; if(value !== old) for(const fn of [...listeners]) fn(value, old) },
+      subscribe(fn) { listeners.add(fn) }, unsubscribe(fn) { listeners.delete(fn) }, listenerCount() { return listeners.size }
+    }
+  }); return o },
   useEffect(fn, deps) { const i = hookIndex++, old = hooks[i]; if (!old || deps.some((v, j) => v !== old[j])) { hooks[i] = deps; effects.push(() => { cleanups.get(i)?.(); cleanups.delete(i); const c = fn(); if (typeof c === "function") cleanups.set(i, c) }) } },
   Safari: { async openURL(url) { openedURLs.push(url); return true } },
   Navigation: { useDismiss: () => () => {} },
@@ -49,7 +55,7 @@ function load(name) {
   const file = path.join(root, name + (name === 'index' || name === 'settings-ui' || name === 'dashboard-pages' || name === 'root-toolbar' ? '.tsx' : '.ts'))
   let source = fs.readFileSync(file, 'utf8')
   if (name === 'index') source = source.replace(/\nrun\(\)\s*$/, '') + '\nexport { OverviewPage, InfoItem, SettingsPage, ConnectionsPage, ProxiesPage, RulesPage, Spark, RateChart, StatCard, GroupSection, MorePage, Root, AppearanceRoot };'
-  if (name === 'settings-ui') source += '\nexport { Choice, Range };'
+  if (name === 'settings-ui') source += '\nexport { Choice, Range, TestURLField };'
   const code = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020, jsx: ts.JsxEmit.React, jsxFactory: 'h' } }).outputText
   const module = { exports: {} }; cache.set(name, module.exports)
   vm.runInNewContext('(function(require,module,exports){' + code + '\n})', context, { filename: file })(n => n === 'scripting' ? scripting : load(n), module, module.exports)
@@ -216,6 +222,22 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     const headers = nodes(tree, 'Section').map(n => text(n.props.header))
     assert.equal(headers.join('|'), '主题|启动设置|代理组|缓存管理|控制器管理|切换代理设置|交互体验|延迟阈值设置|网络请求|测速设置|运行日志')
     unmount()
+  })
+  await test('删除保存测速链接按钮；输入结束自动保存、拒绝无效值并显示失败', async () => {
+    const global = render(ui.GlobalConfigPage, { active: null }, true)
+    assert.ok(!nodes(global, 'Button').some(x => x.props.title === '保存测速链接')); assert.equal(nodes(global, ui.TestURLField).length, 1)
+    const before = pref.getPreferences().testURL
+    let tree = render(ui.TestURLField, {}, true); await flush()
+    let field = nodes(tree, 'TextField')[0]; field.props.onFocus(); field.props.onChanged('https://example.invalid/test')
+    assert.equal(pref.getPreferences().testURL, before)
+    // Native may still dispatch the previous render's blur callback.
+    field.props.onBlur(); assert.equal(pref.getPreferences().testURL, 'https://example.invalid/test')
+    tree = render(ui.TestURLField, {}); await flush()
+    field = nodes(tree, 'TextField')[0]; field.props.onChanged('invalid'); field.props.onSubmit()
+    tree = render(ui.TestURLField, {}); await flush(); assert.ok(text(tree).includes('HTTP(S)')); assert.equal(pref.getPreferences().testURL, 'https://example.invalid/test')
+    field = nodes(tree, 'TextField')[0]; failStorage = true; field.props.onChanged('https://example.invalid/new'); field.props.onBlur(); failStorage = false
+    tree = render(ui.TestURLField, {}); await flush(); assert.ok(text(tree).includes('保存失败')); assert.equal(pref.getPreferences().testURL, 'https://example.invalid/test')
+    unmount(); pref.savePreferences({ testURL: before })
   })
   await test('请求头 Keychain 保存与认证/传输覆盖、CRLF拒绝', () => {
     pref.saveHeaders('{"X-Client":"private-header-value"}')
@@ -404,7 +426,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) { assert.equal(nodes(tree, types[i]).length, 1); assert.equal(nodes(tree, types[i])[0].props.selected, ids[i] === id) }
     }
-    assert.equal(api.VERSION, '1.5.61'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.5.62'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('独立导航栈保留业务owner和身份，只有选中页提供可见工具栏', () => {
     pref.savePreferences({ defaultPage: 'overview' })
@@ -919,7 +941,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       const diagnostic = logs.filter(x => x.startsWith('[preferences-icon]'))
       for (const stage of ['change','accepted','proxies-render','group-render']) assert.ok(diagnostic.some(x => x.includes('stage=' + stage) && x.includes('enabled=false')))
       assert.ok(diagnostic.every(x => !x.includes('private.invalid') && !x.includes('private-group-name') && !x.includes('secret-')))
-      assert.ok(diagnostic.every(x => x.includes('build=1.5.61') && /instance=[a-z0-9]+/.test(x)))
+      assert.ok(diagnostic.every(x => x.includes('build=1.5.62') && /instance=[a-z0-9]+/.test(x)))
       assert.equal(new Set(diagnostic.map(x => x.match(/instance=([^ ]+)/)[1])).size, 1)
     } finally { context.console = originalConsole; unmount(); pref.savePreferences({ customIcons: true, testURL: 'https://www.gstatic.com/generate_204' }) }
   })
