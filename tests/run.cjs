@@ -418,7 +418,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) { const lazy = ['proxies','rules','connections'].includes(ids[i]) && ids[i] !== id; assert.equal(nodes(tree, types[i]).length, lazy ? 0 : 1); if (!lazy) assert.equal(nodes(tree, types[i])[0].props.selected, ids[i] === id) }
     }
-    assert.equal(api.VERSION, '1.5.71'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.5.72'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('独立导航栈保留业务owner和身份，只有选中页提供可见工具栏', () => {
     pref.savePreferences({ defaultPage: 'overview' })
@@ -725,8 +725,8 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     assert.equal(xs[0].count,2);assert.equal(xs[0].vehicleType,'HTTP');assert.equal(xs[1].count,null)
     assert.equal(api.parseProviders({providers:{R:{ruleCount:953,behavior:'domain',format:'mrs'}}},'rules')[0].count,953)
     responder=()=>({status:204});calls.length=0;await api.updateProvider(c,'proxies','A / B');assert.ok(calls[0].url.endsWith('/providers/proxies/A%20%2F%20B'));assert.equal(calls[0].init.method,'PUT')
-    context.confirmResult=false;calls.length=0;let tree=render(pages.ProviderCard,{c,p:xs[0],kind:'proxies',onChanged(){}},true)
-    await nodes(tree,'Button')[0].props.action();assert.equal(calls.length,0);assert.match(confirms.at(-1).message,/目标：.*A \/ B/);context.confirmResult=true
+    const before=confirms.length;calls.length=0;let changed=0;let tree=render(pages.ProviderCard,{c,p:xs[0],kind:'proxies',onChanged(){changed++}},true)
+    await nodes(tree,'Button')[0].props.action();assert.equal(confirms.length,before);assert.equal(calls.length,1);assert.ok(calls[0].url.endsWith('/providers/proxies/A%20%2F%20B'));assert.equal(calls[0].init.method,'PUT');assert.equal(changed,1)
   })
   await test('1.5组子页：完整节点分页、排序、切换取消不请求及测速确认', async () => {
     pref.savePreferences({nodeSort:'name',disconnectOnSwitch:false});const g={name:'TestGroup',type:'Selector',now:'N000',all:Array.from({length:125},(_,i)=>'N'+String(i).padStart(3,'0')),delays:{}}
@@ -934,7 +934,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       const diagnostic = logs.filter(x => x.startsWith('[preferences-icon]'))
       for (const stage of ['change','accepted','proxies-render','group-render']) assert.ok(diagnostic.some(x => x.includes('stage=' + stage) && x.includes('enabled=false')))
       assert.ok(diagnostic.every(x => !x.includes('private.invalid') && !x.includes('private-group-name') && !x.includes('secret-')))
-      assert.ok(diagnostic.every(x => x.includes('build=1.5.71') && /instance=[a-z0-9]+/.test(x)))
+      assert.ok(diagnostic.every(x => x.includes('build=1.5.72') && /instance=[a-z0-9]+/.test(x)))
       assert.equal(new Set(diagnostic.map(x => x.match(/instance=([^ ]+)/)[1])).size, 1)
     } finally { context.console = originalConsole; unmount(); pref.savePreferences({ customIcons: true, testURL: 'https://www.gstatic.com/generate_204' }) }
   })
