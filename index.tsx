@@ -202,7 +202,7 @@ function OverviewPage({ active, version, onSwitch, onClose, selected = true }: {
   const toolbar = useMemo(() => rootToolbar("home", onClose, <NavigationLink destination={<SettingsPage active={active} onChanged={onSwitch} />}><Image systemName="ellipsis.circle" /></NavigationLink>), [active, onSwitch, onClose])
   if (!active) return <Form navigationTitle="dashboard" navigationBarTitleDisplayMode="inline" toolbar={toolbar} onAppear={() => setVisible(true)} onDisappear={() => setVisible(false)}><NoController /></Form>
   return <VStack spacing={0} navigationTitle="OpenWrt 状态" navigationBarTitleDisplayMode="inline" toolbar={toolbar} onAppear={() => setVisible(true)} onDisappear={() => setVisible(false)}>
-    <HStack spacing={4} frame={{ maxWidth: "infinity", height: 14 }} offset={{ x: 0, y: -14 }}>
+    <HStack spacing={4} frame={{ maxWidth: "infinity", height: 8 }} offset={{ x: 0, y: -14 }}>
       <Spacer />
       <Circle fill={err ? "systemRed" : "systemGreen"} frame={{ width: 5, height: 5 }} />
       <Text font={11} foregroundStyle={err ? "systemRed" : "systemGreen"}>{err ? "连接失败" : ov ? "运行正常" : "连接中"}</Text>
