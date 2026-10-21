@@ -319,8 +319,8 @@ function DockerPage({ active }: { active: Controller }) {
     <Section header={<Text>容器</Text>}>
       {list.map(x => <NavigationLink key={x.id} destination={<ContainerPage active={active} x={x} />}
           trailingSwipeActions={{ allowsFullSwipe: false, actions: [
-            x.state === "running" ? <Button title="停止" systemImage="stop.fill" tint="systemRed" action={() => act(x, "stop", "停止")} /> : <Button title="启动" systemImage="play.fill" tint="systemGreen" action={() => act(x, "start", "启动")} />,
-            <Button title="重启" systemImage="arrow.clockwise" tint="systemBlue" action={() => act(x, "restart", "重启")} />,
+            x.state === "running" ? <Button title="停止" tint="systemRed" action={() => act(x, "stop", "停止")} /> : <Button title="启动" tint="systemGreen" action={() => act(x, "start", "启动")} />,
+            <Button title="重启" tint="systemBlue" action={() => act(x, "restart", "重启")} />,
           ] }}>
         <HStack spacing={10}>
           <DockerLogo size={26} />
@@ -445,7 +445,7 @@ function FrpPage({ active }: { active: Controller }) {
     </Section> : null}
     {info ? <Section header={<Text>穿透规则</Text>}>
       {info.proxies.map(x => <NavigationLink key={x.id} destination={<FrpProxyPage active={active} initial={x} onDone={reload} />}
-          trailingSwipeActions={{ allowsFullSwipe: false, actions: [<Button title="删除" systemImage="trash" tint="systemRed" action={() => { void guarded(setBusy, async () => { await confirmed(`${active.name} · ${x.name}`, "删除该穿透规则并重启 frpc。", () => deleteFrpProxy(active, x.id)); reload() }) }} />] }}>
+          trailingSwipeActions={{ allowsFullSwipe: false, actions: [<Button title="删除" tint="systemRed" action={() => { void guarded(setBusy, async () => { await confirmed(`${active.name} · ${x.name}`, "删除该穿透规则并重启 frpc。", () => deleteFrpProxy(active, x.id)); reload() }) }} />] }}>
         <VStack alignment="leading" spacing={2}>
           <Text fontWeight="semibold">{x.name}</Text>
           <Text font={12} foregroundStyle="secondaryLabel">{`${x.type.toUpperCase()} · ${x.local} → ${x.remote}`}</Text>
@@ -492,14 +492,12 @@ function FrpProxyPage({ active, initial, onDone }: { active: Controller; initial
 }
 
 
-function PkgRow({ p, onTap }: { p: Pkg; onTap: () => void }) {
-  return <Button buttonStyle="plain" action={onTap}>
-    <VStack alignment="leading" spacing={3} frame={{ maxWidth: "infinity", alignment: "leading" as any }}>
-      <HStack><Text fontWeight="semibold">{p.name}</Text><Spacer /><Text font={12} foregroundStyle="secondaryLabel">{p.upgradeTo ? `${p.version} → ${p.upgradeTo}` : p.version}</Text></HStack>
-      <Text font={12} foregroundStyle="secondaryLabel" lineLimit={2}>{p.desc || "无描述"}</Text>
-      <Text font={11} foregroundStyle="tertiaryLabel">{`${p.installed ? "已安装 · " : ""}${p.size ? mib(p.size) : ""}`}</Text>
-    </VStack>
-  </Button>
+function PkgRow({ p, actions }: { p: Pkg; actions: any[] }) {
+  return <VStack alignment="leading" spacing={3} frame={{ maxWidth: "infinity", alignment: "leading" as any }} trailingSwipeActions={{ allowsFullSwipe: false, actions }}>
+    <HStack><Text fontWeight="semibold">{p.name}</Text><Spacer /><Text font={12} foregroundStyle="secondaryLabel">{p.upgradeTo ? `${p.version} → ${p.upgradeTo}` : p.version}</Text></HStack>
+    <Text font={12} foregroundStyle="secondaryLabel" lineLimit={2}>{p.desc || "无描述"}</Text>
+    <Text font={11} foregroundStyle="tertiaryLabel">{`${p.installed ? "已安装 · " : ""}${p.size ? mib(p.size) : ""}`}</Text>
+  </VStack>
 }
 
 function SoftwarePage({ active }: { active: Controller }) {
@@ -517,16 +515,11 @@ function SoftwarePage({ active }: { active: Controller }) {
     if (!await confirmed(`${active.name} · ${title}`, effect, async () => { const r = await fn(); setLog(`${r.code === 0 ? "成功" : "失败（代码 " + r.code + "）"}\n${r.out}`) })) return
     setAvailable(null); setTick(t => t + 1)
   })
-  const act = async (p: Pkg) => {
-    if (p.installed) {
-      const i = await Dialog.actionSheet({ title: p.name, message: p.desc, actions: [...(p.upgradeTo ? [{ label: `升级到 ${p.upgradeTo}` }] : []), { label: "卸载", destructive: true }] })
-      if (i == null) return
-      if (p.upgradeTo && i === 0) run(p.name, `升级到 ${p.upgradeTo}；可能重启相关服务。`, () => pkgUpgrade(active, [p.name]))
-      else run(p.name, "卸载软件包及其不再需要的依赖；可能导致依赖它的功能失效。", () => pkgRemove(active, [p.name]))
-    } else if (await Dialog.confirm({ title: p.name, message: `${p.desc}\n\n版本 ${p.version}${p.size ? " · " + mib(p.size) : ""}`, confirmLabel: "安装", cancelLabel: "取消" })) {
-      run(p.name, "下载并安装；会改动系统。", () => pkgInstall(active, [p.name]))
-    }
-  }
+  // 左滑按钮：纯文字，不带图标（与面板设置里的“删除”一致）；点击行不触发操作。
+  const swipeFor = (p: Pkg): any[] => p.installed
+    ? [...(p.upgradeTo ? [<Button title="升级" tint="systemBlue" action={() => run(p.name, `升级到 ${p.upgradeTo}；可能重启相关服务。`, () => pkgUpgrade(active, [p.name]))} />] : []),
+       <Button title="卸载" tint="systemRed" action={() => run(p.name, "卸载软件包及其不再需要的依赖；可能导致依赖它的功能失效。", () => pkgRemove(active, [p.name]))} />]
+    : [<Button title="安装" tint="systemBlue" action={() => run(p.name, "下载并安装；会改动系统。", () => pkgInstall(active, [p.name]))} />]
   return <Form navigationTitle="软件管理" navigationBarTitleDisplayMode="inline">
     {err ? <Section><Text foregroundStyle="systemRed">{err}</Text></Section> : null}
     <Section header={<Text>磁盘空间</Text>} footer={<Text>软件包操作可能破坏系统，请谨慎。</Text>}><Text foregroundStyle="secondaryLabel">{disk || "-"}</Text></Section>
@@ -543,7 +536,7 @@ function SoftwarePage({ active }: { active: Controller }) {
       <Picker title="" pickerStyle="segmented" value={tab} onChanged={(v: any) => { setTab(v); setLimit(100) }}><Text tag="available">可用</Text><Text tag="installed">已安装</Text><Text tag="updates">更新</Text></Picker>
     </Section>
     <Section footer={<Text>{tab !== "installed" && !available ? "正在读取软件源（首次约十几秒）…" : shown.total > shown.items.length ? `显示 ${shown.items.length} / ${shown.total}，输入关键字缩小范围` : `共 ${shown.total} 项`}</Text>}>
-      {shown.items.map(p => <PkgRow key={p.name + p.version} p={tab === "available" && installed.some(i => i.name === p.name) ? { ...p, installed: true } : p} onTap={() => act(tab === "available" && installed.some(i => i.name === p.name) ? { ...p, installed: true } : p)} />)}
+      {shown.items.map(p => { const q = tab === "available" && installed.some(i => i.name === p.name) ? { ...p, installed: true, upgradeTo: updates.find(u => u.name === p.name)?.upgradeTo } : p; return <PkgRow key={p.name + p.version} p={q} actions={swipeFor(q)} /> })}
       {shown.total > shown.items.length ? <Button title="显示更多" action={() => setLimit(limit + 100)} /> : null}
     </Section>
     {log ? <Section header={<Text>操作输出</Text>}><Text font={11} foregroundStyle="secondaryLabel">{log}</Text></Section> : null}
