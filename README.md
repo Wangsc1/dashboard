@@ -1,3 +1,7 @@
+## 1.5.6
+
+代理/规则/连接/更多页此前经由 `Shell` 组件间接返回 ScrollView，而唯一正常的主页直接返回 ScrollView。本版改为直接展开 Shell，使这些页面的 toolbar 与主页处于同一层级。这是依据主页/其他页差异的推断，需真机确认。
+
 ## 1.5.5
 
 回到ScriptGit同款“每Tab独立NavigationStack”，但Stack直接承载业务页，不再额外包VStack；X与菜单由页面根的简单ToolBarProps只声明一次。1.5.4的共享栈会导致顶部按钮整体消失，已撤销。真机效果仍待确认。
