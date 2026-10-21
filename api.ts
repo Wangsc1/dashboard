@@ -1,6 +1,6 @@
 
 import { getPreferences, customHeaders, recordEvent, controllerHealth, feedback } from "./preferences"
-export const VERSION = "1.5.140"
+export const VERSION = "1.5.141"
 
 export type Kind = "clash" | "openwrt"
 export type Plugin = "openclash" | "nikki" | "mihomo"
@@ -451,27 +451,31 @@ export async function testNodes(c0: Controller, names: string[]): Promise<Record
   }))
   return res
 }
-export async function testGroup(c0: Controller, g: Group): Promise<Record<string, number>> {
+export async function testGroup(c0: Controller, g: Group, onProgress?: (name: string, delay: number) => void): Promise<Record<string, number>> {
   const c = await cc(c0)
   const res: Record<string, number> = {}
   const prefs = getPreferences(), testURL = prefs.testURL, timeout = prefs.testTimeout
-  {
+  const report = (n: string, d: number) => { try { onProgress?.(n, d) } catch {} }
+  // Phase 1: test nodes concurrently and report each success as soon as it returns, instead of waiting for the slowest node.
+  const names = [...new Set(g.all)], queue = [...names]
+  await Promise.all(Array.from({ length: Math.min(16, queue.length) }, async () => {
+    while (queue.length) {
+      const n = queue.shift()!
+      let d = 0
+      try { const j = await http(c, `/proxies/${enc(n)}/delay?url=${enc(testURL)}&timeout=${timeout}`, { timeout: Math.ceil(timeout / 1000) + 2 }); d = num(j.delay) } catch { d = 0 }
+      res[n] = d
+      if (d > 0) report(n, d)
+    }
+  }))
+  // Phase 2: some nodes only answer the group delay API; ask it once for the nodes that failed individually.
+  const failed = names.filter(n => !(res[n] > 0))
+  if (failed.length) {
     try {
       const j = await http(c, `/group/${enc(g.name)}/delay?url=${enc(testURL)}&timeout=${timeout}`, { timeout: Math.ceil(timeout / 1000) + 2 })
-      for (const [k, v] of Object.entries<any>(j)) res[k] = num(v)
-      recordEvent("test", Object.values(res).some(v => v > 0))
-      return res
-    } catch { recordEvent("fallback", false, { warning: true })  }
-    const queue = [...g.all]
-    await Promise.all(Array.from({ length: 6 }, async () => {
-      while (queue.length) {
-        const n = queue.shift()!
-        try { const j = await http(c, `/proxies/${enc(n)}/delay?url=${enc(testURL)}&timeout=${timeout}`, { timeout: Math.ceil(timeout / 1000) + 2 }); res[n] = num(j.delay) } catch { res[n] = 0 }
-      }
-    }))
-    recordEvent("test", Object.values(res).some(v => v > 0))
-    return res
+      for (const n of failed) { const v = num((j as any)[n]); if (v > 0) { res[n] = v; report(n, v) } }
+    } catch { recordEvent("fallback", false, { warning: true }) }
   }
+  recordEvent("test", Object.values(res).some(v => v > 0))
   return res
 }
 

@@ -295,12 +295,12 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     calls.length = 0; responder = () => ({ status: 500 }); await assert.rejects(() => api.selectProxy(c, 'g', 'n')); assert.equal(calls.length, 1)
     responder = (u, i) => ({ status: i.method === 'DELETE' ? 500 : 200 }); await assert.rejects(() => api.selectProxy(c, 'g', 'n'), /代理已切换/)
   })
-  await test('测速设置实际进入请求；回退逐节点测速与警告日志', async () => {
+  await test('测速设置实际进入请求；逐节点并发测速并逐个回报，仅失败节点再用整组测速兜底', async () => {
     pref.savePreferences({ testURL: 'https://test.invalid/probe', testTimeout: 3200 }); calls.length = 0
-    responder = u => u.includes('/group/') ? { status: 404 } : { body: { delay: 23 } }
-    const result = await api.testGroup(c, { name: 'G', all: ['A', 'B'] })
-    assert.equal(result.A, 23); assert.equal(result.B, 23)
-    assert.ok(calls.every(x => x.url.includes('timeout=3200') && x.url.includes(encodeURIComponent('https://test.invalid/probe')))); assert.ok(pref.getLogs().some(x => x.level === 'warning'))
+    responder = u => u.includes('/group/') ? { body: { C: 41 } } : u.includes('/proxies/C/') ? { status: 504 } : { body: { delay: 23 } }
+    const seen = []; const result = await api.testGroup(c, { name: 'G', all: ['A', 'B', 'C'] }, (n, d) => seen.push([n, d]))
+    assert.equal(result.A, 23); assert.equal(result.B, 23); assert.equal(result.C, 41); assert.equal(seen.length, 3); assert.equal(calls.filter(x => x.url.includes('/group/')).length, 1)
+    assert.ok(calls.every(x => x.url.includes('timeout=3200') && x.url.includes(encodeURIComponent('https://test.invalid/probe')))); 
   })
   await test('真实模拟登录/自动发现：敏感响应、错误原文均不进应用日志', async () => {
     const wrt = api.saveController({ name: 'router', host: 'mock.invalid', port: 80, https: false, username: 'root', plugin: 'nikki', auto: true, cport: 9090 }, 'password-sensitive', '')
@@ -570,7 +570,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) { const lazy = ['proxies','rules','connections'].includes(ids[i]) && ids[i] !== id; assert.equal(nodes(tree, types[i]).length, lazy ? 0 : 1); if (!lazy) assert.equal(nodes(tree, types[i])[0].props.selected, ids[i] === id) }
     }
-    assert.equal(api.VERSION, '1.5.140'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.5.141'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('独立导航栈保留业务owner和身份，只有选中页提供可见工具栏', () => {
     pref.savePreferences({ defaultPage: 'overview' })
@@ -1345,7 +1345,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     const arrow = t => nodes(t, 'Button').find(n => !n.props.frame && n.props.buttonStyle === 'plain' && nodes(n, 'Image').some(i => i.props.systemName.startsWith('chevron.')))
     arrow(tree).props.action(); tree = render(pages.GroupSection, props); await flush(); assert.equal(cards(tree).length, 0)
     arrow(tree).props.action(); tree = render(pages.GroupSection, props); await flush(); assert.equal(cards(tree).length, 2)
-    responder = () => ({ body: { A: 51, B: 62 } })
+    responder = u => ({ body: { delay: u.includes('/proxies/A/') ? 51 : 62 } })
     await nodes(tree, 'Button').find(n => n.props.systemImage === 'bolt.fill').props.action(); await flush(); tree = render(pages.GroupSection, props)
     assert.ok(text(tree).includes('51ms'))
     for (const n of cards(tree)) { const dot = nodes(n, 'Circle').find(x => x.props.frame?.width === 6), label = nodes(n, 'Text').find(x => /ms$/.test(String(x.props.children))); assert.equal(label.props.foregroundStyle, dot.props.fill); assert.notEqual(label.props.foregroundStyle, 'white') }
@@ -1550,7 +1550,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       const diagnostic = logs.filter(x => x.startsWith('[preferences-icon]'))
       for (const stage of ['change','accepted','proxies-render','group-render']) assert.ok(diagnostic.some(x => x.includes('stage=' + stage) && x.includes('enabled=false')))
       assert.ok(diagnostic.every(x => !x.includes('private.invalid') && !x.includes('private-group-name') && !x.includes('secret-')))
-      assert.ok(diagnostic.every(x => x.includes('build=1.5.140') && /instance=[a-z0-9]+/.test(x)))
+      assert.ok(diagnostic.every(x => x.includes('build=1.5.141') && /instance=[a-z0-9]+/.test(x)))
       assert.equal(new Set(diagnostic.map(x => x.match(/instance=([^ ]+)/)[1])).size, 1)
     } finally { context.console = originalConsole; unmount(); pref.savePreferences({ customIcons: true, testURL: 'https://www.gstatic.com/generate_204' }) }
   })
