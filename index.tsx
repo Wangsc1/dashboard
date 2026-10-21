@@ -579,20 +579,22 @@ function EditController({ initial, onDone }: { initial?: Controller; onDone: () 
     if (v && entry.draft.port === "80") change("port",setPort)("443")
     if (!v && entry.draft.port === "443") change("port",setPort)("80")
   }
-  async function save() {
+  async function save(auto=false) {
     if (entry.busy || entry.finished) return
-    entry.busy=true;setSaving(true); setErr("")
+    entry.busy=true;if(!auto)setSaving(true); setErr("")
     try {
       const d=entry.draft
       const c = saveController({ id: initial?.id, name:d.name, host:d.host, port:Number(d.port), https:d.https, username:d.username, plugin:d.plugin, auto:d.auto, cport:Number(d.cport)||9090 }, d.password, d.csecret)
       // Editing a stored connection is local-only. Persist before dismiss, never onDisappear.
-      if(initial){entry.finished=true;onDone();dismiss();return}
-      try { await loadOverview(c) } catch (e) { await Dialog.alert({ title: "已保存，但连接测试失败", message: msg(e) }); onDone(); dismiss(); return }
+      if(initial){entry.finished=true;onDone();if(!auto)dismiss();return}
+      try { await loadOverview(c) } catch (e) { await Dialog.alert({ title: "已保存，但连接测试失败", message: msg(e) }); onDone(); if(!auto)dismiss(); return }
       try { await loadClashOverview(c) } catch (e) { await Dialog.alert({ title: "已保存，路由器已连接，但代理控制器获取失败", message: msg(e) }) }
-      onDone(); dismiss()
-    } catch (e) { setErr(msg(e)) } finally { entry.busy=false;setSaving(false) }
+      onDone(); if(!auto)dismiss()
+    } catch (e) { setErr(msg(e)) } finally { entry.busy=false;if(!auto)setSaving(false) }
   }
-  return <Form background="systemBackground" scrollContentBackground="hidden" navigationTitle={initial ? "编辑 OpenWrt" : "添加 OpenWrt"} navigationBarTitleDisplayMode="inline" toolbar={initial?{topBarTrailing:<Button title={saving ? "保存中…" : "保存"} disabled={saving} action={save} />}:{ confirmationAction: <Button title={saving ? "保存中…" : "保存"} disabled={saving} action={save} /> }}>
+  return <Form background="systemBackground" scrollContentBackground="hidden" navigationTitle={initial ? "编辑 OpenWrt" : "添加 OpenWrt"} navigationBarTitleDisplayMode="inline"
+    onDisappear={initial?()=>save(true):undefined}
+    toolbar={initial?undefined:{ confirmationAction: <Button title={saving ? "保存中…" : "保存"} disabled={saving} action={()=>save()} /> }}>
     <Section header={<Text>基本信息</Text>}>
       <TextField title="名称" value={name} onChanged={change("name",setName)} prompt="例如：家庭路由" />
       <TextField title="地址" value={host} onChanged={change("host",setHost)} prompt="IP 地址" />
