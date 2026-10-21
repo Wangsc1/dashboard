@@ -429,7 +429,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) { const lazy = ['proxies','rules','connections'].includes(ids[i]) && ids[i] !== id; assert.equal(nodes(tree, types[i]).length, lazy ? 0 : 1); if (!lazy) assert.equal(nodes(tree, types[i])[0].props.selected, ids[i] === id) }
     }
-    assert.equal(api.VERSION, '1.5.111'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.5.112'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('独立导航栈保留业务owner和身份，只有选中页提供可见工具栏', () => {
     pref.savePreferences({ defaultPage: 'overview' })
@@ -1146,6 +1146,18 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     render(pages.ConnectionsPage,{active:c,version:0});await flush();tree=render(pages.ConnectionsPage,{active:c,version:0})
     assert.ok([...intervals.values()].some(x=>x.ms===1500));assert.ok(!text(tree).includes('请求未完成'));unmount();responder=()=>({status:204})
   })
+  await test('新连接分批插入：旧卡片始终保留，不改变透明度或整页动画', async () => {
+    const mk=ids=>({body:{connections:ids.map((id,i)=>({id,start:new Date(now+i).toISOString(),metadata:{host:id+'.invalid'},upload:0,download:0}))}})
+    responder=()=>mk(['waterA']);render(pages.ConnectionsPage,{active:c,version:0},true);await flush()
+    const timers=[],original=context.setTimeout;context.setTimeout=(fn,ms)=>{timers.push({fn,ms});return timers.length}
+    try {
+      responder=()=>mk(['waterA','waterB','waterC']);[...intervals.values()].find(x=>x.ms===1500).fn();await flush()
+      let tree=render(pages.ConnectionsPage,{active:c,version:0});assert.ok(text(tree).includes('waterA.invalid'));assert.ok(!text(tree).includes('waterB.invalid'));assert.equal(tree.props.animation,undefined)
+      assert.equal(timers.length,2);assert.equal(timers[0].ms,60);assert.equal(timers[1].ms,120)
+      timers[0].fn();tree=render(pages.ConnectionsPage,{active:c,version:0});assert.ok(text(tree).includes('waterB.invalid'));assert.ok(!text(tree).includes('waterC.invalid'))
+      timers[1].fn();tree=render(pages.ConnectionsPage,{active:c,version:0});assert.ok(text(tree).includes('waterC.invalid'));assert.ok(nodes(tree,'VStack').filter(n=>n.props.opacity!==undefined).every(n=>n.props.opacity===1))
+    } finally {context.setTimeout=original;unmount();responder=()=>({status:204})}
+  })
   await test('代理页缓存：重新进入立即显示上次策略组，读取完成前不提示空', async () => {
     responder = url => ({ body: url.includes('/providers/') ? { providers: {} } : { proxies: { CacheGroup: { type: 'Selector', now: 'X', all: ['X'] }, X: { type: 'Shadowsocks' } } } })
     render(pages.ProxiesPage, { active: c, version: 0 }, true); await flush(); unmount()
@@ -1167,7 +1179,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       const diagnostic = logs.filter(x => x.startsWith('[preferences-icon]'))
       for (const stage of ['change','accepted','proxies-render','group-render']) assert.ok(diagnostic.some(x => x.includes('stage=' + stage) && x.includes('enabled=false')))
       assert.ok(diagnostic.every(x => !x.includes('private.invalid') && !x.includes('private-group-name') && !x.includes('secret-')))
-      assert.ok(diagnostic.every(x => x.includes('build=1.5.111') && /instance=[a-z0-9]+/.test(x)))
+      assert.ok(diagnostic.every(x => x.includes('build=1.5.112') && /instance=[a-z0-9]+/.test(x)))
       assert.equal(new Set(diagnostic.map(x => x.match(/instance=([^ ]+)/)[1])).size, 1)
     } finally { context.console = originalConsole; unmount(); pref.savePreferences({ customIcons: true, testURL: 'https://www.gstatic.com/generate_204' }) }
   })
