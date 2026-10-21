@@ -212,7 +212,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
   await test('全局配置分组顺序：启动紧随主题，阈值紧邻网络请求之前', () => {
     const tree = render(ui.GlobalConfigPage, { active: null }, true)
     const headers = nodes(tree, 'Section').map(n => text(n.props.header))
-    assert.equal(headers.join('|'), '主题|启动设置|代理组|缓存管理|控制器管理|切换代理设置|交互体验|延迟阈值设置|网络请求|测速设置|运行日志')
+    assert.equal(headers.join('|'), '主题|启动设置|代理组|缓存管理|控制器管理|切换代理设置|交互体验|延迟阈值设置|网络请求|连接超时|测速设置|运行日志')
     unmount()
   })
   await test('删除保存测速链接按钮；输入结束自动保存、拒绝无效值并显示失败', async () => {
@@ -418,7 +418,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) { const lazy = ['proxies','rules','connections'].includes(ids[i]) && ids[i] !== id; assert.equal(nodes(tree, types[i]).length, lazy ? 0 : 1); if (!lazy) assert.equal(nodes(tree, types[i])[0].props.selected, ids[i] === id) }
     }
-    assert.equal(api.VERSION, '1.5.74'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.5.75'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('独立导航栈保留业务owner和身份，只有选中页提供可见工具栏', () => {
     pref.savePreferences({ defaultPage: 'overview' })
@@ -938,7 +938,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       const diagnostic = logs.filter(x => x.startsWith('[preferences-icon]'))
       for (const stage of ['change','accepted','proxies-render','group-render']) assert.ok(diagnostic.some(x => x.includes('stage=' + stage) && x.includes('enabled=false')))
       assert.ok(diagnostic.every(x => !x.includes('private.invalid') && !x.includes('private-group-name') && !x.includes('secret-')))
-      assert.ok(diagnostic.every(x => x.includes('build=1.5.74') && /instance=[a-z0-9]+/.test(x)))
+      assert.ok(diagnostic.every(x => x.includes('build=1.5.75') && /instance=[a-z0-9]+/.test(x)))
       assert.equal(new Set(diagnostic.map(x => x.match(/instance=([^ ]+)/)[1])).size, 1)
     } finally { context.console = originalConsole; unmount(); pref.savePreferences({ customIcons: true, testURL: 'https://www.gstatic.com/generate_204' }) }
   })

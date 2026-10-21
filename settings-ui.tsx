@@ -247,8 +247,8 @@ export function GlobalConfigPage({ active }: { active: Controller | null }) {
     <Section header={<Text>网络请求</Text>}>
       <HeaderFields />
       {toggle("nestedDelay", "嵌套代理组延迟显示")}
-      <Range title="连接超时时间" min={1} max={30} value={p.requestTimeout} suffix=" s" onChanged={n => update({ requestTimeout: n })} />
     </Section>
+    <Section header={<Text>连接超时</Text>}><Range title="连接超时时间" min={1} max={30} value={p.requestTimeout} suffix=" s" onChanged={n => update({ requestTimeout: n })} /></Section>
     <Section header={<Text>测速设置</Text>}><TestURLField /><Range title="超时时间" min={1000} max={10000} step={100} value={p.testTimeout} suffix=" ms" onChanged={n => update({ testTimeout: n })} /></Section>
     <Section header={<Text>运行日志</Text>}><Range title="最大记录条数" min={100} max={2000} step={100} value={p.logLimit} onChanged={n => update({ logLimit: n })} />{toggle("detailedAPI", "记录详细 API 请求")}</Section>
   </Form>
