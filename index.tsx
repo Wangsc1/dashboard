@@ -197,6 +197,12 @@ function OverviewPage({ active, version, onSwitch, onClose }: { active: Controll
   if (!active) return <Form navigationTitle="dashboard" navigationBarTitleDisplayMode="inline" toolbar={toolbar} navigationDestination={destination}><NoController /></Form>
   return <ScrollView onAppear={() => setVisible(true)} onDisappear={() => setVisible(false)} navigationTitle="OpenWrt 状态" navigationBarTitleDisplayMode="inline" toolbar={toolbar} navigationDestination={destination}>
     <VStack spacing={12} padding={{ horizontal: 14, vertical: 8 }}>
+      <HStack spacing={4} frame={{ maxWidth: "infinity" }}>
+        <Spacer />
+        <Circle fill={err ? "systemRed" : "systemGreen"} frame={{ width: 5, height: 5 }} />
+        <Text font={11} foregroundStyle={err ? "systemRed" : "systemGreen"}>{err ? "连接失败" : ov ? "运行正常" : "连接中"}</Text>
+        <Spacer />
+      </HStack>
       {all.length > 1 ? <Card>
         <Picker title="当前路由器" pickerStyle="menu" value={active.id} onChanged={(v: string) => { setActive(v); onSwitch() }}>
           {all.map(c => <Text key={c.id} tag={c.id}>{c.name}</Text>)}

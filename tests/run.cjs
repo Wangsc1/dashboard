@@ -253,9 +253,9 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) assert.equal(nodes(tree, types[i]).length, ids[i] === id ? 1 : 0)
     }
-    assert.equal(api.VERSION, '1.5.11'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.5.12'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
-  await test('1.5.11 共享栈/简单ToolBarProps：唯一业务页owner、隐藏Tab无注册', () => {
+  await test('1.5.12 共享栈/简单ToolBarProps：唯一业务页owner、隐藏Tab无注册', () => {
     pref.savePreferences({ defaultPage: 'overview' })
     let rootTree = render(app.Root, {}, true)
     const pagesByTab = { home: app.OverviewPage, proxies: app.ProxiesPage, rules: app.RulesPage, connections: app.ConnectionsPage, more: app.MorePage }
@@ -299,7 +299,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     assert.ok(!source.includes('const content ='));assert.ok(!source.includes('ROOT_TABS.map'));assert.ok(!source.includes('toolbar={'));assert.ok(!source.includes('topBarLeading'))
     const helper=fs.readFileSync(path.join(root,'root-toolbar.tsx'),'utf8');assert.ok(!helper.includes('ToolbarItem'));assert.ok(!helper.includes('<Toolbar'));assert.ok(!helper.includes('key='));assert.ok(!helper.includes('id='))
   })
-  await test('1.5.11 编辑控制器仍进管理页；共享栈push详情不附根X', () => {
+  await test('1.5.12 编辑控制器仍进管理页；共享栈push详情不附根X', () => {
     let closes=0
     let page=render(app.OverviewPage,{active:c,version:0,onSwitch(){},onClose(){closes++}},true)
     button(trailing(page.props.toolbar),'编辑控制器').props.action()
@@ -325,7 +325,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     let tree = render(app.OverviewPage, { active: router, version: 0, onSwitch() {} }); tree.props.onDisappear(); render(app.OverviewPage, { active: router, version: 0, onSwitch() {} }); await flush()
     assert.ok(![...intervals.values()].some(x => x.ms === 1000)); unmount(); assert.equal(intervals.size, 0)
   })
-  await test('1.5.11 OpenWrt卡：目标平台、内核版本、CPU两次采样', async () => {
+  await test('1.5.12 OpenWrt卡：目标平台、内核版本、CPU两次采样', async () => {
     const router = { ...api.listControllers().find(x => x.kind === 'openwrt'), id: 'cpu-test' }
     let stat = 'cpu  100 0 100 800 0 0 0 0 0 0\n'
     responder = (url, init) => { const b = JSON.parse(init.body || '{}'), path = b.params?.[3]?.path
@@ -337,11 +337,11 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     o = await api.loadOverview(router); assert.equal(Math.round(o.wrt.cpu), 50)
     const src = fs.readFileSync(path.join(root, 'index.tsx'), 'utf8'); for (const t of ['目标平台','内核版本','CPU 使用率']) assert.ok(src.includes(`title="${t}"`))
   })
-  await test('1.5.11 图标地址：路径中的@允许，查询串/片段/用户信息仍拒绝', async () => {
+  await test('1.5.12 图标地址：路径中的@允许，查询串/片段/用户信息仍拒绝', async () => {
     responder = () => ({ body: {}, contentType: 'image/png' })
     assert.ok(await pref.cachedIcon('https://fastly.jsdelivr.net/gh/Koolson/Qure@master/IconSet/Color/Emby.png'))
     for (const u of ['http://x.invalid/a.png', 'https://x.invalid/a.png?k=1', 'https://x.invalid/a.png#f', 'https://user:pw@x.invalid/a.png']) assert.equal(await pref.cachedIcon(u), null)
-    const src = fs.readFileSync(path.join(root, 'index.tsx'), 'utf8'); assert.ok(src.includes('navigationTitle="OpenWrt 状态"')); assert.ok(!src.includes('运行正常'))
+    const src = fs.readFileSync(path.join(root, 'index.tsx'), 'utf8'); assert.ok(src.includes('navigationTitle="OpenWrt 状态"')); assert.ok(src.includes('运行正常')); assert.ok(src.indexOf('运行正常') < src.indexOf('title="目标平台"'))
   })
   await test('六卡104pt；速率SVG全高背景且前景文字最后绘制；连接内存无曲线', () => {
     const tree = render(app.StatCard, { icon: 'link', color: '#3B82F6', title: '下载速率', parts: ['1', 'KB/s'], spark: [10, 20] }, true)
