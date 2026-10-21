@@ -479,10 +479,10 @@ export function NikkiFilePresentation({closed,...props}:{c:Controller;base:Nikki
 const nikkiFileDrafts=new Map<string,{original:string;text:string}>()
 export function NikkiFileEditor({c,base,file,done,entryKey="direct",onExit}:{c:Controller;base:NikkiManagement;file:NikkiFile;done:(saved?:boolean)=>void;entryKey?:string;onExit?:()=>void}) {
   const work=useWork(c),p=usePreferences(["theme"]),[original,setOriginal]=useState<string|null>(null),[text,setText]=useState(""),[loadError,setLoadError]=useState(""),[tick,setTick]=useState(0),[ready,setReady]=useState(false),[appeared,setAppeared]=useState(false)
-  const [host]=useState(()=>({controller:new WebViewController({ephemeral:true}),alive:true,generation:0,revision:0,theme:p.theme,registration:null as Promise<unknown>|null,initial:null as null|{text:string;generation:number;theme:string},initialized:null as null|((error?:string)=>void),baseline:null as string|null,exitTask:null as Promise<void>|null,snapshotRequest:0,snapshot:null as null|((value:{text:string;revision:number;generation:number})=>void)}))
+  const [host]=useState(()=>({controller:new WebViewController({ephemeral:true}),alive:true,generation:0,revision:0,theme:p.theme,registration:null as Promise<unknown>|null,initial:null as null|{text:string;generation:number;theme:string},initialized:null as null|((error?:string)=>void),baseline:null as string|null,ready:false,closing:false,unmounted:false,saving:null as Promise<void>|null,writing:false,exitTask:null as Promise<void>|null,snapshotRequest:0,snapshot:null as null|((value:{text:string;revision:number;generation:number})=>void)}))
   const draftKey=JSON.stringify(work.owner)+":"+file.key
   host.theme=p.theme
-  const sameSource=()=>host.alive&&(work.guard.alive||work.guard.leaving)&&work.guard.source===source(work.owner)
+  const sameSource=()=>host.alive&&work.guard.source===source(work.owner)
   useEffect(()=>{
     host.alive=true
     // No navigation URL is needed: loadHTML is entirely inline and CSP forbids all
@@ -491,13 +491,13 @@ export function NikkiFileEditor({c,base,file,done,entryKey="direct",onExit}:{c:C
       host.controller.addScriptMessageHandler("editorReady",(value?:{generation:number})=>sameSource()&&value?.generation===host.generation?host.initial:null),
       host.controller.addScriptMessageHandler("editorInitialized",(value?:{generation:number})=>{if(sameSource()&&value?.generation===host.generation)host.initialized?.()}),
       host.controller.addScriptMessageHandler("editorInitError",(value?:{generation:number})=>{if(sameSource()&&value?.generation===host.generation)host.initialized?.("本地行号编辑器脚本初始化失败")}),host.controller.addScriptMessageHandler("editorSnapshot",(value?:{text:string;revision:number;generation:number;request:number})=>{if(value&&value.generation===host.generation&&value.request===host.snapshotRequest)host.snapshot?.(value)}),host.controller.addScriptMessageHandler("editorChanged",(message?:{text:string;revision:number;generation:number})=>{
-      if(sameSource()&&message?.generation===host.generation&&Number.isInteger(message.revision)&&message.revision>host.revision&&typeof message.text==="string"){host.revision=message.revision;setText(message.text);if(host.baseline!==null)nikkiFileDrafts.set(draftKey,{original:host.baseline,text:message.text})}
+      if(sameSource()&&message?.generation===host.generation&&Number.isInteger(message.revision)&&message.revision>host.revision&&typeof message.text==="string"){host.revision=message.revision;if(!host.unmounted)setText(message.text);if(host.baseline!==null)nikkiFileDrafts.set(draftKey,{original:host.baseline,text:message.text})}
     })])
-    return()=>work.afterLeave(()=>{host.alive=false;host.controller.dispose()})
+    return()=>{host.unmounted=true;void leaveFile(false).finally(()=>{host.alive=false;host.controller.dispose()})}
   },[])
   useEffect(()=>{
     if(!appeared)return
-    let alive=true;const generation=++host.generation;host.revision=0;host.initial=null;setOriginal(null);setText("");setReady(false);setLoadError("")
+    let alive=true;const generation=++host.generation;host.revision=0;host.initial=null;host.ready=false;setOriginal(null);setText("");setReady(false);setLoadError("")
     const current=()=>alive&&sameSource()&&generation===host.generation
     const timers=new Set<ReturnType<typeof setTimeout>>()
     function bounded<T>(promise:Promise<T>,ms:number,message:string):Promise<T>{
@@ -526,44 +526,77 @@ export function NikkiFileEditor({c,base,file,done,entryKey="direct",onExit}:{c:C
             host.controller.loadHTML(nikkiEditorHTML(generation)).then(ok=>{if(!ok)reject(new NikkiManagementError("本地行号编辑器加载失败"))},()=>reject(new NikkiManagementError("本地行号编辑器加载失败")))
           })
         })(),10000,"本地行号编辑器初始化超时；完整正文已保留，可重试或查看只读正文")
-        if(current())setReady(true)
+        if(current()){host.ready=true;setReady(true)}
       }catch(e){if(current()){host.initial=null;host.initialized=null;setLoadError(errorText(e))}}
     }
     void load();return()=>{alive=false;host.initialized=null;for(const timer of timers)clearTimeout(timer)}
   },[file.key,entryKey,tick,appeared])
   useEffect(()=>{if(ready)void host.controller.evaluateJavaScript(`window.nikkiEditor.setTheme(${JSON.stringify(p.theme)});`).catch(()=>{})},[p.theme,ready])
-  async function save(){
-    if(original===null||!ready)return
-    const generation=host.generation
-    await work.run(async()=>{
-      try{
-        // Pull the authoritative document, not a potentially delayed input-message state.
-        // Official examples disagree on expression vs function-body evaluation. Return
-        // values are unnecessary: the documented message bridge works under either mode.
-        const request=++host.snapshotRequest
-        let timer:ReturnType<typeof setTimeout>|undefined
-        const response=new Promise<{text:string;revision:number;generation:number}>((resolve,reject)=>{
-          host.snapshot=resolve
-          timer=setTimeout(()=>reject(new NikkiManagementError("未收到本地编辑器快照，未写入文件；草稿仍保留")),5000)
-        })
-        // A timeout can fire while the host is still evaluating the message send.
-        void response.catch(()=>{})
-        const draft=await (async()=>{try{
-          await host.controller.evaluateJavaScript(`void window.nikkiEditor.sendSnapshot(${request});`)
-          return await response
-        }finally{if(timer!==undefined)clearTimeout(timer);host.snapshot=null}})()
-        if(!work.current()||draft?.generation!==generation||typeof draft.text!=="string")return
-        host.revision=Math.max(host.revision,draft.revision);setText(draft.text);nikkiFileDrafts.set(draftKey,{original,text:draft.text})
-        if(draft.text===original){nikkiFileDrafts.delete(draftKey);return}
-        await work.confirm(`覆盖文件「${file.filename}」？可能是当前选用的配置。仅保存文件，不重载服务；大文件分块写入，失败可能留下部分内容，请勿在失败后重载。`,async()=>{
-          if(host.generation!==generation)return
-          await saveNikkiFile(work.owner,file.key,original,draft.text)
-          if(work.current()&&host.generation===generation){host.baseline=draft.text;setOriginal(draft.text);nikkiFileDrafts.delete(draftKey);done(true)}
-        })
-      }finally{if(sameSource()&&host.generation===generation)try{await host.controller.evaluateJavaScript("window.nikkiEditor.unlock();")}catch{}}
+  // Serialized local snapshots are also used on return, solely for in-memory
+  // recovery. Returning never calls save(), opens confirmation, or writes remotely.
+  async function snapshot(){
+    const request=++host.snapshotRequest
+    let timer:ReturnType<typeof setTimeout>|undefined
+    const response=new Promise<{text:string;revision:number;generation:number}>((resolve,reject)=>{
+      host.snapshot=resolve
+      timer=setTimeout(()=>reject(new NikkiManagementError("未收到本地编辑器快照，未写入文件；草稿仍保留")),5000)
     })
+    void response.catch(()=>{})
+    try{await host.controller.evaluateJavaScript(`void window.nikkiEditor.sendSnapshot(${request});`);return await response}
+    finally{if(timer!==undefined)clearTimeout(timer);host.snapshot=null}
   }
-  return <VStack alignment="leading" spacing={0} tabBarVisibility="hidden" background="systemBackground" frame={{maxWidth:"infinity",maxHeight:"infinity"}} navigationTitle={file.filename} navigationBarTitleDisplayMode="inline" onAppear={()=>{work.onAppear();setAppeared(true)}} onDisappear={()=>{const task=work.leave(save);if(host.exitTask!==task){host.exitTask=task;void task.then(()=>onExit?.())}return task}}>
+  function retain(draft:{text:string;revision:number;generation:number}){
+    if(draft.generation!==host.generation||typeof draft.text!=="string"||host.baseline===null)return false
+    host.revision=Math.max(host.revision,draft.revision)
+    if(draft.text===host.baseline)nikkiFileDrafts.delete(draftKey)
+    else nikkiFileDrafts.set(draftKey,{original:host.baseline,text:draft.text})
+    return true
+  }
+  async function unlock(){if(host.alive)try{await host.controller.evaluateJavaScript("window.nikkiEditor.unlock();")}catch{}}
+  function save():Promise<void>{
+    if(host.closing||host.saving||work.guard.busy||!work.current()||original===null||!ready||!!loadError||text===original)return Promise.resolve()
+    const generation=host.generation
+    host.saving=work.run(async()=>{
+      try{
+        const draft=await snapshot()
+        if(!sameSource()||generation!==host.generation||!retain(draft)||host.closing)return
+        setText(draft.text)
+        if(draft.text===host.baseline)return
+        await work.confirm(`覆盖文件「${file.filename}」？可能是当前选用的配置。仅保存文件，不重载服务；大文件分块写入，失败可能留下部分内容，请勿在失败后重载。`,async()=>{
+          if(host.closing||host.generation!==generation)return
+          // Once explicitly confirmed, finish this one source-bound write and its
+          // full read-back even if native back/unmount occurs. Never start another.
+          host.writing=true;work.guard.leaving=true
+          try{
+            await saveNikkiFile(work.owner,file.key,host.baseline!,draft.text)
+            host.baseline=draft.text;nikkiFileDrafts.delete(draftKey)
+            if(!host.closing&&!host.unmounted&&sameSource()){
+              setOriginal(draft.text);work.setNotice("已保存");done(true)
+            }
+          }catch(e){if(host.closing){await Dialog.alert({title:"保存未完成",message:errorText(e)})}else throw e}
+          finally{host.writing=false;work.guard.leaving=false}
+        })
+      }finally{await unlock()}
+    }).finally(()=>{host.saving=null})
+    return host.saving
+  }
+  function leaveFile(notify=true):Promise<void>{
+    if(host.exitTask)return host.exitTask
+    host.closing=true;work.onDisappear()
+    const task=(async()=>{
+      // A pending snapshot/confirmation is invalidated by closing; an already
+      // confirmed write is awaited before the controller can be disposed.
+      if(host.saving)await host.saving
+      if(host.closing&&host.ready&&sameSource())try{retain(await snapshot())}catch{/* retain last complete input-message draft */}finally{await unlock()}
+    })()
+    host.exitTask=task
+    if(notify)void task.then(()=>{if(host.closing)onExit?.()})
+    return task
+  }
+  const editorBackground=p.theme==="dark"?"#141820":p.theme==="light"?"#fff":{light:"#fff",dark:"#141820"}
+  const toolbar={topBarTrailing:<Button accessibilityLabel="保存" buttonStyle="plain" disabled={!ready||!!loadError||original===null||text===original||work.busy||host.closing||work.changed} action={save}><Image systemName="square.and.arrow.down" font={17} foregroundStyle="systemBlue" frame={{width:34,height:34}} background={<Circle fill="tertiarySystemFill"/>}/></Button>}
+  return <VStack alignment="leading" spacing={0} background={<RoundedRectangle cornerRadius={0} fill={editorBackground} ignoresSafeArea={{regions:"container",edges:"bottom"}}/>} frame={{maxWidth:"infinity",maxHeight:"infinity"}} navigationTitle={file.filename} navigationBarTitleDisplayMode="inline" toolbar={toolbar} onAppear={()=>{host.closing=false;host.exitTask=null;work.onAppear();setAppeared(true)}} onDisappear={()=>leaveFile()}>
+    <Status work={work}/>{work.changed?<Note error>来源已改变，请返回后重新进入</Note>:null}
     <ZStack frame={{maxWidth:"infinity",maxHeight:"infinity",minHeight:0}}>
       {/* Keep the native host mounted from the first render, including before onAppear.
           Only visibility changes after the full-body handshake, never its identity. */}
@@ -572,6 +605,5 @@ export function NikkiFileEditor({c,base,file,done,entryKey="direct",onExit}:{c:C
         {loadError?<><Note error>{loadError}</Note><Button title="重试读取" action={()=>setTick(t=>t+1)}/>{original!==null?<><Note>完整正文（只读恢复显示；行号编辑器未就绪，不能保存）</Note><ScrollView frame={{maxHeight:"infinity"}}><Text font={13} fontDesign="monospaced">{text}</Text></ScrollView></>:null}</>:<><ProgressView progressViewStyle="circular" foregroundStyle="secondaryLabel"/><Note>{original===null?"正在完整读取配置正文…":"正文已完整读取，正在初始化本地行号编辑器…"}</Note></>}
       </VStack>:null}
     </ZStack>
-    <Status work={work}/>{work.changed?<Note error>来源已改变，请返回后重新进入</Note>:null}
   </VStack>
 }
