@@ -6,10 +6,11 @@ import {
 } from "scripting"
 import {
   VERSION, Controller, Group, Conn, Rule, Overview, Plugin, PLUGINS, listControllers, saveController, removeController, getActive, setActive, getSecret, getClashSecret,
-  loadOverview, loadClashOverview, loadWrtInterfaces, loadWrtLeases, WrtIface, WrtLease, loadGroups, selectProxy, testGroup, loadConnections, closeConnection,
-  closeAllConnections, loadRules, fmtBytes, fmtSpeed, fmtParts, fmtUptime, fmtDuration, delayColor,
+  loadOverview, loadClashOverview, loadWrtInterfaces, loadWrtLeases, WrtIface, WrtLease, loadGroups, selectProxy, testGroup, loadConnections, loadConnectionHosts, closeConnection,
+  closeAllConnections, loadRules, DockerContainer, FrpInfo, loadDockerContainers, dockerAction, loadFrp, frpAction, fmtBytes, fmtSpeed, fmtParts, fmtUptime, fmtDuration, delayColor,
 } from "./api"
 
+import { confirmed } from "./dashboard-model"
 import { useSmoothPlot } from "./chart-ui"
 import { CHART_HISTORY } from "./chart"
 import { AppearancePage, GlobalConfigPage, LogsPage, KernelConfigPage, usePreferences } from "./settings-ui"
@@ -173,14 +174,19 @@ function OverviewPage({ active, version, onSwitch, onClose }: { active: Controll
     setHosts([])
     if (!active || !prefs.connectionBackground || !showCharts) return
     let alive = true
-    const read = () => loadConnections(active).then(xs => { if (alive) setHosts(xs.map(x => x.host).filter(Boolean).slice(0, 20)) }).catch(() => { if (alive) setHosts([]) })
-    void read(); const t = setInterval(read, 10000)
+    let reading = false
+    const read = () => {
+      if (reading) return
+      reading = true
+      loadConnectionHosts(active).then(xs => { if (alive) setHosts(h => h.length === xs.length && h.every((v, i) => v === xs[i]) ? h : xs) }).catch(() => { if (alive) setHosts([]) }).finally(() => { reading = false })
+    }
+    void read(); const t = setInterval(read, 30000)
     return () => { alive = false; clearInterval(t) }
   }, [active?.id, prefs.connectionBackground, showCharts])
   const w = ov?.wrt
   const memUsed = w ? Math.max(0, w.memTotal - w.memFree) : 0
   const toolbar = rootToolbar("home", onClose, <Menu label={<Image systemName="ellipsis.circle" />}>
-      <Button title="编辑控制器" systemImage="gearshape" action={() => setPage("settings")} />
+      <Button title="添加面板" systemImage="gearshape" action={() => setPage("settings")} />
       <Button title="运行日志" systemImage="doc.text" action={() => setPage("logs")} />
       <Button title="外观设置" systemImage="paintpalette" action={() => setPage("appearance")} />
       <Button title="全局配置" systemImage="slider.horizontal.3" action={() => setPage("global")} />
@@ -260,6 +266,63 @@ function WrtLeasesPage({ active, version }: { active: Controller; version: numbe
         <Text font={12} foregroundStyle="secondaryLabel">{`${l.ip} · ${l.mac}`}</Text>
       </VStack>)}
     </Section>
+  </Form>
+}
+
+function DockerPage({ active }: { active: Controller }) {
+  const [list, setList] = useState<DockerContainer[]>([])
+  const [err, setErr] = useState(""), [busy, setBusy] = useState(false), [tick, setTick] = useState(0)
+  useEffect(() => { let alive = true; loadDockerContainers(active).then(x => { if (alive) { setList(x); setErr("") } }).catch(() => { if (alive) setErr("Docker 读取不可用：路由器未启用 Docker 或账号权限不足。") }); return () => { alive = false } }, [active.id, tick])
+  const act = async (x: DockerContainer, action: "start" | "stop" | "restart", label: string) => {
+    if (busy) return
+    setBusy(true)
+    try { await confirmed(`${active.name} · ${x.name}`, `${label}容器；会影响该容器承载的服务。`, () => dockerAction(active, x.id, action)); setTick(t => t + 1) }
+    catch { await Dialog.alert({ title: "操作未完成", message: "Docker 未响应或权限不足。" }) }
+    finally { setBusy(false) }
+  }
+  return <Form navigationTitle="Docker 管理" navigationBarTitleDisplayMode="inline" toolbar={{ topBarTrailing: <Button title="刷新" systemImage="arrow.clockwise" action={() => setTick(t => t + 1)} /> }}>
+    {err ? <Section><Text foregroundStyle="systemRed">{err}</Text></Section> : null}
+    <Section header={<Text>{`容器 ${list.length}`}</Text>}>
+      {list.map(x => <VStack key={x.id} alignment="leading" spacing={3}
+          trailingSwipeActions={{ allowsFullSwipe: false, actions: [
+            x.state === "running" ? <Button title="停止" systemImage="stop.fill" tint="systemRed" action={() => act(x, "stop", "停止")} /> : <Button title="启动" systemImage="play.fill" tint="systemGreen" action={() => act(x, "start", "启动")} />,
+            <Button title="重启" systemImage="arrow.clockwise" tint="systemBlue" action={() => act(x, "restart", "重启")} />,
+          ] }}>
+        <HStack spacing={6}><Circle fill={x.state === "running" ? "systemGreen" : "systemGray"} frame={{ width: 7, height: 7 }} /><Text fontWeight="semibold">{x.name}</Text></HStack>
+        <Text font={12} foregroundStyle="secondaryLabel">{x.image}</Text>
+        <Text font={12} foregroundStyle="secondaryLabel">{x.status}</Text>
+      </VStack>)}
+    </Section>
+    <Section footer={<Text>左滑容器可启动、停止或重启，操作前会确认。</Text>}><Text font={12} foregroundStyle="secondaryLabel">不显示容器命令行与环境变量。</Text></Section>
+  </Form>
+}
+
+function FrpPage({ active }: { active: Controller }) {
+  const [info, setInfo] = useState<FrpInfo | null>(null)
+  const [err, setErr] = useState(""), [busy, setBusy] = useState(false), [tick, setTick] = useState(0)
+  useEffect(() => { let alive = true; loadFrp(active).then(x => { if (alive) { setInfo(x); setErr("") } }).catch(() => { if (alive) setErr("frp 读取不可用：路由器未安装 frpc 或账号权限不足。") }); return () => { alive = false } }, [active.id, tick])
+  const act = async (action: "start" | "stop" | "restart", label: string) => {
+    if (busy) return
+    setBusy(true)
+    try { await confirmed(`${active.name} · frpc`, `${label} frp 客户端；穿透服务会短暂中断。`, () => frpAction(active, action)); setTimeout(() => setTick(t => t + 1), 1500) }
+    catch { await Dialog.alert({ title: "操作未完成", message: "路由器未响应或权限不足。" }) }
+    finally { setBusy(false) }
+  }
+  return <Form navigationTitle="FRP 管理" navigationBarTitleDisplayMode="inline" toolbar={{ topBarTrailing: <Button title="刷新" systemImage="arrow.clockwise" action={() => setTick(t => t + 1)} /> }}>
+    {err ? <Section><Text foregroundStyle="systemRed">{err}</Text></Section> : null}
+    {info ? <Section header={<Text>服务</Text>}>
+      <HStack><Text>状态</Text><Spacer /><HStack spacing={6}><Circle fill={info.running ? "systemGreen" : "systemRed"} frame={{ width: 7, height: 7 }} /><Text foregroundStyle="secondaryLabel">{info.running ? "运行中" : "已停止"}</Text></HStack></HStack>
+      <HStack><Text>开机启动</Text><Spacer /><Text foregroundStyle="secondaryLabel">{info.enabled ? "已启用" : "未启用"}</Text></HStack>
+      {info.server ? <HStack><Text>服务端</Text><Spacer /><Text foregroundStyle="secondaryLabel">{info.server}</Text></HStack> : null}
+      <Button title={info.running ? "停止" : "启动"} systemImage={info.running ? "stop.fill" : "play.fill"} disabled={busy} action={() => act(info.running ? "stop" : "start", info.running ? "停止" : "启动")} />
+      <Button title="重启" systemImage="arrow.clockwise" disabled={busy} action={() => act("restart", "重启")} />
+    </Section> : null}
+    {info ? <Section header={<Text>{`穿透规则 ${info.proxies.length}`}</Text>} footer={<Text>仅展示规则，不显示认证 token。</Text>}>
+      {info.proxies.map(x => <VStack key={x.name} alignment="leading" spacing={2}>
+        <Text fontWeight="semibold">{x.name}</Text>
+        <Text font={12} foregroundStyle="secondaryLabel">{`${x.type.toUpperCase()} · ${x.local} → ${x.remote}`}</Text>
+      </VStack>)}
+    </Section> : null}
   </Form>
 }
 
@@ -349,7 +412,7 @@ function SettingsPage({ active, onChanged }: { active: Controller | null; onChan
     setList(listControllers())
     setTimeout(onChanged, 500)
   }
-  return <Form navigationTitle="设置" navigationBarTitleDisplayMode="inline">
+  return <Form navigationTitle="面板设置" navigationBarTitleDisplayMode="inline">
     <Section header={<HStack><Text>OpenWrt</Text><Spacer /><Text font={12} foregroundStyle="secondaryLabel">{`v${VERSION}`}</Text></HStack>}>
       {list.map(c => <NavigationLink key={c.id} destination={<EditController initial={c} onDone={reload} />}
           trailingSwipeActions={{ allowsFullSwipe: false, actions: [<Button title="删除" systemImage="trash" tint="systemRed" action={() => remove(c.id)} />] }}>
@@ -362,7 +425,8 @@ function SettingsPage({ active, onChanged }: { active: Controller | null; onChan
     {active ? <Section header={<Text>路由器详情</Text>}>
       <NavigationLink destination={<WrtInterfacesPage active={active} version={0} />}><Label title="网络接口" systemImage="network" /></NavigationLink>
       <NavigationLink destination={<WrtLeasesPage active={active} version={0} />}><Label title="在线设备" systemImage="laptopcomputer.and.iphone" /></NavigationLink>
-      <NavigationLink destination={<KernelConfigPage c={active} />}><Label title="代理内核配置" systemImage="gearshape.2" /></NavigationLink>
+      <NavigationLink destination={<DockerPage active={active} />}><Label title="Docker 管理" systemImage="shippingbox" /></NavigationLink>
+      <NavigationLink destination={<FrpPage active={active} />}><Label title="FRP 管理" systemImage="arrow.left.arrow.right" /></NavigationLink>
     </Section> : null}
   </Form>
 }

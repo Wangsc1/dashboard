@@ -1,6 +1,6 @@
 // dashboard 数据层：Clash 外部控制 API 与 OpenWrt（LuCI ubus JSON-RPC）
 import { getPreferences, customHeaders, recordEvent, controllerHealth, feedback } from "./preferences"
-export const VERSION = "1.5.17"
+export const VERSION = "1.5.18"
 
 export type Kind = "clash" | "openwrt"
 export type Plugin = "openclash" | "nikki" | "mihomo"
@@ -17,6 +17,9 @@ export interface Traffic { up: number; down: number; upTotal?: number; downTotal
 export interface WrtInfo { model: string; release: string; uptime: number; load: number[]; memTotal: number; memFree: number; wan: string; target?: string; kernel?: string; cpu?: number }
 export interface Overview { version: string; mode: string; traffic: Traffic; upTotal: number; downTotal: number; connCount: number; wrt?: WrtInfo; mem?: number }
 export interface WrtIface { name: string; proto: string; up: boolean; ip: string; device: string; uptime: number }
+export interface DockerContainer { id: string; name: string; image: string; state: string; status: string }
+export interface FrpProxy { name: string; type: string; local: string; remote: string }
+export interface FrpInfo { running: boolean; enabled: boolean; server: string; proxies: FrpProxy[] }
 export interface WrtLease { host: string; ip: string; mac: string; expires: number }
 
 const K_LIST = "neko_controllers_v1"
@@ -407,6 +410,18 @@ export async function loadConnections(c0: Controller): Promise<Conn[]> {
     })
   }
 }
+// 仅供主页滚动背景：只取主机名，不做全字段转换；/connections 体积大，调用方需放宽间隔。
+export async function loadConnectionHosts(c0: Controller, limit = 20): Promise<string[]> {
+  const c = await cc(c0)
+  if (c.kind !== "clash") return []
+  const j = await http(c, "/connections")
+  const out: string[] = [], seen = new Set<string>()
+  for (const x of (j.connections ?? [])) {
+    const m = x?.metadata ?? {}, h = String(m.host || m.destinationIP || "")
+    if (h && !seen.has(h)) { seen.add(h); out.push(h); if (out.length >= limit) break }
+  }
+  return out
+}
 export async function closeConnection(c: Controller, id: string) { await http(await cc(c), "/connections/" + enc(id), { method: "DELETE" }) }
 export async function closeAllConnections(c: Controller) {
   await http(await cc(c), "/connections", { method: "DELETE" })
@@ -525,3 +540,29 @@ export async function webpage(c: Controller, page: "home"|"profile"|"mixin"|"log
   return base.replace(/\/$/,"") + (c.kind === "openwrt" ? "/cgi-bin/luci/"+(page === "home" ? "" : "admin/services/nikki/"+page) : "/ui/")
 }
 export async function nikkiServiceStatus(c: Controller): Promise<boolean | null> { requireNikki(c); const j = await ubus(c,"rc","list",{name:"nikki"}); return typeof j.nikki?.running === "boolean" ? j.nikki.running : null }
+
+// ---------- Docker / frp 管理（走 OpenWrt ubus，仅暴露展示所需字段；不读取命令行、环境变量、token）----------
+const dockerBody = (j: any) => { if (!j || typeof j.code !== "number" || j.code >= 400) throw new Error("Docker 请求失败（" + String(j?.code ?? "无响应") + "）"); return j.body }
+export async function loadDockerContainers(c: Controller): Promise<DockerContainer[]> {
+  const body = dockerBody(await ubus(c, "docker.container", "list", { query: { all: "true" } }))
+  return (Array.isArray(body) ? body : []).map((x: any): DockerContainer => ({
+    id: String(x.Id ?? ""), name: String((x.Names?.[0] ?? "").replace(/^\//, "") || String(x.Id ?? "").slice(0, 12)),
+    image: String(x.Image ?? ""), state: String(x.State ?? ""), status: String(x.Status ?? ""),
+  })).filter(x => /^[0-9a-f]{12,64}$/.test(x.id))
+}
+export async function dockerAction(c: Controller, id: string, action: "start" | "stop" | "restart") {
+  if (!/^[0-9a-f]{12,64}$/.test(id)) throw new Error("容器标识无效")
+  dockerBody(await ubus(c, "docker.container", action, { id, query: {} }))
+}
+export async function loadFrp(c: Controller): Promise<FrpInfo> {
+  const [rc, uci] = await Promise.all([ubus(c, "rc", "list", { name: "frpc" }), ubus(c, "uci", "get", { config: "frpc" })])
+  const values: Record<string, any> = uci.values ?? {}, st = rc?.frpc ?? {}
+  const proxies = Object.values(values).filter((v: any) => v?.[".type"] === "conf" && v.type && v.name).map((v: any): FrpProxy => ({
+    name: String(v.name), type: String(v.type), local: `${v.local_ip ?? ""}:${v.local_port ?? ""}`, remote: String(v.remote_port ?? v.custom_domains ?? v.subdomain ?? ""),
+  }))
+  const common = values.common ?? {}
+  return { running: !!st.running, enabled: !!st.enabled, server: common.server_addr ? `${common.server_addr}:${common.server_port ?? ""}` : "", proxies }
+}
+export async function frpAction(c: Controller, action: "start" | "stop" | "restart") {
+  await ubus(c, "rc", "init", { name: "frpc", action })
+}
