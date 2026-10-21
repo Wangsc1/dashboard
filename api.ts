@@ -1,6 +1,6 @@
 
 import { getPreferences, customHeaders, recordEvent, controllerHealth, feedback } from "./preferences"
-export const VERSION = "1.5.88"
+export const VERSION = "1.5.89"
 
 export type Kind = "clash" | "openwrt"
 export type Plugin = "openclash" | "nikki" | "mihomo"
@@ -435,6 +435,18 @@ export async function selectProxy(c0: Controller, group: string, name: string) {
   }
 }
 
+export async function testNodes(c0: Controller, names: string[]): Promise<Record<string, number>> {
+  const c = await cc(c0)
+  const res: Record<string, number> = {}
+  const prefs = getPreferences(), queue = [...names]
+  await Promise.all(Array.from({ length: Math.min(6, queue.length) }, async () => {
+    while (queue.length) {
+      const n = queue.shift()!
+      try { const j = await http(c, `/proxies/${enc(n)}/delay?url=${enc(prefs.testURL)}&timeout=${prefs.testTimeout}`, { timeout: Math.ceil(prefs.testTimeout / 1000) + 2 }); res[n] = num(j.delay) } catch { res[n] = 0 }
+    }
+  }))
+  return res
+}
 export async function testGroup(c0: Controller, g: Group): Promise<Record<string, number>> {
   const c = await cc(c0)
   const res: Record<string, number> = {}
