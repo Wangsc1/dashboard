@@ -144,28 +144,26 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     const src = fs.readFileSync(path.join(root, 'settings-ui.tsx'), 'utf8'); assert.ok(!src.includes('traceIconPreference("global-render"'))
     unmount(); pref.savePreferences({ customIcons: true, theme: 'system', requestTimeout: 8 })
   })
-  await test('阈值双滑块：100–800、不能交叉、只在结束时持久化且失败回滚', async () => {
+  await test('阈值双滑块：固定滑轨与稳定回调、不能交叉、结束保存及失败回滚', async () => {
     pref.savePreferences({ delayGreen: 240, delayRed: 500 })
     function track(tree) { return nodes(tree, 'GeometryReader')[0].props.children[0]({ size: { width: 744 } }) }
-    const drag = (x, y = 0) => ({ translation: { width: x, height: y } })
+    const event = (start, x, y = 0) => ({ startLocation: { x: start, y: 28 }, translation: { width: x, height: y } })
     let tree = render(ui.ThresholdRange, {}, true); await flush()
-    let handles = nodes(track(tree), 'ZStack').filter(x => x.props.onDragGesture)
-    assert.equal(handles.length, 2)
-    assert.equal(nodes(track(tree), 'RoundedRectangle')[0].props.fill.colors.join(','), 'systemGreen,systemYellow,systemOrange,systemRed')
-    handles[0].props.onDragGesture.onChanged(drag(100))
-    tree = render(ui.ThresholdRange, {}); await flush()
+    const initial = track(tree), gesture = initial.props.onDragGesture
+    assert.equal(nodes(initial, 'ZStack').filter(x => x.props.onDragGesture).length, 1)
+    assert.equal(nodes(initial, 'Circle').filter(x => x.props.onDragGesture).length, 0)
+    assert.equal(nodes(initial, 'RoundedRectangle')[0].props.fill.colors.join(','), 'systemGreen,systemYellow,systemOrange,systemRed')
+    gesture.onChanged(event(162, 100)); tree = render(ui.ThresholdRange, {}); await flush()
     assert.ok(text(tree).includes('340–500 ms')); assert.equal(pref.getPreferences().delayGreen, 240)
-    handles = nodes(track(tree), 'ZStack').filter(x => x.props.onDragGesture)
-    handles[0].props.onDragGesture.onEnded(drag(100)); assert.equal(pref.getPreferences().delayGreen, 340)
+    assert.equal(track(tree).props.onDragGesture, gesture)
+    assert.equal(track(tree).props.offset, undefined)
+    gesture.onEnded(event(162, 100)); assert.equal(pref.getPreferences().delayGreen, 340)
     tree = render(ui.ThresholdRange, {}); await flush()
-    handles = nodes(track(tree), 'ZStack').filter(x => x.props.onDragGesture)
-    handles[1].props.onDragGesture.onChanged(drag(500)); tree = render(ui.ThresholdRange, {}); await flush()
-    handles = nodes(track(tree), 'ZStack').filter(x => x.props.onDragGesture)
-    handles[1].props.onDragGesture.onEnded(drag(500)); assert.equal(pref.getPreferences().delayRed, 800)
+    gesture.onChanged(event(422, 500)); tree = render(ui.ThresholdRange, {}); await flush()
+    gesture.onEnded(event(422, 500)); assert.equal(pref.getPreferences().delayRed, 800)
     tree = render(ui.ThresholdRange, {}); await flush()
-    handles = nodes(track(tree), 'ZStack').filter(x => x.props.onDragGesture)
-    handles[0].props.onDragGesture.onEnded(drag(0, 100)); assert.equal(pref.getPreferences().delayGreen, 340)
-    failStorage = true; handles[0].props.onDragGesture.onChanged(drag(-400)); handles[0].props.onDragGesture.onEnded(drag(-400)); failStorage = false
+    gesture.onEnded(event(262, 0, 100)); assert.equal(pref.getPreferences().delayGreen, 340)
+    failStorage = true; gesture.onChanged(event(262, -400)); gesture.onEnded(event(262, -400)); failStorage = false
     tree = render(ui.ThresholdRange, {}); await flush(); assert.ok(text(tree).includes('340–800 ms')); assert.equal(pref.getPreferences().delayGreen, 340)
     for (const which of ['green','red']) for (const v of [-10000,100,240,500,800,10000]) {
       const pair = ui.thresholdPair(240, 500, which, v)
@@ -176,6 +174,23 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     assert.equal(nodes(global, ui.ThresholdRange).length, 1)
     assert.ok(!nodes(global, 'NavigationLink').some(x => text(x).includes('延迟阈值'))); unmount()
   })
+  await test('高频拖动合并绘制、不写存储，最后位置精确落盘', async () => {
+    pref.savePreferences({ delayGreen: 240, delayRed: 500 })
+    const original = scripting.useState; let paints = 0
+    scripting.useState = (...args) => { const [v, setter] = original(...args); return [v, n => { paints++; setter(n) }] }
+    try {
+      let tree = render(ui.ThresholdRange, {}, true); await flush(); paints = 0
+      const gesture = nodes(tree, 'GeometryReader')[0].props.children[0]({ size: { width: 744 } }).props.onDragGesture
+      for (let i = 1; i <= 100; i++) {
+        now += 1
+        gesture.onChanged({ startLocation: { x: 162, y: 28 }, translation: { width: i, height: 0 } })
+      }
+      assert.ok(paints <= 4, String(paints)); assert.equal(pref.getPreferences().delayGreen, 240)
+      gesture.onEnded({ startLocation: { x: 162, y: 28 }, translation: { width: 100, height: 0 } })
+      assert.equal(pref.getPreferences().delayGreen, 340)
+      tree = render(ui.ThresholdRange, {}); await flush(); assert.ok(text(tree).includes('340–500 ms'))
+    } finally { unmount(); scripting.useState = original; pref.savePreferences({ delayGreen: 240, delayRed: 500 }) }
+  })
   await test('设置普通滑块只更新局部草稿，结束拖动才通知保存', async () => {
     const saved = [], props = { title: '测试', value: 8, min: 1, max: 30, onChanged: n => saved.push(n) }
     let tree = render(ui.Range, props, true); await flush()
@@ -183,6 +198,24 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     for (const n of [9,10,11,12]) slider.props.onChanged(n)
     tree = render(ui.Range, props); await flush(); assert.ok(text(tree).includes('12')); assert.equal(saved.length, 0)
     nodes(tree, 'Slider')[0].props.onEditingChanged(false); assert.equal(saved.join(','), '12'); unmount()
+  })
+  await test('三个普通滑块不传离散step且隐藏行分隔线，保持原步长保存', async () => {
+    for (const [title,min,max,step,value,raw,want] of [['连接超时时间',1,30,1,8,12.2,12],['超时时间',1000,10000,100,5000,5678,5700],['最大记录条数',100,2000,100,500,876,900]]) {
+      const saved = [], props = { title, min, max, step, value, onChanged: n => saved.push(n) }
+      let tree = render(ui.Range, props, true); await flush()
+      assert.equal(tree.props.listRowSeparator, 'hidden')
+      let slider = nodes(tree, 'Slider')[0]; assert.equal(slider.props.step, undefined)
+      slider.props.onEditingChanged(true); slider.props.onChanged(raw)
+      tree = render(ui.Range, props); await flush(); assert.equal(nodes(tree, 'Slider')[0].props.value, raw)
+      assert.ok(text(tree).includes(String(want))); assert.equal(saved.length, 0)
+      nodes(tree, 'Slider')[0].props.onEditingChanged(false); assert.equal(saved.join(','), String(want)); unmount()
+    }
+  })
+  await test('全局配置分组顺序：启动紧随主题，阈值紧邻网络请求之前', () => {
+    const tree = render(ui.GlobalConfigPage, { active: null }, true)
+    const headers = nodes(tree, 'Section').map(n => text(n.props.header))
+    assert.equal(headers.join('|'), '主题|启动设置|代理组|缓存管理|控制器管理|切换代理设置|交互体验|延迟阈值设置|网络请求|测速设置|运行日志')
+    unmount()
   })
   await test('请求头 Keychain 保存与认证/传输覆盖、CRLF拒绝', () => {
     pref.saveHeaders('{"X-Client":"private-header-value"}')
@@ -371,7 +404,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) { assert.equal(nodes(tree, types[i]).length, 1); assert.equal(nodes(tree, types[i])[0].props.selected, ids[i] === id) }
     }
-    assert.equal(api.VERSION, '1.5.60'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.5.61'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('独立导航栈保留业务owner和身份，只有选中页提供可见工具栏', () => {
     pref.savePreferences({ defaultPage: 'overview' })
@@ -886,7 +919,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       const diagnostic = logs.filter(x => x.startsWith('[preferences-icon]'))
       for (const stage of ['change','accepted','proxies-render','group-render']) assert.ok(diagnostic.some(x => x.includes('stage=' + stage) && x.includes('enabled=false')))
       assert.ok(diagnostic.every(x => !x.includes('private.invalid') && !x.includes('private-group-name') && !x.includes('secret-')))
-      assert.ok(diagnostic.every(x => x.includes('build=1.5.60') && /instance=[a-z0-9]+/.test(x)))
+      assert.ok(diagnostic.every(x => x.includes('build=1.5.61') && /instance=[a-z0-9]+/.test(x)))
       assert.equal(new Set(diagnostic.map(x => x.match(/instance=([^ ]+)/)[1])).size, 1)
     } finally { context.console = originalConsole; unmount(); pref.savePreferences({ customIcons: true, testURL: 'https://www.gstatic.com/generate_204' }) }
   })

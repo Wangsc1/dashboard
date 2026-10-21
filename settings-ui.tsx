@@ -34,12 +34,13 @@ function Range({ title, value, min, max, step = 1, suffix = "", onChanged }: { t
   const [draft, setDraft] = useState(value)
   const [editing] = useState({ active: false, value })
   useEffect(() => { if (!editing.active) { editing.value = value; setDraft(value) } }, [value])
-  return <VStack alignment="leading"><Text>{`${title}：${draft}${suffix}`}</Text><Slider min={min} max={max} step={step} value={draft} onChanged={(n: number) => { editing.value = n; setDraft(n) }} onEditingChanged={(active: boolean) => {
+  const snap = (n: number) => Math.max(min, Math.min(max, min + Math.round((n - min) / step) * step))
+  return <VStack alignment="leading" listRowSeparator="hidden"><Text>{`${title}：${snap(draft)}${suffix}`}</Text><Slider min={min} max={max} value={draft} onChanged={(n: number) => { editing.value = n; setDraft(n) }} onEditingChanged={(active: boolean) => {
     editing.active = active
     if (!active && editing.value !== value) {
       // Parent supplies the accepted value; a failed save must not leave a false draft.
       setDraft(value)
-      onChanged(editing.value)
+      onChanged(snap(editing.value))
     }
   }} label={<Text>{title}</Text>} minValueLabel={<Text>{min}</Text>} maxValueLabel={<Text>{max}</Text>} /></VStack>
 }
@@ -53,45 +54,54 @@ export function thresholdPair(green: number, red: number, handle: "green" | "red
 export function ThresholdRange() {
   const p = usePreferences(["delayGreen", "delayRed"])
   const [draft, setDraft] = useState({ delayGreen: p.delayGreen, delayRed: p.delayRed })
-  const [drag] = useState<{ start: number | null; pair: typeof draft; changed: boolean }>({ start: null, pair: draft, changed: false })
+  // The recognizer belongs to the FIXED track, not a thumb whose local origin
+  // moves under the finger. Keep its callbacks stable across bridge renders.
+  const [drag] = useState(() => {
+    type Event = { startLocation: { x: number; y: number }; translation: { width: number; height: number } }
+    const state = { width: 1, handle: null as "green" | "red" | null, base: draft, pair: draft, lastPaint: -Infinity,
+      gesture: {} as { minDistance: number; onChanged: (e: Event) => void; onEnded: (e: Event) => void } }
+    const position = (n: number) => 22 + (Math.max(100, Math.min(800, n)) - 100) / 700 * state.width
+    function move(e: Event, final = false) {
+      if (!state.handle) {
+        if (Math.abs(e.translation.height) > Math.abs(e.translation.width)) return
+        const current = getPreferences()
+        state.base = { delayGreen: current.delayGreen, delayRed: current.delayRed }
+        state.handle = Math.abs(e.startLocation.x - position(state.base.delayGreen)) <= Math.abs(e.startLocation.x - position(state.base.delayRed)) ? "green" : "red"
+      }
+      const key = state.handle === "green" ? "delayGreen" : "delayRed"
+      const start = Math.max(100, Math.min(800, state.base[key]))
+      const next = thresholdPair(state.base.delayGreen, state.base.delayRed, state.handle, start + e.translation.width / state.width * 700)
+      state.pair = next
+      // Coalesce high-rate native callbacks; no timers, disk writes, feedback or
+      // global preference notifications while the finger is moving.
+      const now = Date.now()
+      if (final || now - state.lastPaint >= 32) { state.lastPaint = now; setDraft(next) }
+    }
+    state.gesture = { minDistance: 8, onChanged: e => move(e), onEnded: e => {
+      move(e, true)
+      if (state.handle && (state.pair.delayGreen !== state.base.delayGreen || state.pair.delayRed !== state.base.delayRed)) {
+        try { savePreferences(state.pair); feedback() }
+        catch { state.pair = state.base; setDraft(state.base); void Dialog.alert({ message: "本地设置保存失败，请重试" }) }
+      }
+      state.handle = null; state.lastPaint = -Infinity
+    } }
+    return state
+  })
   useEffect(() => {
-    if (drag.start === null) {
+    if (!drag.handle) {
       const next = { delayGreen: p.delayGreen, delayRed: p.delayRed }
       drag.pair = next; setDraft(next)
     }
   }, [p.delayGreen, p.delayRed])
-  function gesture(handle: "green" | "red", width: number) {
-    const key = handle === "green" ? "delayGreen" : "delayRed"
-    function move(e: { translation: { width: number; height: number } }) {
-      if (Math.abs(e.translation.height) > Math.abs(e.translation.width)) return
-      if (drag.start === null) drag.start = Math.max(100, Math.min(800, drag.pair[key]))
-      const next = thresholdPair(drag.pair.delayGreen, drag.pair.delayRed, handle, drag.start + e.translation.width / width * 700)
-      drag.changed = next.delayGreen !== p.delayGreen || next.delayRed !== p.delayRed
-      drag.pair = next; setDraft(next)
-    }
-    return { minDistance: 8, onChanged: move, onEnded: (e: { translation: { width: number; height: number } }) => {
-      move(e)
-      if (drag.changed) {
-        try { savePreferences(drag.pair); feedback() }
-        catch {
-          const old = { delayGreen: p.delayGreen, delayRed: p.delayRed }
-          drag.pair = old; setDraft(old)
-          void Dialog.alert({ message: "本地设置保存失败，请重试" })
-        }
-      }
-      drag.start = null; drag.changed = false
-    } }
-  }
-  return <VStack alignment="leading" spacing={18} padding={{ vertical: 8 }}>
+  return <VStack alignment="leading" spacing={18} padding={{ vertical: 8 }} listRowSeparator="hidden">
     <HStack><Text>延迟阈值范围</Text><Spacer /><Text foregroundStyle="secondaryLabel">{`${draft.delayGreen}–${draft.delayRed} ms`}</Text></HStack>
     <GeometryReader frame={{ height: 56 }}>{(proxy: { size: { width: number } }) => {
       const width = Math.max(1, proxy.size.width - 44)
+      drag.width = width
       const x = (n: number) => 22 + (Math.max(100, Math.min(800, n)) - 100) / 700 * width
-      return <ZStack alignment="leading" frame={{ width: proxy.size.width, height: 56 }}>
+      return <ZStack alignment="leading" frame={{ width: proxy.size.width, height: 56 }} background="clear" onDragGesture={drag.gesture}>
         <RoundedRectangle cornerRadius={2} fill={gradient("linear", { colors: ["systemGreen", "systemYellow", "systemOrange", "systemRed"], startPoint: "leading", endPoint: "trailing" })} frame={{ width, height: 4 }} offset={{ x: 22, y: 0 }} />
-        {(["green", "red"] as const).map(handle => <ZStack key={handle} frame={{ width: 44, height: 56 }} offset={{ x: x(handle === "green" ? draft.delayGreen : draft.delayRed) - 22, y: 0 }} onDragGesture={gesture(handle, width)}>
-          <Circle fill="white" stroke={{ shapeStyle: "#DDDDDD", strokeStyle: { lineWidth: 0.5 } }} frame={{ width: 26, height: 26 }} shadow={{ color: "#00000022", radius: 3, y: 2 }} />
-        </ZStack>)}
+        {(["green", "red"] as const).map(handle => <Circle key={handle} fill="white" stroke={{ shapeStyle: "#DDDDDD", strokeStyle: { lineWidth: 0.5 } }} frame={{ width: 26, height: 26 }} offset={{ x: x(handle === "green" ? draft.delayGreen : draft.delayRed) - 13, y: 0 }} />)}
       </ZStack>
     }}</GeometryReader>
     <Text font={12} foregroundStyle="tertiaryLabel">{`低于${draft.delayGreen}ms显示为绿色，${draft.delayGreen}ms到${draft.delayRed}ms之间显示为黄色，高于${draft.delayRed}ms或超时显示为红色。`}</Text>
@@ -186,13 +196,13 @@ export function GlobalConfigPage({ active }: { active: Controller | null }) {
   }
   return <Form navigationTitle="全局配置" navigationBarTitleDisplayMode="inline">
     <Section header={<Text>主题</Text>}><Choice title="外观模式" value={p.theme} values={[["system", "跟随系统"], ["light", "浅色"], ["dark", "深色"]]} onChanged={v => update({ theme: v as any })} /></Section>
-    <Section header={<Text>延迟阈值设置</Text>}><ThresholdRange /></Section>
+    <Section header={<Text>启动设置</Text>}><Choice title="默认打开界面" value={p.defaultPage} values={[["overview", "主页"], ["proxies", "代理"], ["rules", "规则"], ["connections", "连接"], ["more", "更多"]]} onChanged={v => update({ defaultPage: v as any })} /></Section>
     <Section header={<Text>代理组</Text>}>{toggle("showHidden", "显示隐藏代理组")}{toggle("customIcons", "自定义代理组图标")}</Section>
     <Section header={<Text>缓存管理</Text>}><Button title="清除图片缓存" action={clear} /></Section>
     <Section header={<Text>控制器管理</Text>}>{toggle("foldOffline", "自动折叠离线控制器")}</Section>
     <Section header={<Text>切换代理设置</Text>}>{toggle("disconnectOnSwitch", "自动断开旧连接")}</Section>
     <Section header={<Text>交互体验</Text>}>{toggle("haptics", "触感反馈")}</Section>
-    <Section header={<Text>启动设置</Text>}><Choice title="默认打开界面" value={p.defaultPage} values={[["overview", "主页"], ["proxies", "代理"], ["rules", "规则"], ["connections", "连接"], ["more", "更多"]]} onChanged={v => update({ defaultPage: v as any })} /></Section>
+    <Section header={<Text>延迟阈值设置</Text>}><ThresholdRange /></Section>
     <Section header={<Text>网络请求</Text>}>
       <HeaderFields />
       {toggle("nestedDelay", "嵌套代理组延迟显示")}
