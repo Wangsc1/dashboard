@@ -1,6 +1,6 @@
 
 import { getPreferences, customHeaders, recordEvent, controllerHealth, feedback } from "./preferences"
-export const VERSION = "1.5.141"
+export const VERSION = "1.5.142"
 
 export type Kind = "clash" | "openwrt"
 export type Plugin = "openclash" | "nikki" | "mihomo"
@@ -10,7 +10,7 @@ export interface Controller {
   host?: string; port?: number; https?: boolean; plugin?: Plugin; auto?: boolean; cport?: number
 }
 export interface ControllerInput { id?: string; name: string; host: string; port: number; https: boolean; username: string; plugin: Plugin; auto: boolean; cport: number }
-export interface Group { name: string; type: string; now: string; all: string[]; delays: Record<string, number>; types?: Record<string, string>; hidden?: boolean; icon?: string }
+export interface Group { name: string; type: string; now: string; all: string[]; delays: Record<string, number>; types?: Record<string, string>; hidden?: boolean; icon?: string; testUrl?: string }
 export interface Conn { id: string; host: string; src: string; dst: string; network: string; rule: string; chain: string; up: number; down: number; start: number; upSpeed?: number; downSpeed?: number; sourceIP?: string; inboundType?: string; chains?: string[]; closedAt?: number }
 export interface Rule { type: string; payload: string; proxy: string }
 export interface Traffic { up: number; down: number; upTotal?: number; downTotal?: number }
@@ -426,7 +426,7 @@ export async function loadGroups(c0: Controller, options: { includeGlobal?: bool
     return visible.map(n => {
       const g = all[n]; const delays: Record<string, number> = {}, types: Record<string, string> = {}
       for (const m of g.all as string[]) { const delay = delayOf(m); if (delay !== undefined) delays[m] = delay; const t = protocolOf(m); types[m] = t || (all[m] ? "无type字段" : "无节点信息") }
-      return { name: n, type: String(g.type ?? ""), now: String(g.now ?? ""), all: g.all, delays, types, hidden: !!g.hidden, icon: typeof g.icon === "string" ? g.icon : undefined }
+      return { name: n, type: String(g.type ?? ""), now: String(g.now ?? ""), all: g.all, delays, types, hidden: !!g.hidden, icon: typeof g.icon === "string" ? g.icon : undefined, testUrl: typeof g.testUrl === "string" && /^https?:\/\/[^\s]+$/i.test(g.testUrl) ? g.testUrl : undefined }
     })
   }
 }
@@ -439,14 +439,14 @@ export async function selectProxy(c0: Controller, group: string, name: string) {
   }
 }
 
-export async function testNodes(c0: Controller, names: string[]): Promise<Record<string, number>> {
+export async function testNodes(c0: Controller, names: string[], url?: string): Promise<Record<string, number>> {
   const c = await cc(c0)
   const res: Record<string, number> = {}
   const prefs = getPreferences(), queue = [...names]
   await Promise.all(Array.from({ length: Math.min(6, queue.length) }, async () => {
     while (queue.length) {
       const n = queue.shift()!
-      try { const j = await http(c, `/proxies/${enc(n)}/delay?url=${enc(prefs.testURL)}&timeout=${prefs.testTimeout}`, { timeout: Math.ceil(prefs.testTimeout / 1000) + 2 }); res[n] = num(j.delay) } catch { res[n] = 0 }
+      try { const j = await http(c, `/proxies/${enc(n)}/delay?url=${enc(url || prefs.testURL)}&timeout=${prefs.testTimeout}`, { timeout: Math.ceil(prefs.testTimeout / 1000) + 2 }); res[n] = num(j.delay) } catch { res[n] = 0 }
     }
   }))
   return res
@@ -454,7 +454,7 @@ export async function testNodes(c0: Controller, names: string[]): Promise<Record
 export async function testGroup(c0: Controller, g: Group, onProgress?: (name: string, delay: number) => void): Promise<Record<string, number>> {
   const c = await cc(c0)
   const res: Record<string, number> = {}
-  const prefs = getPreferences(), testURL = prefs.testURL, timeout = prefs.testTimeout
+  const prefs = getPreferences(), testURL = g.testUrl || prefs.testURL, timeout = prefs.testTimeout
   const report = (n: string, d: number) => { try { onProgress?.(n, d) } catch {} }
   // Phase 1: test nodes concurrently and report each success as soon as it returns, instead of waiting for the slowest node.
   const names = [...new Set(g.all)], queue = [...names]

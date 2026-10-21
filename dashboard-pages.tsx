@@ -61,7 +61,7 @@ export function GroupSection({c,g,onChanged,expanded=false}:{c:Controller;g:Grou
     for(const n of missing)probing.add(`${storeKey}|${n}`)
     const keep=(d:Record<string,number>)=>{const ok:Record<string,number>={};for(const[k,v]of Object.entries(d))if(v>0){ok[k]=v;testedNodes.set(`${sourceKey(c)}|${k}`,v)}if(Object.keys(ok).length)testedDelays.set(storeKey,{...(testedDelays.get(storeKey)??{}),...ok});return ok}
     ;(async()=>{
-      let ok=keep(await testNodes(c,missing).catch(()=>({} as Record<string,number>)))
+      let ok=keep(await testNodes(c,missing,g.testUrl).catch(()=>({} as Record<string,number>)))
       const rest=missing.filter(n=>ok[n]===undefined)
       if(rest.length){const second=keep(await testGroup(c,g).catch(()=>({} as Record<string,number>)));ok={...ok,...second}}
       const still=missing.filter(n=>ok[n]===undefined)

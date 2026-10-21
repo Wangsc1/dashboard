@@ -309,7 +309,7 @@ function TestURLField() {
     catch { setError("本地设置保存失败，请重试") }
   }
   return <VStack alignment="leading" spacing={4}>
-    <TextField title="测速链接" value={url} onFocus={() => { draft.editing = true }} onChanged={(value: string) => { draft.value = value; setURL(value); setError("") }} onBlur={() => { draft.editing = false; save() }} onSubmit={save} submitLabel="done" />
+    <TextField title="测速链接（策略组未指定时使用）" value={url} onFocus={() => { draft.editing = true }} onChanged={(value: string) => { draft.value = value; setURL(value); setError("") }} onBlur={() => { draft.editing = false; save() }} onSubmit={save} submitLabel="done" />
     {error ? <Text font={12} foregroundStyle="systemRed">{error}</Text> : null}
   </VStack>
 }

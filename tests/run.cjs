@@ -302,6 +302,15 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     assert.equal(result.A, 23); assert.equal(result.B, 23); assert.equal(result.C, 41); assert.equal(seen.length, 3); assert.equal(calls.filter(x => x.url.includes('/group/')).length, 1)
     assert.ok(calls.every(x => x.url.includes('timeout=3200') && x.url.includes(encodeURIComponent('https://test.invalid/probe')))); 
   })
+  await test('策略组自带testUrl时测速用它而不是偏好里的链接；loadGroups读取testUrl', async () => {
+    pref.savePreferences({ testURL: 'https://test.invalid/probe', testTimeout: 3200 }); calls.length = 0
+    responder = () => ({ body: { delay: 23 } })
+    await api.testGroup(c, { name: 'G', all: ['A'], testUrl: 'http://1.1.1.1/generate_204' })
+    await api.testNodes(c, ['B'], 'http://1.1.1.1/generate_204')
+    assert.ok(calls.length === 2 && calls.every(x => x.url.includes(encodeURIComponent('http://1.1.1.1/generate_204')) && !x.url.includes('test.invalid')))
+    responder = () => ({ body: { proxies: { GLOBAL: { type: 'Selector', all: ['G'], now: 'G' }, G: { type: 'Selector', all: ['A'], now: 'A', testUrl: 'http://1.1.1.1/generate_204' }, A: { type: 'Shadowsocks' } } } })
+    assert.equal((await api.loadGroups(c)).find(x => x.name === 'G').testUrl, 'http://1.1.1.1/generate_204'); unmount(); responder = () => ({ status: 204 })
+  })
   await test('真实模拟登录/自动发现：敏感响应、错误原文均不进应用日志', async () => {
     const wrt = api.saveController({ name: 'router', host: 'mock.invalid', port: 80, https: false, username: 'root', plugin: 'nikki', auto: true, cport: 9090 }, 'password-sensitive', '')
     responder = (u, i) => { const b = JSON.parse(i.body); const method = b.params[2]; return { body: { result: [0, method === 'login' ? { ubus_rpc_session: 'session-sensitive' } : { values: { api_listen: '0.0.0.0:9090', api_secret: 'discovered-sensitive' } }] } } }
@@ -570,7 +579,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) { const lazy = ['proxies','rules','connections'].includes(ids[i]) && ids[i] !== id; assert.equal(nodes(tree, types[i]).length, lazy ? 0 : 1); if (!lazy) assert.equal(nodes(tree, types[i])[0].props.selected, ids[i] === id) }
     }
-    assert.equal(api.VERSION, '1.5.141'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.5.142'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('独立导航栈保留业务owner和身份，只有选中页提供可见工具栏', () => {
     pref.savePreferences({ defaultPage: 'overview' })
@@ -1550,7 +1559,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       const diagnostic = logs.filter(x => x.startsWith('[preferences-icon]'))
       for (const stage of ['change','accepted','proxies-render','group-render']) assert.ok(diagnostic.some(x => x.includes('stage=' + stage) && x.includes('enabled=false')))
       assert.ok(diagnostic.every(x => !x.includes('private.invalid') && !x.includes('private-group-name') && !x.includes('secret-')))
-      assert.ok(diagnostic.every(x => x.includes('build=1.5.141') && /instance=[a-z0-9]+/.test(x)))
+      assert.ok(diagnostic.every(x => x.includes('build=1.5.142') && /instance=[a-z0-9]+/.test(x)))
       assert.equal(new Set(diagnostic.map(x => x.match(/instance=([^ ]+)/)[1])).size, 1)
     } finally { context.console = originalConsole; unmount(); pref.savePreferences({ customIcons: true, testURL: 'https://www.gstatic.com/generate_204' }) }
   })
