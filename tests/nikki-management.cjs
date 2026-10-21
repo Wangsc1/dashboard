@@ -41,7 +41,7 @@ function fixture(){
   }
 }
 function writes(){return calls.filter(c=>{if(!c.url.endsWith('/ubus'))return false;const p=JSON.parse(c.init.body).params;return (p[1]==='uci'&&['set','add','delete','order','commit','revert'].includes(p[2]))||(p[1]==='file'&&p[2]==='write')||p[1]==='rc'||p[1]==='luci.nikki'})}
-function topButton(tree,title){return button(h('VStack',{},tree.props.toolbar.topBarLeading,tree.props.toolbar.topBarTrailing),title)}
+function topButton(tree,title){return button(h('VStack',{},tree.props.toolbar&&tree.props.toolbar.topBarTrailing),title)}
 async function settle(){for(let i=0;i<5;i++)await flush()}
 const sub={name:'Edited',url:'https://new-subscription.invalid/file',userAgent:'mihomo',prefer:'remote'}
 ;(async()=>{
@@ -152,7 +152,7 @@ const sub={name:'Edited',url:'https://new-subscription.invalid/file',userAgent:'
     fixture();const base=await api.loadNikkiManagement(n);let saved=false;const props={c:n,base,value:base.subscriptions[0],done:v=>saved=v};let tree=render(management.NikkiSubscriptionEditor,props,true);await settle();tree=render(management.NikkiSubscriptionEditor,props);assert.equal(topButton(tree,'保存').props.disabled,true);assert.equal(nodes(tree,'Picker')[0].props.value,'clash.meta');assert.equal(nodes(tree,'Picker')[1].props.value,'local')
     nodes(tree,'TextField')[0].props.onChanged('Draft kept');tree=render(management.NikkiSubscriptionEditor,props);calls.length=0;fail=(obj,m)=>obj==='uci'&&m==='set'?{body:{result:[6]}}:null;await topButton(tree,'保存').props.action();tree=render(management.NikkiSubscriptionEditor,props);assert.equal(nodes(tree,'TextField')[0].props.value,'Draft kept');assert.equal(saved,false);assert.ok(text(tree).includes('草稿'))
     fail=null;await topButton(tree,'保存').props.action();assert.equal(saved,true);assert.equal(state.s1.name,'Draft kept');assert.equal(state.s1.user_agent,'clash.meta');assert.equal(state.s1.prefer,'local')
-    saved=false;tree=render(management.NikkiSubscriptionEditor,props,true);calls.length=0;await topButton(tree,'取消').props.action();assert.equal(calls.length,0);assert.equal(saved,undefined)
+    saved=false;tree=render(management.NikkiSubscriptionEditor,props,true);assert.equal(tree.props.toolbar.topBarLeading,undefined);assert.ok(topButton(tree,'保存'));calls.length=0;await settle();assert.equal(calls.length,0);assert.equal(saved,false)
   })
   await test('editor initialization cannot depend on loadHTML promise settling after document script',async()=>{
     fixture();context.WebViewController.loadMode='pendingAfterDocument';const base=await api.loadNikkiManagement(n),props={c:n,base,file:base.files[0],done(){}};let tree=render(management.NikkiFileEditor,props,true);await settle();tree.props.onAppear();tree=render(management.NikkiFileEditor,props);await settle();tree=render(management.NikkiFileEditor,props);context.WebViewController.loadMode=undefined;const editor=nodes(tree,'WebView')[0].props.controller;assert.equal(editor.page.elements.body.value,remoteFiles.get('/etc/nikki/profiles/local.yaml').replace(/\r\n/g,'\n'));assert.ok(!text(tree).includes('正在完整读取配置与加载本地行号编辑器'))
@@ -180,7 +180,7 @@ const sub={name:'Edited',url:'https://new-subscription.invalid/file',userAgent:'
     render(pages.ManagementPage,{c:n,kind:'profile'},true);assert.equal(editor.disposed,true)
   })
   await test('sorting is draft-only until save; source change and pending confirmations cannot send writes',async()=>{
-    fixture();const base=await api.loadNikkiManagement(n);let canceled=false;const props={c:n,base,done:()=>canceled=true};let tree=render(management.NikkiRuleSort,props,true);await settle();calls.length=0;button(tree,'下移').props.action();tree=render(management.NikkiRuleSort,props);assert.equal(topButton(tree,'保存').props.disabled,false);assert.equal(calls.length,0);await topButton(tree,'取消').props.action();assert.ok(canceled);assert.equal(calls.length,0)
+    fixture();const base=await api.loadNikkiManagement(n);let canceled=false;const props={c:n,base,done:()=>canceled=true};let tree=render(management.NikkiRuleSort,props,true);await settle();calls.length=0;button(tree,'下移').props.action();tree=render(management.NikkiRuleSort,props);assert.equal(topButton(tree,'保存').props.disabled,false);assert.equal(calls.length,0);assert.equal(tree.props.toolbar.topBarLeading,undefined);assert.ok(topButton(tree,'保存'));assert.equal(calls.length,0)
     let release;const originalConfirm=context.Dialog.confirm;context.Dialog.confirm=()=>new Promise(r=>release=r)
     const pageProps={c:n,kind:'subscription'};render(pages.ManagementPage,pageProps,true);await settle();tree=render(pages.ManagementPage,pageProps);calls.length=0;const pending=button(tree,'删除订阅').props.action();render(pages.ManagementPage,{...pageProps,c:{...n,id:'new-source'}});release(true);await pending;assert.equal(calls.length,0);context.Dialog.confirm=originalConfirm
   })

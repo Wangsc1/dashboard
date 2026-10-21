@@ -383,7 +383,7 @@ function subscriptionCard({s,busy,edit,update,remove}:{s:NikkiSubscription;busy:
     </HStack>
   </Panel>
 }
-function EditorActions({work,done,save,disabled}:{work:ReturnType<typeof useWork>;done:(saved?:boolean)=>void;save:()=>void;disabled:boolean}) {return {topBarLeading:<Button title="取消" disabled={work.busy} action={()=>done()}/>,topBarTrailing:<Button title={work.busy?"保存中…":"保存"} disabled={work.busy||disabled||work.changed} action={save}/>}}
+function EditorActions({work,done,save,disabled}:{work:ReturnType<typeof useWork>;done:(saved?:boolean)=>void;save:()=>void;disabled:boolean}) {return {topBarTrailing:<Button title={work.busy?"保存中…":"保存"} disabled={work.busy||disabled||work.changed} action={save}/>}}
 export function NikkiSubscriptionEditor({c,base,value,done,entryKey="direct"}:{c:Controller;base:NikkiManagement;value:NikkiSubscription|null;done:(saved?:boolean)=>void;entryKey?:string}) {
   const work=useWork(c),[,paint]=useState(0),[session]=useState({identity:"",draft:{name:"",url:"",ua:"clash",prefer:"remote"},base,value,done})
   const identity=source(c)+":"+entryKey+":"+(value?.id??"new")
