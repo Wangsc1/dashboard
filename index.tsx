@@ -7,7 +7,7 @@ import {
 import {
   VERSION, Controller, Group, Conn, Rule, Overview, Plugin, PLUGINS, listControllers, saveController, removeController, getActive, setActive, getSecret, getClashSecret,
   loadOverview, loadClashOverview, loadWrtInterfaces, loadWrtLeases, WrtIface, WrtLease, loadGroups, selectProxy, testGroup, loadConnections, loadConnectionHosts, closeConnection,
-  closeAllConnections, loadRules, DockerContainer, FrpInfo, FrpProxy, DockerSettings, loadDockerContainers, loadContainerDetail, dockerContainerOp, DockerContainerDetail, loadDockerImages, dockerImageRemove, DockerImage, loadDockerOverview, DockerOverview, dockerAction, loadFrp, frpAction, saveFrpCommon, saveFrpProxy, deleteFrpProxy, loadDockerSettings, saveDockerSettings, loadContainerPolicy, saveContainerPolicy, fmtBytes, fmtSpeed, fmtParts, fmtUptime, fmtDuration, delayColor,
+  closeAllConnections, loadRules, DockerContainer, FrpInfo, FrpProxy, DockerSettings, loadDiskUsage, loadInstalledPkgs, loadAvailablePkgs, upgradablePkgs, filterPkgs, pkgUpdateLists, pkgInstall, pkgRemove, pkgUpgrade, Pkg, loadDockerContainers, loadContainerDetail, dockerContainerOp, DockerContainerDetail, loadDockerImages, dockerImageRemove, DockerImage, loadDockerOverview, DockerOverview, dockerAction, loadFrp, frpAction, saveFrpCommon, saveFrpProxy, deleteFrpProxy, loadDockerSettings, saveDockerSettings, loadContainerPolicy, saveContainerPolicy, fmtBytes, fmtSpeed, fmtParts, fmtUptime, fmtDuration, delayColor,
 } from "./api"
 
 import { confirmed } from "./dashboard-model"
@@ -491,6 +491,65 @@ function FrpProxyPage({ active, initial, onDone }: { active: Controller; initial
   </Form>
 }
 
+
+function PkgRow({ p, onTap }: { p: Pkg; onTap: () => void }) {
+  return <Button buttonStyle="plain" action={onTap}>
+    <VStack alignment="leading" spacing={3} frame={{ maxWidth: "infinity", alignment: "leading" as any }}>
+      <HStack><Text fontWeight="semibold">{p.name}</Text><Spacer /><Text font={12} foregroundStyle="secondaryLabel">{p.upgradeTo ? `${p.version} → ${p.upgradeTo}` : p.version}</Text></HStack>
+      <Text font={12} foregroundStyle="secondaryLabel" lineLimit={2}>{p.desc || "无描述"}</Text>
+      <Text font={11} foregroundStyle="tertiaryLabel">{`${p.installed ? "已安装 · " : ""}${p.size ? mib(p.size) : ""}`}</Text>
+    </VStack>
+  </Button>
+}
+
+function SoftwarePage({ active }: { active: Controller }) {
+  const [tab, setTab] = useState<"available" | "installed" | "updates">("installed")
+  const [installed, setInstalled] = useState<Pkg[]>([]), [available, setAvailable] = useState<Pkg[] | null>(null)
+  const [q, setQ] = useState(""), [url, setUrl] = useState(""), [limit, setLimit] = useState(100), [busy, setBusy] = useState(false), [err, setErr] = useState(""), [log, setLog] = useState(""), [tick, setTick] = useState(0)
+  const [disk, setDisk] = useState("")
+  useEffect(() => { let alive = true; loadInstalledPkgs(active).then(x => { if (alive) { setInstalled(x); setErr("") } }).catch(() => { if (alive) setErr("软件列表读取不可用：路由器未使用 apk/opkg 或账号权限不足。") }); return () => { alive = false } }, [active.id, tick])
+  useEffect(() => { let alive = true; loadDiskUsage(active).then(d => { if (alive && d) setDisk(`${Math.round(d.used / d.size * 100)}% 已用（${mib(d.used)} / ${mib(d.size)}，剩余 ${mib(d.avail)}）`) }).catch(() => {}); return () => { alive = false } }, [active.id, tick])
+  useEffect(() => { if (tab === "available" || tab === "updates") { let alive = true; if (!available) loadAvailablePkgs(active).then(x => { if (alive) setAvailable(x) }).catch(() => { if (alive) setErr("可用软件包读取失败，请先点“更新列表”") }); return () => { alive = false } } }, [tab, active.id, available === null])
+  const updates = available ? upgradablePkgs(installed, available) : []
+  const source = tab === "installed" ? installed : tab === "updates" ? updates : (available ?? [])
+  const shown = filterPkgs(source, q, limit)
+  const run = (title: string, effect: string, fn: () => Promise<{ code: number; out: string }>) => guarded(setBusy, async () => {
+    if (!await confirmed(`${active.name} · ${title}`, effect, async () => { const r = await fn(); setLog(`${r.code === 0 ? "成功" : "失败（代码 " + r.code + "）"}\n${r.out}`) })) return
+    setAvailable(null); setTick(t => t + 1)
+  })
+  const act = async (p: Pkg) => {
+    if (p.installed) {
+      const i = await Dialog.actionSheet({ title: p.name, message: p.desc, actions: [...(p.upgradeTo ? [{ label: `升级到 ${p.upgradeTo}` }] : []), { label: "卸载", destructive: true }] })
+      if (i == null) return
+      if (p.upgradeTo && i === 0) run(p.name, `升级到 ${p.upgradeTo}；可能重启相关服务。`, () => pkgUpgrade(active, [p.name]))
+      else run(p.name, "卸载软件包及其不再需要的依赖；可能导致依赖它的功能失效。", () => pkgRemove(active, [p.name]))
+    } else if (await Dialog.confirm({ title: p.name, message: `${p.desc}\n\n版本 ${p.version}${p.size ? " · " + mib(p.size) : ""}`, confirmLabel: "安装", cancelLabel: "取消" })) {
+      run(p.name, "下载并安装；会改动系统。", () => pkgInstall(active, [p.name]))
+    }
+  }
+  return <Form navigationTitle="软件管理" navigationBarTitleDisplayMode="inline">
+    {err ? <Section><Text foregroundStyle="systemRed">{err}</Text></Section> : null}
+    <Section header={<Text>磁盘空间</Text>} footer={<Text>软件包操作可能破坏系统，请谨慎。</Text>}><Text foregroundStyle="secondaryLabel">{disk || "-"}</Text></Section>
+    <Section header={<Text>过滤器</Text>}><TextField title="输入关键字过滤" value={q} onChanged={(v: string) => { setQ(v); setLimit(100) }} autocorrectionDisabled textInputAutocapitalization="never" /></Section>
+    <Section header={<Text>下载并安装</Text>}>
+      <TextField title="软件包名称" value={url} onChanged={setUrl} autocorrectionDisabled textInputAutocapitalization="never" />
+      <Button title="安装" disabled={busy || !url.trim()} action={() => run(url.trim(), "下载并安装；会改动系统。", () => pkgInstall(active, [url.trim()]))} />
+    </Section>
+    <Section header={<Text>操作</Text>}>
+      <Button title="更新列表" disabled={busy} action={() => run("软件源", "刷新软件源索引，需联网，不安装任何软件。", () => pkgUpdateLists(active))} />
+      {updates.length ? <Button title="升级全部" tint="systemRed" disabled={busy} action={() => run(`${updates.length} 个软件包`, "升级全部可更新的软件包；可能重启服务，系统核心包升级有风险。", () => pkgUpgrade(active, updates.map(p => p.name)))} /> : null}
+    </Section>
+    <Section>
+      <Picker title="" pickerStyle="segmented" value={tab} onChanged={(v: any) => { setTab(v); setLimit(100) }}><Text tag="available">可用</Text><Text tag="installed">已安装</Text><Text tag="updates">更新</Text></Picker>
+    </Section>
+    <Section footer={<Text>{tab !== "installed" && !available ? "正在读取软件源（首次约十几秒）…" : shown.total > shown.items.length ? `显示 ${shown.items.length} / ${shown.total}，输入关键字缩小范围` : `共 ${shown.total} 项`}</Text>}>
+      {shown.items.map(p => <PkgRow key={p.name + p.version} p={tab === "available" && installed.some(i => i.name === p.name) ? { ...p, installed: true } : p} onTap={() => act(tab === "available" && installed.some(i => i.name === p.name) ? { ...p, installed: true } : p)} />)}
+      {shown.total > shown.items.length ? <Button title="显示更多" action={() => setLimit(limit + 100)} /> : null}
+    </Section>
+    {log ? <Section header={<Text>操作输出</Text>}><Text font={11} foregroundStyle="secondaryLabel">{log}</Text></Section> : null}
+  </Form>
+}
+
 // ---------- 设置 ----------
 function HelpPage() {
   return <Form navigationTitle="使用说明" navigationBarTitleDisplayMode="inline">
@@ -592,6 +651,7 @@ function SettingsPage({ active, onChanged }: { active: Controller | null; onChan
       <NavigationLink destination={<WrtLeasesPage active={active} version={0} />}><Label title="在线设备" systemImage="laptopcomputer.and.iphone" /></NavigationLink>
       <NavigationLink destination={<DockerPage active={active} />}><HStack spacing={10}><DockerLogo size={22} mono /><Text>Docker 管理</Text></HStack></NavigationLink>
       <NavigationLink destination={<FrpPage active={active} />}><Label title="FRP 管理" systemImage="arrow.left.arrow.right" /></NavigationLink>
+      <NavigationLink destination={<SoftwarePage active={active} />}><Label title="软件管理" systemImage="shippingbox" /></NavigationLink>
     </Section> : null}
   </Form>
 }

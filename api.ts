@@ -1,6 +1,6 @@
 // dashboard 数据层：Clash 外部控制 API 与 OpenWrt（LuCI ubus JSON-RPC）
 import { getPreferences, customHeaders, recordEvent, controllerHealth, feedback } from "./preferences"
-export const VERSION = "1.5.25"
+export const VERSION = "1.5.26"
 
 export type Kind = "clash" | "openwrt"
 export type Plugin = "openclash" | "nikki" | "mihomo"
@@ -709,4 +709,72 @@ export async function loadDockerImages(c: Controller): Promise<DockerImage[]> {
 export async function dockerImageRemove(c: Controller, id: string, force: boolean) {
   if (!/^sha256:[0-9a-f]{64}$/.test(id) && !/^[0-9a-f]{12,64}$/.test(id)) throw new Error("镜像标识无效")
   dockerBody(await ubus(c, "docker.image", "remove", { id, query: force ? { force: "true" } : {} }))
+}
+
+// ---------- 软件管理（对应 LuCI Software：/cgi-bin/cgi-exec + package-manager-call，ACL 仅放行这几个子命令）----------
+export interface Pkg { name: string; version: string; size: number; desc: string; installed: boolean; upgradeTo?: string }
+const PKG = "/usr/libexec/package-manager-call"
+const okPkg = (n: string) => /^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$/.test(n)
+async function pkgExec(c: Controller, args: string[], timeoutSec = 60): Promise<string> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    let sid = sessions[c.id]?.sid
+    if (!sid || Date.now() - sessions[c.id].at > 50 * 60 * 1000) sid = await wrtLogin(c)
+    const body = `sessionid=${enc(sid)}&command=${enc([PKG, ...args].join(" "))}&stderr=1`
+    const r = await fetch(c.url + "/cgi-bin/cgi-exec", {
+      method: "POST", headers: { ...customHeaders(), "Content-Type": "application/x-www-form-urlencoded" }, body, allowInsecureRequest: true, timeout: timeoutSec,
+    } as any)
+    if (r.status === 403 && attempt === 0) { delete sessions[c.id]; continue }
+    if (r.status === 403) throw new Error("没有权限执行软件包命令")
+    if (!r.ok) throw new Error(`请求失败 HTTP ${r.status}`)
+    return await r.text()
+  }
+  throw new Error("请求失败")
+}
+function parsePkgs(text: string, installed: boolean): Pkg[] {
+  let arr: any[]
+  try { arr = JSON.parse(text) } catch { throw new Error("软件包列表格式无法识别") }
+  return (Array.isArray(arr) ? arr : []).map((x: any): Pkg => ({
+    name: String(x.name ?? ""), version: String(x.version ?? ""), size: num(installed ? x["installed-size"] : x["file-size"]),
+    desc: String(x.description ?? "").slice(0, 400), installed,
+  })).filter(x => x.name)
+}
+export async function loadInstalledPkgs(c: Controller): Promise<Pkg[]> {
+  const list = parsePkgs(await pkgExec(c, ["list-installed"], 90), true)
+  list.sort((a, b) => a.name.localeCompare(b.name))
+  return list
+}
+let availableCache: Record<string, { at: number; list: Pkg[] }> = {}
+export async function loadAvailablePkgs(c: Controller, force = false): Promise<Pkg[]> {
+  const hit = availableCache[c.id]
+  if (!force && hit && Date.now() - hit.at < 10 * 60 * 1000) return hit.list
+  const list = parsePkgs(await pkgExec(c, ["list-available"], 120), false)
+  list.sort((a, b) => a.name.localeCompare(b.name))
+  availableCache[c.id] = { at: Date.now(), list }
+  return list
+}
+export function upgradablePkgs(installed: Pkg[], available: Pkg[]): Pkg[] {
+  const av = new Map(available.map(p => [p.name, p.version]))
+  return installed.filter(p => { const v = av.get(p.name); return !!v && v !== p.version }).map(p => ({ ...p, upgradeTo: av.get(p.name) }))
+}
+export function filterPkgs(list: Pkg[], q: string, limit = 100, offset = 0): { items: Pkg[]; total: number } {
+  const k = q.trim().toLowerCase()
+  const hit = k ? list.filter(p => p.name.toLowerCase().includes(k) || p.desc.toLowerCase().includes(k)) : list
+  return { items: hit.slice(offset, offset + limit), total: hit.length }
+}
+export interface PkgResult { code: number; out: string }
+async function pkgOp(c: Controller, args: string[]): Promise<PkgResult> {
+  const text = await pkgExec(c, args, 300)
+  try { const j = JSON.parse(text); return { code: num(j.code), out: [j.stdout, j.stderr].filter(Boolean).join("\n").slice(0, 3000) } }
+  catch { return { code: 255, out: text.slice(0, 500) } }
+}
+export async function pkgUpdateLists(c: Controller) { delete availableCache[c.id]; return pkgOp(c, ["update"]) }
+export async function pkgInstall(c: Controller, names: string[]) { if (!names.length || !names.every(okPkg)) throw new Error("软件包名称无效"); delete availableCache[c.id]; return pkgOp(c, ["install", ...names]) }
+export async function pkgRemove(c: Controller, names: string[]) { if (!names.length || !names.every(okPkg)) throw new Error("软件包名称无效"); return pkgOp(c, ["remove", ...names]) }
+export async function pkgUpgrade(c: Controller, names: string[]) { if (!names.length || !names.every(okPkg)) throw new Error("软件包名称无效"); delete availableCache[c.id]; return pkgOp(c, ["upgrade", ...names]) }
+
+export async function loadDiskUsage(c: Controller): Promise<{ size: number; used: number; avail: number } | null> {
+  const r = await ubus(c, "luci", "getMountPoints")
+  const list: any[] = r?.result ?? []
+  const m = list.find(x => x.mount === "/overlay") ?? list.find(x => x.mount === "/")
+  return m ? { size: num(m.size), used: num(m.size) - num(m.avail), avail: num(m.avail) } : null // 路由器返回的已是字节（实测）
 }
