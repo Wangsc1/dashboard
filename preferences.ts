@@ -7,14 +7,14 @@ export interface Preferences {
   foldOffline: boolean; disconnectOnSwitch: boolean; haptics: boolean
   defaultPage: "overview" | "proxies" | "rules" | "connections" | "more"
   nestedDelay: boolean; nodeSort: "default" | "delay" | "name"; showGlobal: boolean
-  requestTimeout: number; testURL: string; testTimeout: number; logLimit: number; detailedAPI: boolean
+  headersEnabled: boolean; requestTimeout: number; testURL: string; testTimeout: number; logLimit: number; detailedAPI: boolean
 }
 export const DEFAULTS: Preferences = {
   theme: "system", connectionStyle: "standard", proxyStyle: "list", collapseGesture: false, removalFade: false,
   delayGreen: 240, delayRed: 500, showHidden: false, customIcons: true, groupIcons: {},
   showWrt: true, droplets: false, connectionBackground: false, ripple: false,
   foldOffline: false, disconnectOnSwitch: false, haptics: false, defaultPage: "overview",
-  nestedDelay: false, nodeSort: "default", showGlobal: false, requestTimeout: 8,
+  headersEnabled: true, nestedDelay: false, nodeSort: "default", showGlobal: false, requestTimeout: 8,
   testURL: "https://www.gstatic.com/generate_204", testTimeout: 5000, logLimit: 500, detailedAPI: false,
 }
 const KEY = "dashboard_preferences_v140"
@@ -95,7 +95,7 @@ export function parseHeaders(text: string): Record<string, string> {
   }
   return out
 }
-export function customHeaders() { try { return parseHeaders(getHeaderText()) } catch { return {} } }
+export function customHeaders() { if (!getPreferences().headersEnabled) return {}; try { return parseHeaders(getHeaderText()) } catch { return {} } }
 export function saveHeaders(text: string) { const h = parseHeaders(text); if (Keychain.set(HEADERS_KEY, JSON.stringify(h)) === false) throw new Error("请求头保存失败") }
 
 export const controllerHealth: Record<string, boolean | undefined> = {}

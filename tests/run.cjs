@@ -259,9 +259,9 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) assert.equal(nodes(tree, types[i]).length, ids[i] === id ? 1 : 0)
     }
-    assert.equal(api.VERSION, '1.5.38'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.5.39'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
-  await test('1.5.38 共享栈/简单ToolBarProps：唯一业务页owner、隐藏Tab无注册', () => {
+  await test('1.5.39 共享栈/简单ToolBarProps：唯一业务页owner、隐藏Tab无注册', () => {
     pref.savePreferences({ defaultPage: 'overview' })
     let rootTree = render(app.Root, {}, true)
     const pagesByTab = { home: app.OverviewPage, proxies: app.ProxiesPage, rules: app.RulesPage, connections: app.ConnectionsPage, more: app.MorePage }
@@ -306,7 +306,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     assert.ok(!source.includes('const content ='));assert.ok(!source.includes('ROOT_TABS.map'));assert.ok(!source.includes('toolbar={'));assert.ok(!source.includes('topBarLeading'))
     const helper=fs.readFileSync(path.join(root,'root-toolbar.tsx'),'utf8');assert.ok(!helper.includes('ToolbarItem'));assert.ok(!helper.includes('<Toolbar'));assert.ok(!helper.includes('key='));assert.ok(!helper.includes('id='))
   })
-  await test('1.5.38 编辑控制器仍进管理页；共享栈push详情不附根X', () => {
+  await test('1.5.39 编辑控制器仍进管理页；共享栈push详情不附根X', () => {
     let closes=0
     let page=render(app.OverviewPage,{active:c,version:0,onSwitch(){},onClose(){closes++}},true)
     trailing(page.props.toolbar).props.action()
@@ -332,7 +332,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     let tree = render(app.OverviewPage, { active: router, version: 0, onSwitch() {} }); tree.props.onDisappear(); render(app.OverviewPage, { active: router, version: 0, onSwitch() {} }); await flush()
     assert.ok(![...intervals.values()].some(x => x.ms === 1000)); unmount(); assert.equal(intervals.size, 0)
   })
-  await test('1.5.38 OpenWrt卡：目标平台、内核版本、CPU两次采样', async () => {
+  await test('1.5.39 OpenWrt卡：目标平台、内核版本、CPU两次采样', async () => {
     const router = { ...api.listControllers().find(x => x.kind === 'openwrt'), id: 'cpu-test' }
     let stat = 'cpu  100 0 100 800 0 0 0 0 0 0\n'
     responder = (url, init) => { const b = JSON.parse(init.body || '{}'), path = b.params?.[3]?.path
@@ -344,13 +344,13 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     o = await api.loadOverview(router); assert.equal(Math.round(o.wrt.cpu), 50)
     const src = fs.readFileSync(path.join(root, 'index.tsx'), 'utf8'); for (const t of ['目标平台','内核版本','CPU 使用率']) assert.ok(src.includes(`title="${t}"`)); assert.ok(src.indexOf('title="CPU 使用率"') < src.indexOf('title="系统负载"') && src.indexOf('title="系统负载"') < src.indexOf('title="运行时间"'))
   })
-  await test('1.5.38 图标地址：路径中的@允许，查询串/片段/用户信息仍拒绝', async () => {
+  await test('1.5.39 图标地址：路径中的@允许，查询串/片段/用户信息仍拒绝', async () => {
     responder = () => ({ body: {}, contentType: 'image/png' })
     assert.ok(await pref.cachedIcon('https://fastly.jsdelivr.net/gh/Koolson/Qure@master/IconSet/Color/Emby.png'))
     for (const u of ['http://x.invalid/a.png', 'https://x.invalid/a.png?k=1', 'https://x.invalid/a.png#f', 'https://user:pw@x.invalid/a.png']) assert.equal(await pref.cachedIcon(u), null)
     const src = fs.readFileSync(path.join(root, 'index.tsx'), 'utf8'); assert.ok(src.includes('navigationTitle="OpenWrt 状态"')); assert.ok(src.includes('运行正常')); assert.ok(src.indexOf('运行正常') < src.indexOf('title="目标平台"'))
   })
-  await test('1.5.38 Docker/FRP管理：解析、敏感字段不外露、操作参数校验', async () => {
+  await test('1.5.39 Docker/FRP管理：解析、敏感字段不外露、操作参数校验', async () => {
     const router = { ...api.listControllers().find(x => x.kind === 'openwrt'), id: 'dock-test' }
     const calls2 = []
     responder = (url, init) => { const b = JSON.parse(init.body || '{}'), [, obj, method, args] = b.params || []
@@ -370,7 +370,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     for (const t of ['面板设置', 'Docker 管理', 'FRP 管理']) assert.ok(src.includes(t))
     assert.ok(!src.includes('title="代理内核配置"')); assert.ok(!src.includes('title="编辑控制器"'))
   })
-  await test('1.5.38 Docker/FRP参数编辑：校验、uci提交+重启、失败回滚、token可见可改', async () => {
+  await test('1.5.39 Docker/FRP参数编辑：校验、uci提交+重启、失败回滚、token可见可改', async () => {
     const router = { ...api.listControllers().find(x => x.kind === 'openwrt'), id: 'edit-test' }
     const seen = []; let failSet = false
     responder = (url, init) => { const b = JSON.parse(init.body || '{}'), [, obj, method, args] = b.params || []
@@ -400,7 +400,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     const src = fs.readFileSync(path.join(root, 'index.tsx'), 'utf8'); assert.ok(fs.readFileSync(path.join(root, 'docker-icon.ts'), 'utf8').includes('DOCKER_PNG_BASE64')); assert.ok(src.includes('UIImage.fromBase64String')); assert.ok(src.includes('<DockerLogo')); assert.ok(src.includes('title="保存"')); assert.ok(!src.includes('保存并重启')); assert.ok(!src.includes('title="保持"')); assert.ok(!src.includes('点进可编辑')); assert.ok(src.includes('<DockerLogo size={22} mono />')); assert.ok(!src.includes('SecureField title="Token')); assert.ok(!src.includes('title="Docker 管理" systemImage="shippingbox"')); assert.ok(!src.includes('title="刷新" systemImage="arrow.clockwise" action={() => setTick'))
     const ov = await api.loadDockerOverview(router); assert.equal(ov.version, '29.6.1'); assert.equal(ov.api, '1.55'); assert.equal(ov.root, '/opt/docker')
   })
-  await test('1.5.38 Docker容器详情/操作与镜像列表/删除', async () => {
+  await test('1.5.39 Docker容器详情/操作与镜像列表/删除', async () => {
     const router = { ...api.listControllers().find(x => x.kind === 'openwrt'), id: 'img-test' }, seen = []
     responder = (url, init) => { const b = JSON.parse(init.body || '{}'), [, obj, method, args] = b.params || []
       if (obj === 'session') return { body: { result: [0, { ubus_rpc_session: 'sid' }] } }
@@ -417,7 +417,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     await api.dockerImageRemove(router, im[0].id, true); assert.ok(seen.some(x => x.obj === 'docker.image' && x.method === 'remove' && x.args.query.force === 'true')); await assert.rejects(() => api.dockerImageRemove(router, 'bad/id', false))
     const src = fs.readFileSync(path.join(root, 'index.tsx'), 'utf8'); assert.ok(src.includes('<Section header={<Text>镜像</Text>}>')); assert.ok(src.includes('<Section header={<Text>容器</Text>}>')); assert.ok(src.includes('<Section header={<Text>穿透规则</Text>}>')); assert.ok(!src.includes('`容器 ${list.length}`')); assert.ok(!src.includes('穿透规则 ${'))
   })
-  await test('1.5.38 软件管理：cgi-exec、列表解析、更新对比、过滤分页、操作参数校验、磁盘字节', async () => {
+  await test('1.5.39 软件管理：cgi-exec、列表解析、更新对比、过滤分页、操作参数校验、磁盘字节', async () => {
     const router = { ...api.listControllers().find(x => x.kind === 'openwrt'), id: 'pkg-test' }, reqs = []
     const inst = [{ name: 'nikki', version: '2026.04.08-r1', description: 'Transparent Proxy', 'installed-size': 278528 }, { name: 'htop', version: '3.4-r1', description: 'viewer', 'installed-size': 1048576 }]
     const avail = [{ name: 'nikki', version: '2026.10.10-r1', description: 'Transparent Proxy', 'file-size': 100000 }, { name: 'htop', version: '3.4-r1', description: 'viewer', 'file-size': 90000 }, { name: '3proxy', version: '0.9.5-r5', description: 'tiny proxy', 'file-size': 103946 }]
@@ -440,13 +440,13 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     const d = await api.loadDiskUsage(router); assert.equal(d.size, 20957446144); assert.equal(d.avail, 19443449856); assert.equal(d.used, 20957446144 - 19443449856)
     const src = fs.readFileSync(path.join(root, 'index.tsx'), 'utf8'); assert.ok(src.includes('title="软件管理"')); assert.ok(src.includes('function SoftwarePage')); assert.ok(src.includes('<NavigationLink destination={<LogsPage />}><Label title="运行日志"')); assert.ok(src.indexOf('title="软件管理"') < src.indexOf('title="运行日志"', src.indexOf('title="软件管理"'))); assert.ok(!src.includes('setPage("logs")')); assert.ok(src.includes('<Button title="安装" tint="systemBlue"')); assert.ok(src.includes('<Button title="卸载" tint="systemRed"')); assert.ok(src.includes('<Button title="升级" tint="systemBlue"')); assert.ok(!src.includes('Dialog.actionSheet')); assert.ok(!src.includes('title="安装" systemImage')); assert.ok(!/(停止|启动|删除|卸载|升级|安装)" systemImage/.test(src)); assert.ok(!/title="重启" systemImage="arrow.clockwise" tint=/.test(src)) // 左滑按钮纯文字
   })
-  await test('1.5.38 面板管理地址打码；FRP页Token完整显示可编辑', () => {
+  await test('1.5.39 面板管理地址打码；FRP页Token完整显示可编辑', () => {
     const src = fs.readFileSync(path.join(root, 'index.tsx'), 'utf8')
     const strip = s => s.replace(/\((\w+): string\)/g, '($1)'), maskUrl = new Function('return ' + strip(src.match(/const maskUrl = (.*)/)[1]))()
     assert.equal(maskUrl('http://43.153.184.66:8008'), 'http://43.153.*.*:8008'); assert.equal(maskUrl('https://10.0.0.1'), 'https://10.0.*.*'); assert.equal(maskUrl('http://router.example.com:80'), 'http://router.example.com:80')
     assert.ok(src.includes('{maskUrl(c.url)}')); assert.ok(src.includes('{maskUrl(info.server)}')); assert.equal(maskUrl('43.153.184.66:8055'), '43.153.*.*:8055'); assert.ok(!src.includes('maskToken')); assert.ok(src.includes('<Field title="Token" value={token}')); assert.ok(src.includes('token: token.trim()')); assert.ok(src.includes('useState(info.common.token)'))
   })
-  await test('1.5.38 面板设置页布局：外观设置在添加OpenWrt下；全局配置在路由器详情最上；运行日志在软件管理后', () => {
+  await test('1.5.39 面板设置页布局：外观设置在添加OpenWrt下；全局配置在路由器详情最上；运行日志在软件管理后', () => {
     const src = fs.readFileSync(path.join(root, 'index.tsx'), 'utf8'), body = src.slice(src.indexOf('function SettingsPage'), src.indexOf('function MorePage'))
     const at = s => body.indexOf(s)
     assert.ok(at('title="添加 OpenWrt"') < at('title="外观设置"') && at('title="外观设置"') < at('<Text>路由器详情</Text>'))
@@ -481,7 +481,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     button(trailing(tree.props.toolbar), '✓ 信息').props.action(); tree = render(ui.LogsPage, {}); assert.equal(nodes(tree, 'VStack').length, 3)
     button(trailing(tree.props.toolbar), '搜索日志').props.action(); tree = render(ui.LogsPage, {}); nodes(tree, 'TextField')[0].props.onChanged('路由器'); tree = render(ui.LogsPage, {}); assert.equal(nodes(tree, 'VStack').length, 2)
   })
-  await test('1.5.38 控制器左滑删除按钮（trailingSwipeActions）与右对齐版本', () => {
+  await test('1.5.39 控制器左滑删除按钮（trailingSwipeActions）与右对齐版本', () => {
     const source = fs.readFileSync(path.join(root, 'index.tsx'), 'utf8')
     const body = source.match(/function remove\(id: string\) \{([\s\S]*?)\n  \}/)[1].trim()
     assert.equal(body, `removeController(id)
@@ -583,6 +583,15 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       pref.savePreferences({ defaultPage: stored }); assert.equal(pref.getPreferences().defaultPage, stored)
       const tree = render(app.Root, {}, true); assert.equal(nodes(tree, 'TabView')[0].props.selection.value, tab); unmount()
     }
+  })
+  await test('自定义请求头开关保留Keychain，关闭不发送，重开恢复', () => {
+    const before = pref.getHeaderText()
+    pref.saveHeaders('{"X-Is-Me":"YES"}')
+    pref.savePreferences({ headersEnabled: false }); assert.equal(JSON.stringify(pref.customHeaders()), '{}'); assert.ok(pref.getHeaderText().includes('YES'))
+    pref.savePreferences({ headersEnabled: true }); assert.equal(pref.customHeaders()['X-Is-Me'], 'YES')
+    pref.saveHeaders(before)
+    const src = fs.readFileSync(path.join(root, 'settings-ui.tsx'), 'utf8')
+    assert.ok(!src.includes('HeadersPage')); assert.ok(src.includes('<HeaderFields />')); assert.ok(src.includes('title="例如 X-Is-Me"')); assert.ok(src.includes('title="例如 YES"'))
   })
   await test('首页关键行为（速度图表、数字动画）', () => {
     const source=fs.readFileSync(path.join(root,'index.tsx'),'utf8')

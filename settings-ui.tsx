@@ -60,10 +60,33 @@ export function AppearancePage() {
     <Section header={<Text>缓存管理</Text>}><Button title="清除图片缓存" action={clear} /></Section>
   </Form>
 }
-function HeadersPage() {
-  const [text, setText] = useState(getHeaderText()), [status, setStatus] = useState("")
-  function save() { try { saveHeaders(text); setStatus("已保存；后续控制器/ubus 请求生效") } catch (e: any) { setStatus(String(e.message)) } }
-  return <Form navigationTitle="自定义请求头" navigationBarTitleDisplayMode="inline"><Section footer={<Text>JSON 对象，仅附加到本脚本的控制器与 ubus 请求，不发给外部图片站点。保存在 Keychain；禁止覆盖认证与传输头，不写入运行日志。</Text>}><SecureField title="请求头 JSON" value={text} onChanged={setText} /><Button title="保存请求头" action={save} /><Text foregroundStyle="secondaryLabel">{status}</Text></Section></Form>
+function HeaderFields() {
+  const p = usePreferences()
+  const [rows, setRows] = useState(() => {
+    try { const entries = Object.entries(JSON.parse(getHeaderText())).map(([key, value]) => ({ key, value: String(value) })); return entries.length ? entries : [{ key: "", value: "" }] }
+    catch { return [{ key: "", value: "" }] }
+  })
+  const [error, setError] = useState("")
+  function edit(i: number, field: "key" | "value", value: string) {
+    const next = rows.map((r, j) => j === i ? { ...r, [field]: value } : r)
+    setRows(next)
+    if (next.some(r => !r.key.trim() && r.value)) { setError("请输入 Key"); return }
+    const obj: Record<string, string> = {}
+    for (const r of next) {
+      if (!r.key.trim()) continue
+      if (Object.keys(obj).some(k => k.toLowerCase() === r.key.trim().toLowerCase())) { setError("Key 不能重复"); return }
+      obj[r.key.trim()] = r.value
+    }
+    try { saveHeaders(JSON.stringify(obj)); setError("") } catch (e: any) { setError(String(e.message)) }
+  }
+  return <>
+    <Toggle value={p.headersEnabled} onChanged={(v: boolean) => update({ headersEnabled: v })}><Label title="自定义请求头" systemImage="network" /></Toggle>
+    {p.headersEnabled ? rows.map((r, i) => <VStack key={i} spacing={0}>
+      <HStack><Text>Key</Text><TextField title="例如 X-Is-Me" value={r.key} onChanged={(v: string) => edit(i, "key", v)} autocorrectionDisabled textInputAutocapitalization="never" /></HStack>
+      <HStack><Text>Value</Text><TextField title="例如 YES" value={r.value} onChanged={(v: string) => edit(i, "value", v)} autocorrectionDisabled textInputAutocapitalization="never" /></HStack>
+    </VStack>) : null}
+    {error ? <Text font={12} foregroundStyle="systemRed">{error}</Text> : null}
+  </>
 }
 
 export function KernelConfigPage({ c }: { c: Controller }) {
@@ -113,7 +136,7 @@ export function GlobalConfigPage({ active }: { active: Controller | null }) {
     <Section header={<Text>交互体验</Text>}>{toggle("haptics", "触感反馈")}</Section>
     <Section header={<Text>启动设置</Text>}><Choice title="默认打开界面" value={p.defaultPage} values={[["overview", "主页"], ["proxies", "代理"], ["rules", "规则"], ["connections", "连接"], ["more", "更多"]]} onChanged={v => update({ defaultPage: v as any })} /></Section>
     <Section header={<Text>网络请求</Text>}>
-      <NavigationLink destination={<HeadersPage />}><Label title="自定义请求头" systemImage="network" /></NavigationLink>
+      <HeaderFields />
       {toggle("nestedDelay", "嵌套代理组延迟显示")}
       <Choice title="代理组节点排序" value={p.nodeSort} values={[["default", "默认（配置顺序）"], ["delay", "延迟（超时最后）"], ["name", "名称"]]} onChanged={v => update({ nodeSort: v as any })} />
       {toggle("showGlobal", "显示 Global 代理组")}
