@@ -34,7 +34,9 @@
 
 ### 订阅
 
-支持新增、编辑、删除和确认更新。User Agent 使用 Nikki 的实际值 `clash / clash.meta / mihomo`，优先级使用 `remote / local`；保留 `info_url` 等未知或未编辑字段。
+支持新增、编辑、删除和确认更新。编辑按每次导航进入的订阅快照预填名称、URL、User Agent 和优先级；返回后重进或切换订阅不会复用旧草稿。新增才使用空名称/URL及 `clash / remote` 默认值。User Agent 使用 Nikki 的实际值 `clash / clash.meta / mihomo`，优先级使用 `remote / local`；保留 `info_url` 等未知或未编辑字段。
+
+卡片为中性链条徽标、独立大号名称、截断 URL、clock 图标相对更新时间及一排编辑/更新/删除按钮，深浅适配。支持设备日期时间、ISO 日期和 Unix 时间戳；无时区日期按本机时区解释，无法解析时显示「未知」。
 
 更新调用 `luci.nikki.update_subscription`，会访问订阅地址并覆盖下载文件，包括对该文件的本地编辑。删除当前选用订阅会被拒绝；普通删除与 LuCI 一致，仅删除该订阅设置，保留已下载文件。
 
@@ -42,7 +44,11 @@
 
 横向分页卡片展示本地/订阅来源、名称、实际 mtime、大小和 UCI 当前选用标记。点击卡片确认选用，提交 `config.profile = file:<name> / subscription:<id>`。勾选标记不是已核验的内核运行状态。
 
-列表不读取配置正文。打开编辑页后才完整加载，使用等宽多行输入；未修改时保存禁用。保留 UTF-8 与换行，保存后完整回读核对，失败保留当前草稿。
+列表不读取配置正文。打开编辑页后才完整加载，使用等宽正文及左侧真实行号栏；增删行实时更新，随正文纵向滚动同步，长行横向滚动而不折行，避免行号错位。原生多行 TextField 文档未提供可用的共享滚动接口，因此按 Scripting 官方 `WebViewController` / `WebView` 接口内嵌本地 HTML/CSS/脚本；不加载网络编辑器、无工具栏或语法高亮。使用官方当前文档列出的临时隔离容器与请求拦截，另以 CSP 禁止外部资源；编辑器不写网页存储、不包含外发逻辑，退出调用 `dispose()`。这些是实现策略，不是对未验证 App 版本的安全保证。
+
+未修改时保存禁用；保留 UTF-8、缩进及原有 CRLF/LF/CR，新增换行采用正文第一个换行的形式，未触及部分保持原样。保存读取编辑器最新完整快照，手动确认后分块写入并完整回读核对，不自动应用/重载；取消保存确认或保存失败时保留当前草稿。行号脚本及导航复用模型已做定向测试，iPhone 的 WKWebView 键盘、实际字体对齐和长文滚动性能仍需真机确认。
+
+接口依据：[官方当前 WebViewController](https://scriptingapp.github.io/guide/Device%20Capabilities/WebViewController.md) 列出 `ephemeral`、`shouldAllowRequest`、消息处理器，并要求取返回值时使用 `return`；[WebView 示例](https://scriptingapp.github.io/guide/Views/WebView.md) 则使用表达式。保存快照通过消息桥回传，不依赖两种求值方式的返回值差异，并设超时拒绝写入。当前没有目标 App 同步的官方 `.d.ts` 或宿主实现；测试 stub 只作本地检查，不证明用户安装版本支持这些 API。
 
 ### 权限与重要限制
 
