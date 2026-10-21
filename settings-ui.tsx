@@ -1,6 +1,6 @@
 import { Button, Circle, GeometryReader, ZStack, RoundedRectangle, gradient, Form, HStack, Image, Label, Menu, NavigationLink, Picker, Section, SecureField, Slider, Spacer, Text, TextField, Toggle, VStack, useEffect, useState } from "scripting"
 import { Controller, ClashConfig, CLASH_MODES, LOG_LEVELS, loadConfig, patchConfig } from "./api"
-import { NODE_SORT_OPTIONS, Preferences, AppLog, LogLevel, getPreferences, savePreferences, subscribePreferences, preferenceTrace, traceIconPreference, feedback, getLogs, clearLogs, exportLogs, logTime, getHeaderText, saveHeaders, clearImageCache } from "./preferences"
+import { Preferences, AppLog, LogLevel, getPreferences, savePreferences, subscribePreferences, preferenceTrace, traceIconPreference, feedback, getLogs, clearLogs, exportLogs, logTime, getHeaderText, saveHeaders, clearImageCache } from "./preferences"
 
 import { makeBackup, restoreBackup, validateBackup } from "./cloud-backup"
 
@@ -247,10 +247,6 @@ export function GlobalConfigPage({ active }: { active: Controller | null }) {
     <Section header={<Text>网络请求</Text>}>
       <HeaderFields />
       {toggle("nestedDelay", "嵌套代理组延迟显示")}
-      <Button action={async () => {
-        const i = await Dialog.actionSheet({ title: "代理组节点排序", actions: NODE_SORT_OPTIONS.map(([key, label]) => ({ label: (key === p.nodeSort ? "✓ " : "") + label })) })
-        if (i != null && NODE_SORT_OPTIONS[i]) update({ nodeSort: NODE_SORT_OPTIONS[i][0] })
-      }}><HStack><Text foregroundStyle="label">代理组节点排序</Text><Spacer /><Text foregroundStyle="secondaryLabel">{NODE_SORT_OPTIONS.find(([key]) => key === p.nodeSort)?.[1]}</Text></HStack></Button>
       <Range title="连接超时时间" min={1} max={30} value={p.requestTimeout} suffix=" s" onChanged={n => update({ requestTimeout: n })} />
     </Section>
     <Section header={<Text>测速设置</Text>}><TestURLField /><Range title="超时时间" min={1000} max={10000} step={100} value={p.testTimeout} suffix=" ms" onChanged={n => update({ testTimeout: n })} /></Section>
