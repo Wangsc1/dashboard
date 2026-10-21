@@ -592,8 +592,7 @@ function EditController({ initial, onDone }: { initial?: Controller; onDone: () 
       onDone(); dismiss()
     } catch (e) { setErr(msg(e)) } finally { entry.busy=false;setSaving(false) }
   }
-  return <Form background="systemBackground" scrollContentBackground="hidden" navigationTitle={initial ? "编辑 OpenWrt" : "添加 OpenWrt"} navigationBarTitleDisplayMode="inline" navigationBarBackButtonHidden={!!initial}
-    toolbar={initial?{topBarLeading:<Button accessibilityLabel="返回" disabled={saving} action={save}><Image systemName="chevron.left"/></Button>}:{ confirmationAction: <Button title={saving ? "保存中…" : "保存"} disabled={saving} action={save} /> }}>
+  return <Form background="systemBackground" scrollContentBackground="hidden" navigationTitle={initial ? "编辑 OpenWrt" : "添加 OpenWrt"} navigationBarTitleDisplayMode="inline" toolbar={initial?{topBarTrailing:<Button title={saving ? "保存中…" : "保存"} disabled={saving} action={save} />}:{ confirmationAction: <Button title={saving ? "保存中…" : "保存"} disabled={saving} action={save} /> }}>
     <Section header={<Text>基本信息</Text>}>
       <TextField title="名称" value={name} onChanged={change("name",setName)} prompt="例如：家庭路由" />
       <TextField title="地址" value={host} onChanged={change("host",setHost)} prompt="IP 地址" />
