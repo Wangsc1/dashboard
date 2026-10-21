@@ -418,7 +418,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) { const lazy = ['proxies','rules','connections'].includes(ids[i]) && ids[i] !== id; assert.equal(nodes(tree, types[i]).length, lazy ? 0 : 1); if (!lazy) assert.equal(nodes(tree, types[i])[0].props.selected, ids[i] === id) }
     }
-    assert.equal(api.VERSION, '1.5.84'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.5.85'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('独立导航栈保留业务owner和身份，只有选中页提供可见工具栏', () => {
     pref.savePreferences({ defaultPage: 'overview' })
@@ -983,6 +983,12 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     const sec = nodes(tree, pages.GroupSection)[0]; assert.equal(sec.props.g.types.N2, 'Snell')
     unmount(); responder = () => ({ status: 204 })
   })
+  await test('节点类型缺失时从代理提供者接口补全协议', async () => {
+    responder = url => ({ body: url.includes('/providers/proxies') ? { providers: { self: { proxies: [{ name: 'P1', type: 'AnyTLS' }, { name: 'P2', type: 'Snell' }] } } } : { proxies: {
+      GLOBAL: { type: 'Selector', all: ['G1'], now: 'G1' }, G1: { type: 'Selector', now: 'P1', all: ['P1', 'P2', 'L1'] }, P1: { history: [{ delay: 30 }] }, L1: { type: 'Shadowsocks' } } } })
+    const grp = (await api.loadGroups(c)).find(x => x.name === 'G1')
+    assert.equal(grp.types.P1, 'AnyTLS'); assert.equal(grp.types.P2, 'Snell'); assert.equal(grp.types.L1, 'Shadowsocks'); unmount(); responder = () => ({ status: 204 })
+  })
   await test('代理页缓存：重新进入立即显示上次策略组，读取完成前不提示空', async () => {
     responder = url => ({ body: url.includes('/providers/') ? { providers: {} } : { proxies: { CacheGroup: { type: 'Selector', now: 'X', all: ['X'] }, X: { type: 'Shadowsocks' } } } })
     render(pages.ProxiesPage, { active: c, version: 0 }, true); await flush(); unmount()
@@ -1004,7 +1010,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       const diagnostic = logs.filter(x => x.startsWith('[preferences-icon]'))
       for (const stage of ['change','accepted','proxies-render','group-render']) assert.ok(diagnostic.some(x => x.includes('stage=' + stage) && x.includes('enabled=false')))
       assert.ok(diagnostic.every(x => !x.includes('private.invalid') && !x.includes('private-group-name') && !x.includes('secret-')))
-      assert.ok(diagnostic.every(x => x.includes('build=1.5.84') && /instance=[a-z0-9]+/.test(x)))
+      assert.ok(diagnostic.every(x => x.includes('build=1.5.85') && /instance=[a-z0-9]+/.test(x)))
       assert.equal(new Set(diagnostic.map(x => x.match(/instance=([^ ]+)/)[1])).size, 1)
     } finally { context.console = originalConsole; unmount(); pref.savePreferences({ customIcons: true, testURL: 'https://www.gstatic.com/generate_204' }) }
   })

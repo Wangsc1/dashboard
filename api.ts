@@ -1,6 +1,6 @@
 
 import { getPreferences, customHeaders, recordEvent, controllerHealth, feedback } from "./preferences"
-export const VERSION = "1.5.84"
+export const VERSION = "1.5.85"
 
 export type Kind = "clash" | "openwrt"
 export type Plugin = "openclash" | "nikki" | "mihomo"
@@ -391,9 +391,17 @@ export async function loadGroups(c0: Controller): Promise<Group[]> {
       const h = node?.history
       return h?.length ? num(h[h.length - 1].delay) : undefined
     }
-    return names.filter(n => (n !== "GLOBAL" || prefs.showGlobal) && (prefs.showHidden || !all[n]?.hidden)).map(n => {
+    const providerTypes: Record<string, string> = {}
+    const visible = names.filter(n => (n !== "GLOBAL" || prefs.showGlobal) && (prefs.showHidden || !all[n]?.hidden))
+    if (visible.some(n => (all[n].all as string[]).some(m => typeof all[m]?.type !== "string"))) {
+      try {
+        const pj = await http(c, "/providers/proxies")
+        for (const p of Object.values<any>(pj?.providers ?? {})) for (const x of (p?.proxies ?? [])) if (typeof x?.name === "string" && typeof x?.type === "string") providerTypes[x.name] = x.type
+      } catch {}
+    }
+    return visible.map(n => {
       const g = all[n]; const delays: Record<string, number> = {}, types: Record<string, string> = {}
-      for (const m of g.all as string[]) { const delay = delayOf(m); if (delay !== undefined) delays[m] = delay; if (typeof all[m]?.type === "string") types[m] = all[m].type }
+      for (const m of g.all as string[]) { const delay = delayOf(m); if (delay !== undefined) delays[m] = delay; const t = typeof all[m]?.type === "string" ? all[m].type : providerTypes[m]; types[m] = t || (all[m] ? "无type字段" : "无节点信息") }
       return { name: n, type: String(g.type ?? ""), now: String(g.now ?? ""), all: g.all, delays, types, hidden: !!g.hidden, icon: typeof g.icon === "string" ? g.icon : undefined }
     })
   }
