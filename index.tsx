@@ -639,7 +639,7 @@ function SettingsPage({ active, onChanged }: { active: Controller | null; onChan
   return <Form navigationTitle="面板设置" navigationBarTitleDisplayMode="inline">
     <Section header={<HStack><Text>OpenWrt</Text><Spacer /><Text font={12} foregroundStyle="secondaryLabel">{`v${VERSION}`}</Text></HStack>}>
       {list.map(c => <NavigationLink key={c.id} destination={<EditController initial={c} onDone={reload} />}
-          trailingSwipeActions={{ allowsFullSwipe: false, actions: [<Button title="删除" systemImage="trash" tint="systemRed" action={() => remove(c.id)} />] }}>
+          trailingSwipeActions={{ allowsFullSwipe: false, actions: [<Button title="删除" tint="systemRed" action={() => remove(c.id)} />] }}>
           <VStack alignment="leading" onLongPressGesture={() => setRevealed([...revealed, c.id])}><Text>{c.name}</Text>{prefs.foldOffline && controllerHealth[c.id] === false && !revealed.includes(c.id)
             ? <Text font={12} foregroundStyle="secondaryLabel">连接失败 · 长按展开地址</Text>
             : <Text font={12} foregroundStyle="secondaryLabel">{c.url}</Text>}</VStack>
