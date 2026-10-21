@@ -155,7 +155,7 @@ function useForeground() {
   return foreground
 }
 
-function OverviewPage({ active, version, onSwitch, onClose }: { active: Controller | null; version: number; onSwitch: () => void; onClose?: () => void }) {
+function OverviewPage({ active, version, onSwitch, onClose, selected = true }: { active: Controller | null; version: number; onSwitch: () => void; onClose?: () => void; selected?: boolean }) {
   const prefs = usePreferences(["connectionBackground"])
   const [hosts, setHosts] = useState<string[]>([])
   const [ov, setOv] = useState<Overview | null>(null)
@@ -164,7 +164,8 @@ function OverviewPage({ active, version, onSwitch, onClose }: { active: Controll
   const [upH, setUpH] = useState<number[]>([])
   const all = listControllers()
   // Scene lifecycle controls sampling; native push/pop does not control polling.
-  const showCharts = useForeground()
+  const foreground = useForeground()
+  const showCharts = foreground && selected
   useEffect(() => { setDn([]); setUpH([]); setOv(null) }, [active?.id, active?.url])
   useEffect(() => {
     if (!active || !showCharts) return
@@ -648,8 +649,8 @@ function SettingsPage({ active, onChanged }: { active: Controller | null; onChan
 }
 
 type RootTab = "home" | "proxies" | "rules" | "connections" | "more"
-function MorePage({ active, onChanged, onClose }: { active: Controller | null; onChanged: () => void; onClose?: () => void }) {
-  return <DashboardMorePage active={active} onChanged={onChanged} onClose={onClose} settings={<Card>
+function MorePage({ active, onChanged, onClose, selected = true }: { active: Controller | null; onChanged: () => void; onClose?: () => void; selected?: boolean }) {
+  return <DashboardMorePage selected={selected} active={active} onChanged={onChanged} onClose={onClose} settings={<Card>
     <NavigationLink destination={<GlobalConfigPage active={active} />}><Label title="全局配置" systemImage="slider.horizontal.3" /></NavigationLink>
     <NavigationLink destination={<SettingsPage active={active} onChanged={onChanged} />}><Label title="设置（控制器管理）" systemImage="gearshape" /></NavigationLink>
   </Card>} />
@@ -664,27 +665,27 @@ function Root() {
   return <TabView selection={selection} font={14} foregroundStyle={MAIN_FG}>
     <Tab key="home" title="主页" systemImage="house.fill" value="home">
       <NavigationStack key="home-stack">
-        {tab === "home" ? <OverviewPage key={`home:${active?.id ?? "empty"}`} active={active} version={version} onSwitch={bump} onClose={dismiss} /> : null}
+        <OverviewPage selected={tab === "home"} key={`home:${active?.id ?? "empty"}`} active={active} version={version} onSwitch={bump} onClose={dismiss} />
       </NavigationStack>
     </Tab>
     <Tab key="proxies" title="代理" systemImage="point.3.connected.trianglepath.dotted" value="proxies">
       <NavigationStack key="proxies-stack">
-        {tab === "proxies" ? <ProxiesPage onClose={dismiss} key={`proxies:${active?.id ?? "empty"}`} active={active} version={version} /> : null}
+        <ProxiesPage selected={tab === "proxies"} onClose={dismiss} key={`proxies:${active?.id ?? "empty"}`} active={active} version={version} />
       </NavigationStack>
     </Tab>
     <Tab key="rules" title="规则" systemImage="list.bullet.rectangle" value="rules">
       <NavigationStack key="rules-stack">
-        {tab === "rules" ? <RulesPage onClose={dismiss} key={`rules:${active?.id ?? "empty"}`} active={active} version={version} /> : null}
+        <RulesPage selected={tab === "rules"} onClose={dismiss} key={`rules:${active?.id ?? "empty"}`} active={active} version={version} />
       </NavigationStack>
     </Tab>
     <Tab key="connections" title="连接" systemImage="arrow.up.arrow.down" value="connections">
       <NavigationStack key="connections-stack">
-        {tab === "connections" ? <ConnectionsPage onClose={dismiss} key={`connections:${active?.id ?? "empty"}`} active={active} version={version} /> : null}
+        <ConnectionsPage selected={tab === "connections"} onClose={dismiss} key={`connections:${active?.id ?? "empty"}`} active={active} version={version} />
       </NavigationStack>
     </Tab>
     <Tab key="more" title="更多" systemImage="ellipsis.circle" value="more">
       <NavigationStack key="more-stack">
-        {tab === "more" ? <MorePage onClose={dismiss} key={`more:${active?.id ?? "empty"}`} active={active} onChanged={bump} /> : null}
+        <MorePage selected={tab === "more"} onClose={dismiss} key={`more:${active?.id ?? "empty"}`} active={active} onChanged={bump} />
       </NavigationStack>
     </Tab>
   </TabView>

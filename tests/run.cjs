@@ -307,12 +307,12 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(tab.props.children[0].props.toolbar, undefined)
       for (const child of tab.props.children[0].props.children) if (child) assert.equal(typeof child.props.onClose, 'function')
     }
-    assert.equal(nodes(tree, app.OverviewPage).length, 1); assert.equal(nodes(tree, app.ProxiesPage).length, 0)
+    assert.equal(nodes(tree, app.OverviewPage).length, 1); assert.equal(nodes(tree, app.ProxiesPage).length, 1); assert.equal(nodes(tree, app.ProxiesPage)[0].props.selected, false)
     // 系统点击/拖动通过同一个 Observable selection 回传；脚本不实现手势。
     nodes(tree,'TabView')[0].props.selection.setValue('proxies'); tree = render(app.Root, {})
-    assert.equal(nodes(tree, app.ProxiesPage).length, 1); assert.equal(nodes(tree, app.OverviewPage).length, 0)
+    assert.equal(nodes(tree, app.ProxiesPage).length, 1); assert.equal(nodes(tree, app.OverviewPage).length, 1); assert.equal(nodes(tree, app.OverviewPage)[0].props.selected, false)
     nodes(tree,'TabView')[0].props.selection.setValue('more'); tree = render(app.Root, {})
-    assert.equal(nodes(tree, app.MorePage).length, 1); assert.equal(nodes(tree, app.ProxiesPage).length, 0)
+    assert.equal(nodes(tree, app.MorePage).length, 1); assert.equal(nodes(tree, app.ProxiesPage).length, 1); assert.equal(nodes(tree, app.MorePage)[0].props.selected, true)
     const more = render(pages.MorePage, { active: c, onChanged() {} }, true); assert.ok(nodes(more, 'NavigationLink').some(n => n.props.destination.type === ui.KernelConfigPage))
     const source = fs.readFileSync(path.join(root, 'index.tsx'), 'utf8')
     for (const removed of ['FloatingBar', 'safeAreaInset', 'UIGlass', 'GlassEffectContainer']) assert.ok(!source.includes(removed))
@@ -321,18 +321,18 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     const overview = source.slice(source.indexOf('function OverviewPage'), source.indexOf('function WrtInterfacesPage'))
     assert.ok(!overview.includes('loadClashOverview')); assert.ok(!overview.includes('运行模式')); assert.equal((overview.match(/<NavigationLink/g) || []).length, 1); assert.ok(overview.includes('destination={<SettingsPage'))
   })
-  await test('共享栈内原生Tab只挂载可见业务页；反复选择不保留隐藏采样组件', () => {
+  await test('原生Tab保留所有导航owner；反复切换只改变selected不清空子树', () => {
     pref.savePreferences({ defaultPage: 'overview' })
     let tree = render(app.Root, {}, true)
     const ids = ['home', 'proxies', 'rules', 'connections', 'more'], types = [app.OverviewPage, app.ProxiesPage, app.RulesPage, app.ConnectionsPage, app.MorePage]
     for (const id of [...ids, 'home', 'connections', 'home']) {
       nodes(tree,'TabView')[0].props.selection.setValue(id); tree = render(app.Root, {})
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
-      for (let i = 0; i < ids.length; i++) assert.equal(nodes(tree, types[i]).length, ids[i] === id ? 1 : 0)
+      for (let i = 0; i < ids.length; i++) { assert.equal(nodes(tree, types[i]).length, 1); assert.equal(nodes(tree, types[i])[0].props.selected, ids[i] === id) }
     }
-    assert.equal(api.VERSION, '1.5.58'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.5.59'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
-  await test('1.5.46 共享栈/简单ToolBarProps：唯一业务页owner、隐藏Tab无注册', () => {
+  await test('独立导航栈保留业务owner和身份，只有选中页提供可见工具栏', () => {
     pref.savePreferences({ defaultPage: 'overview' })
     let rootTree = render(app.Root, {}, true)
     const pagesByTab = { home: app.OverviewPage, proxies: app.ProxiesPage, rules: app.RulesPage, connections: app.ConnectionsPage, more: app.MorePage }
@@ -354,7 +354,8 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
         if(roots.has(id))assert.equal(identity,roots.get(id));else roots.set(id,identity)
         assert.equal(owner.props.toolbar,undefined)
         const children=owner.props.children.filter(Boolean)
-        if(id!==selected){assert.equal(children.length,0);continue}
+        assert.equal(children.length,1); assert.equal(children[0].props.selected, id === selected)
+        if(id!==selected) continue
         assert.equal(children.length,1);assert.equal(children[0].type,pagesByTab[id]);assert.ok(children[0].props.key.startsWith(id+':'))
         let page=inspectPage(children[0]);if(id==='more')page=inspectPage(page);const owners=[]
         function scan(n){if(!n||typeof n!=='object')return;if(n.props?.toolbar)owners.push(n);for(const child of n.props?.children??[])scan(child)}
@@ -841,7 +842,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       const diagnostic = logs.filter(x => x.startsWith('[preferences-icon]'))
       for (const stage of ['change','accepted','global-render','proxies-render','group-render']) assert.ok(diagnostic.some(x => x.includes('stage=' + stage) && x.includes('enabled=false')))
       assert.ok(diagnostic.every(x => !x.includes('private.invalid') && !x.includes('private-group-name') && !x.includes('secret-')))
-      assert.ok(diagnostic.every(x => x.includes('build=1.5.58') && /instance=[a-z0-9]+/.test(x)))
+      assert.ok(diagnostic.every(x => x.includes('build=1.5.59') && /instance=[a-z0-9]+/.test(x)))
       assert.equal(new Set(diagnostic.map(x => x.match(/instance=([^ ]+)/)[1])).size, 1)
     } finally { context.console = originalConsole; unmount(); pref.savePreferences({ customIcons: true, testURL: 'https://www.gstatic.com/generate_204' }) }
   })
@@ -859,6 +860,43 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     pref.savePreferences({ customIcons: true }); tree = render(pages.GroupSection, props); await flush()
     assert.equal(nodes(tree, 'NavigationLink')[0].props.key, onKey); assert.equal(nodes(tree, pages.GroupIcon).length, 1)
     assert.ok(button(tree, '收起预览')); unmount(); pref.savePreferences({ collapseGesture: false })
+  })
+  await test('隐藏标签不请求不采样；更多selected透传到业务页', async () => {
+    for (const fn of [app.OverviewPage, pages.ProxiesPage, pages.RulesPage, pages.ConnectionsPage, pages.MorePage]) {
+      calls.length = 0
+      render(fn, { active: c, version: 0, selected: false, onChanged() {}, onSwitch() {} }, true); await flush()
+      assert.equal(calls.length, 0, fn.name); assert.equal(intervals.size, 0, fn.name); unmount()
+    }
+    const more = render(app.MorePage, { active: c, selected: false, onChanged() {} }, true)
+    assert.equal(more.props.selected, false); unmount()
+  })
+  await test('代理页隐藏不删除策略组导航入口，重现时保留到请求完成', async () => {
+    responder = url => ({ body: url.endsWith('/proxies') ? { proxies: { G: { type: 'Selector', all: ['A'], now: 'A' } } } : { providers: {} } })
+    const props = { active: c, version: 0, selected: true }
+    render(pages.ProxiesPage, props, true); await flush()
+    let tree = render(pages.ProxiesPage, props); assert.equal(nodes(tree, pages.GroupSection).length, 1)
+    tree.props.onDisappear(); tree = render(pages.ProxiesPage, { ...props, selected: false }); await flush()
+    assert.equal(nodes(tree, pages.GroupSection).length, 1)
+    const key = nodes(tree, pages.GroupSection)[0].props.key
+    const before = calls.length
+    tree = render(pages.ProxiesPage, { ...props, selected: false }); await flush(); assert.equal(calls.length, before)
+    tree.props.onAppear(); tree = render(pages.ProxiesPage, props); await flush()
+    assert.equal(nodes(tree, pages.GroupSection)[0].props.key, key)
+    tree = render(pages.ProxiesPage, props); assert.equal(nodes(tree, pages.GroupSection).length, 1); unmount()
+  })
+  await test('主页隐藏停止轮询，重现只恢复一个轮询且保留设置入口', async () => {
+    const router = api.listControllers().find(x => x.kind === 'openwrt')
+    const props = { active: router, version: 0, selected: true, onSwitch() {} }
+    responder = (_url, init) => { const b = JSON.parse(init.body); return { body: { id: b.id, result: [0, b.params?.[1] === 'session' ? { ubus_rpc_session: 'retained' } : { uptime: 1, load: [], memory: { total: 100, free: 50 }, interface: [], data: '1' }] } } }
+    render(app.OverviewPage, props, true); await flush()
+    let tree = render(app.OverviewPage, props), link = trailing(tree.props.toolbar)
+    assert.equal([...intervals.values()].filter(x => x.ms === 1000).length, 1)
+    render(app.OverviewPage, { ...props, selected: false }); await flush()
+    assert.equal([...intervals.values()].filter(x => x.ms === 1000).length, 0)
+    tree = render(app.OverviewPage, props); await flush()
+    assert.equal(trailing(tree.props.toolbar), link)
+    assert.equal([...intervals.values()].filter(x => x.ms === 1000).length, 1)
+    unmount(); assert.equal(intervals.size, 0)
   })
   await test('主页内存固定一位小数，流量默认精度不变', () => {
     assert.deepEqual(Array.from(api.fmtParts(128.56 * 1048576, false, 1)), ['128.6', 'MB'])
