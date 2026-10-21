@@ -579,7 +579,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) { const lazy = ['proxies','rules','connections'].includes(ids[i]) && ids[i] !== id; assert.equal(nodes(tree, types[i]).length, lazy ? 0 : 1); if (!lazy) assert.equal(nodes(tree, types[i])[0].props.selected, ids[i] === id) }
     }
-    assert.equal(api.VERSION, '1.5.147'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.5.148'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('独立导航栈保留业务owner和身份，只有选中页提供可见工具栏', () => {
     pref.savePreferences({ defaultPage: 'overview' })
@@ -960,8 +960,8 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     const initial=api.saveController({name:'Validation edit',host:'validation-edit.invalid',port:80,https:false,username:'root',plugin:'nikki',auto:true,cport:9090},'validation-old-password','validation-old-secret');let completed=0;const props={initial,onDone(){completed++}};let tree=render(app.EditController,props,true);const before=JSON.stringify([...store]),credentials=JSON.stringify([...secrets]);nodes(tree,'TextField').find(f=>f.props.title==='地址').props.onChanged('');calls.length=0;await tree.props.onDisappear();tree=render(app.EditController,props);assert.ok(text(tree).includes('请填写路由器地址'));assert.equal(completed,0);assert.equal(JSON.stringify([...store]),before);assert.equal(JSON.stringify([...secrets]),credentials);nodes(tree,'TextField').find(f=>f.props.title==='地址').props.onChanged('repaired-edit.invalid');nodes(tree,'TextField').find(f=>f.props.title==='端口').props.onChanged('99999');await tree.props.onDisappear();tree=render(app.EditController,props);assert.ok(text(tree).includes('端口无效'));assert.equal(JSON.stringify([...store]),before);nodes(tree,'TextField').find(f=>f.props.title==='端口').props.onChanged('8080');await tree.props.onDisappear();assert.equal(completed,1);assert.equal(api.listControllers().find(c=>c.id===initial.id).url,'http://repaired-edit.invalid:8080');assert.equal(calls.length,0)
     tree=render(app.EditController,props,true);nodes(tree,'TextField')[0].props.onChanged('Unsaved draft');const stable=JSON.stringify([...store]);assert.ok(tree.props.onDisappear);assert.equal(tree.props.onAppear,undefined);assert.ok(nodes(tree,'NavigationLink').some(l=>l.props.destination.type.name==='HelpPage'));unmount();assert.equal(JSON.stringify([...store]),stable);api.removeController(initial.id)
   })
-  await test('添加OpenWrt保留显式保存和默认返回，未改Nikki正文保存入口', () => {
-    const tree=render(app.EditController,{onDone(){}},true);assert.equal(tree.props.navigationTitle,'添加 OpenWrt');assert.ok(button(tree.props.toolbar.confirmationAction,'保存'));assert.equal(tree.props.onDisappear,undefined);unmount()
+  await test('添加OpenWrt同样返回自动保存，无右上保存按钮', () => {
+    const tree=render(app.EditController,{onDone(){}},true);assert.equal(tree.props.navigationTitle,'添加 OpenWrt');assert.equal(tree.props.toolbar,undefined);assert.ok(tree.props.onDisappear);unmount()
   })
   await test('MorePanel函数组件边界不用padding业务prop，内部12pt链不变（结构检查，非宿主验收）', () => {
     for(const active of [c,{...c,kind:'openwrt',plugin:'nikki'}]){
@@ -1559,7 +1559,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       const diagnostic = logs.filter(x => x.startsWith('[preferences-icon]'))
       for (const stage of ['change','accepted','proxies-render','group-render']) assert.ok(diagnostic.some(x => x.includes('stage=' + stage) && x.includes('enabled=false')))
       assert.ok(diagnostic.every(x => !x.includes('private.invalid') && !x.includes('private-group-name') && !x.includes('secret-')))
-      assert.ok(diagnostic.every(x => x.includes('build=1.5.147') && /instance=[a-z0-9]+/.test(x)))
+      assert.ok(diagnostic.every(x => x.includes('build=1.5.148') && /instance=[a-z0-9]+/.test(x)))
       assert.equal(new Set(diagnostic.map(x => x.match(/instance=([^ ]+)/)[1])).size, 1)
     } finally { context.console = originalConsole; unmount(); pref.savePreferences({ customIcons: true, testURL: 'https://www.gstatic.com/generate_204' }) }
   })

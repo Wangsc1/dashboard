@@ -568,7 +568,6 @@ function EditController({ initial, onDone }: { initial?: Controller; onDone: () 
   const [cport, setCport] = useState(String(initial?.cport ?? 9090))
   const [csecret, setCsecret] = useState(initial ? getClashSecret(initial.id) : "")
   const [err, setErr] = useState("")
-  const [saving, setSaving] = useState(false)
   // Keep the latest input synchronously: a return tap need not wait for another render.
   const [entry] = useState(() => ({ busy:false, finished:false, draft:{name,host,port,https,username,password,plugin,auto,cport,csecret} }))
   function change<K extends keyof typeof entry.draft>(key:K,set:(value:typeof entry.draft[K])=>void) {
@@ -581,7 +580,7 @@ function EditController({ initial, onDone }: { initial?: Controller; onDone: () 
   }
   async function save(auto=false) {
     if (entry.busy || entry.finished) return
-    entry.busy=true;if(!auto)setSaving(true); setErr("")
+    entry.busy=true; setErr("")
     try {
       const d=entry.draft
       const c = saveController({ id: initial?.id, name:d.name, host:d.host, port:Number(d.port), https:d.https, username:d.username, plugin:d.plugin, auto:d.auto, cport:Number(d.cport)||9090 }, d.password, d.csecret)
@@ -590,11 +589,10 @@ function EditController({ initial, onDone }: { initial?: Controller; onDone: () 
       try { await loadOverview(c) } catch (e) { await Dialog.alert({ title: "已保存，但连接测试失败", message: msg(e) }); onDone(); if(!auto)dismiss(); return }
       try { await loadClashOverview(c) } catch (e) { await Dialog.alert({ title: "已保存，路由器已连接，但代理控制器获取失败", message: msg(e) }) }
       onDone(); if(!auto)dismiss()
-    } catch (e) { setErr(msg(e)) } finally { entry.busy=false;if(!auto)setSaving(false) }
+    } catch (e) { setErr(msg(e)) } finally { entry.busy=false }
   }
   return <Form background="systemBackground" scrollContentBackground="hidden" navigationTitle={initial ? "编辑 OpenWrt" : "添加 OpenWrt"} navigationBarTitleDisplayMode="inline"
-    onDisappear={initial?()=>save(true):undefined}
-    toolbar={initial?undefined:{ confirmationAction: <Button title={saving ? "保存中…" : "保存"} disabled={saving} action={()=>save()} /> }}>
+    onDisappear={()=>save(true)}>
     <Section header={<Text>基本信息</Text>}>
       <TextField title="名称" value={name} onChanged={change("name",setName)} prompt="例如：家庭路由" />
       <TextField title="地址" value={host} onChanged={change("host",setHost)} prompt="IP 地址" />
