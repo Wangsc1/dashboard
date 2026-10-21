@@ -418,7 +418,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) { const lazy = ['proxies','rules','connections'].includes(ids[i]) && ids[i] !== id; assert.equal(nodes(tree, types[i]).length, lazy ? 0 : 1); if (!lazy) assert.equal(nodes(tree, types[i])[0].props.selected, ids[i] === id) }
     }
-    assert.equal(api.VERSION, '1.5.85'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.5.86'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('独立导航栈保留业务owner和身份，只有选中页提供可见工具栏', () => {
     pref.savePreferences({ defaultPage: 'overview' })
@@ -989,6 +989,15 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     const grp = (await api.loadGroups(c)).find(x => x.name === 'G1')
     assert.equal(grp.types.P1, 'AnyTLS'); assert.equal(grp.types.P2, 'Snell'); assert.equal(grp.types.L1, 'Shadowsocks'); unmount(); responder = () => ({ status: 204 })
   })
+  await test('节点是嵌套策略组时，协议取其当前选中的真实节点', async () => {
+    responder = () => ({ body: { proxies: {
+      GLOBAL: { type: 'Selector', all: ['TOP'], now: 'TOP' },
+      TOP: { type: 'Selector', now: 'SUB', all: ['SUB', 'REAL', 'LOOP'] },
+      SUB: { type: 'Selector', now: 'DEEP', all: ['DEEP'] }, DEEP: { type: 'Snell' }, REAL: { type: 'AnyTLS' },
+      LOOP: { type: 'Selector', now: 'LOOP', all: ['LOOP'] } } } })
+    const t = (await api.loadGroups(c)).find(x => x.name === 'TOP').types
+    assert.equal(t.SUB, 'Snell'); assert.equal(t.REAL, 'AnyTLS'); assert.equal(t.LOOP, 'Selector'); unmount(); responder = () => ({ status: 204 })
+  })
   await test('代理页缓存：重新进入立即显示上次策略组，读取完成前不提示空', async () => {
     responder = url => ({ body: url.includes('/providers/') ? { providers: {} } : { proxies: { CacheGroup: { type: 'Selector', now: 'X', all: ['X'] }, X: { type: 'Shadowsocks' } } } })
     render(pages.ProxiesPage, { active: c, version: 0 }, true); await flush(); unmount()
@@ -1010,7 +1019,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       const diagnostic = logs.filter(x => x.startsWith('[preferences-icon]'))
       for (const stage of ['change','accepted','proxies-render','group-render']) assert.ok(diagnostic.some(x => x.includes('stage=' + stage) && x.includes('enabled=false')))
       assert.ok(diagnostic.every(x => !x.includes('private.invalid') && !x.includes('private-group-name') && !x.includes('secret-')))
-      assert.ok(diagnostic.every(x => x.includes('build=1.5.85') && /instance=[a-z0-9]+/.test(x)))
+      assert.ok(diagnostic.every(x => x.includes('build=1.5.86') && /instance=[a-z0-9]+/.test(x)))
       assert.equal(new Set(diagnostic.map(x => x.match(/instance=([^ ]+)/)[1])).size, 1)
     } finally { context.console = originalConsole; unmount(); pref.savePreferences({ customIcons: true, testURL: 'https://www.gstatic.com/generate_204' }) }
   })
