@@ -2,7 +2,7 @@
   "name": "dashboard",
   "icon": "server.rack",
   "color": "rgba(113, 143, 253,1)",
-  "version": "1.5.14",
+  "version": "1.5.15",
   "entry": "index.tsx",
   "runInApp": false,
   "description": "OpenWrt 路由器仪表盘：实时速度、系统与接口状态、在线设备，并自动获取 OpenClash / Nikki / MihomoTProxy 的 Clash 控制器，支持策略组切换与测速、连接管理、规则预览、内核配置。",

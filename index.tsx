@@ -208,7 +208,6 @@ function OverviewPage({ active, version, onSwitch, onClose }: { active: Controll
           {all.map(c => <Text key={c.id} tag={c.id}>{c.name}</Text>)}
         </Picker>
       </Card> : null}
-      {err ? <Text font={13} foregroundStyle="systemRed">{err}</Text> : null}
 
       {prefs.showWrt ? <Card>
         <InfoItem icon="cpu" color="#10B981" title="目标平台" value={w?.target || "-"} />
