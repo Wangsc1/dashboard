@@ -673,7 +673,7 @@ function Root() {
   const active = getActive(), bump = () => { setVersion(v => v + 1) }
 
   return <TabView selection={selection} symbolVariant="none" font={14} foregroundStyle={MAIN_FG}>
-    <Tab key="home" title="主页" systemImage="square.stack.fill" value="home">
+    <Tab key="home" title="主页" systemImage="apple.homekit" value="home">
       <NavigationStack key="home-stack">
         <OverviewPage selected={tab === "home"} key={`home:${active?.id ?? "empty"}`} active={active} version={version} onSwitch={bump} onClose={dismiss} />
       </NavigationStack>
@@ -683,17 +683,17 @@ function Root() {
         {tab === "proxies" ? <ProxiesPage selected onClose={dismiss} key={`proxies:${active?.id ?? "empty"}`} active={active} version={version} /> : null}
       </NavigationStack>
     </Tab>
-    <Tab key="rules" title="规则" systemImage="swatchpalette" value="rules">
+    <Tab key="rules" title="规则" systemImage="shuffle" value="rules">
       <NavigationStack key="rules-stack">
         {tab === "rules" ? <RulesPage selected onClose={dismiss} key={`rules:${active?.id ?? "empty"}`} active={active} version={version} /> : null}
       </NavigationStack>
     </Tab>
-    <Tab key="connections" title="连接" systemImage="arrow.left.arrow.right" value="connections">
+    <Tab key="connections" title="连接" systemImage="arrowshape.zigzag.forward" value="connections">
       <NavigationStack key="connections-stack">
         {tab === "connections" ? <ConnectionsPage selected onClose={dismiss} key={`connections:${active?.id ?? "empty"}`} active={active} version={version} /> : null}
       </NavigationStack>
     </Tab>
-    <Tab key="more" title="更多" systemImage="ellipsis" value="more">
+    <Tab key="more" title="更多" systemImage="circle.grid.2x2" value="more">
       <NavigationStack key="more-stack">
         <MorePage selected={tab === "more"} onClose={dismiss} key={`more:${active?.id ?? "empty"}`} active={active} onChanged={bump} />
       </NavigationStack>

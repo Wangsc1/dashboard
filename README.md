@@ -1,3 +1,7 @@
+## 1.5.119
+
+- 按指定名称设置底部标签图标：主页 apple.homekit、代理 network、规则 shuffle、连接 arrowshape.zigzag.forward、更多 circle.grid.2x2。保持统一原生 Tab 导航结构不变。
+
 ## 1.5.118
 
 - 撤回 1.5.117 混用 Tab 与 tabItem 的改动，恢复五个统一的原生 Tab 及独立导航栈。该混用在真机导致只显示规则入口和空白内容；模拟测试无法替代原生渲染验证。规则线框图标的外观需求尚未完成。
