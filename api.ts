@@ -1,6 +1,6 @@
 
 import { getPreferences, customHeaders, recordEvent, controllerHealth, feedback } from "./preferences"
-export const VERSION = "1.5.136"
+export const VERSION = "1.5.137"
 
 export type Kind = "clash" | "openwrt"
 export type Plugin = "openclash" | "nikki" | "mihomo"
@@ -379,7 +379,7 @@ export const CLASH_MODES = [["rule", "规则"], ["global", "全局"], ["direct",
 export const modesOf = (_k: Kind) => CLASH_MODES
 export async function setMode(c: Controller, mode: string) { await patchConfig(c, { mode }); feedback() }
 
-export async function loadGroups(c0: Controller): Promise<Group[]> {
+export async function loadGroups(c0: Controller, options: { includeGlobal?: boolean } = {}): Promise<Group[]> {
   const c = await cc(c0)
   {
     const j = await http(c, "/proxies")
@@ -409,7 +409,7 @@ export async function loadGroups(c0: Controller): Promise<Group[]> {
       return lastDelay(node)
     }
     const providerTypes: Record<string, string> = {}
-    const visible = names.filter(n => (n !== "GLOBAL" || prefs.showGlobal) && (prefs.showHidden || !all[n]?.hidden))
+    const visible = names.filter(n => (n !== "GLOBAL" || prefs.showGlobal || options.includeGlobal === true) && (prefs.showHidden || !all[n]?.hidden))
     if (visible.some(n => (all[n].all as string[]).some(m => typeof all[m]?.type !== "string"))) {
       try {
         const pj = await http(c, "/providers/proxies")
