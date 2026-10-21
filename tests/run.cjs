@@ -43,7 +43,7 @@ function load(name) {
   if (cache.has(name)) return cache.get(name)
   const file = path.join(root, name + (name === 'index' || name === 'settings-ui' || name === 'dashboard-pages' || name === 'root-toolbar' ? '.tsx' : '.ts'))
   let source = fs.readFileSync(file, 'utf8')
-  if (name === 'index') source = source.replace(/\nrun\(\)\s*$/, '') + '\nexport { OverviewPage, InfoItem, SettingsPage, ConnectionsPage, ProxiesPage, RulesPage, Spark, RateChart, StatCard, GroupSection, MorePage, Root };'
+  if (name === 'index') source = source.replace(/\nrun\(\)\s*$/, '') + '\nexport { OverviewPage, InfoItem, SettingsPage, ConnectionsPage, ProxiesPage, RulesPage, Spark, RateChart, StatCard, GroupSection, MorePage, Root, AppearanceRoot };'
   if (name === 'settings-ui') source += '\nexport { Choice };'
   const code = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020, jsx: ts.JsxEmit.React, jsxFactory: 'h' } }).outputText
   const module = { exports: {} }; cache.set(name, module.exports)
@@ -178,23 +178,21 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     context.confirmResult = true; await button(menu, '清空日志').props.action(); assert.equal(pref.getLogs().length, 0)
     button(menu, '搜索日志').props.action(); tree = render(ui.LogsPage, {}); assert.equal(nodes(tree, 'TextField').length, 1)
   })
-  await test('菜单只有四入口；系统push目的地；根X；原页面保留且无弹层', () => {
-    pref.savePreferences({ defaultPage: 'overview' })
-    let tree = render(app.OverviewPage, { active: null, version: 0, onSwitch() {} }, true)
-    const toolbar = tree.props.toolbar
-    const trail = trailing(toolbar); assert.equal(trail.type, 'Button'); assert.equal(trail.props.systemImage, 'ellipsis.circle')
-    trail.props.action(); tree = render(app.OverviewPage, { active: null, version: 0, onSwitch() {} })
-    assert.equal(tree.props.navigationDestination.isPresented, true); assert.equal(tree.props.navigationDestination.content.type, app.SettingsPage)
-    tree.props.navigationDestination.onChanged(false); tree = render(app.OverviewPage, { active: null, version: 0, onSwitch() {} }); assert.equal(tree.props.navigationDestination.isPresented, false)
+  await test('主页原生导航链接打开设置，不依赖isPresented/返回回调', () => {
+    const tree = render(app.OverviewPage, { active: null, version: 0, onSwitch() {} }, true)
+    const trail = trailing(tree.props.toolbar)
+    assert.equal(trail.type, 'NavigationLink'); assert.equal(trail.props.destination.type, app.SettingsPage)
+    assert.equal(nodes(trail, 'Image')[0].props.systemName, 'ellipsis.circle')
+    assert.equal(tree.props.navigationDestination, undefined)
     const src = fs.readFileSync(path.join(root, 'index.tsx'), 'utf8'); assert.ok(src.includes('function WrtInterfacesPage')); assert.ok(src.includes('function WrtLeasesPage')); assert.ok(!src.includes('sheet='))
   })
   await test('默认界面选择tab；主题与外观项接入、概览数据布局不变', () => {
     pref.savePreferences({ defaultPage: 'rules', theme: 'dark', showWrt: false })
-    let tree = render(app.OverviewPage, { active: c, version: 0, onSwitch() {} }, true); assert.equal(tree.props.navigationDestination.isPresented, false)
+    let tree = render(app.OverviewPage, { active: c, version: 0, onSwitch() {} }, true); assert.equal(tree.props.navigationDestination, undefined)
     assert.ok(nodes(tree, app.InfoItem).some(n => n.props.title === '目标平台')); assert.ok(!fs.readFileSync(path.join(root, 'index.tsx'), 'utf8').includes('prefs.showWrt'))
     const cards = nodes(tree, app.StatCard); assert.equal(cards.length, 4); assert.equal(cards.filter(n => n.props.spark).length, 0); assert.equal(cards.filter(n => n.props.droplets).length, 2)
     assert.ok(cards.filter(n => ['活动连接', '内存使用'].includes(n.props.title)).every(n => !n.props.spark))
-    tree = render(app.Root, {}, true); assert.equal(nodes(tree,'TabView')[0].props.preferredColorScheme, 'dark'); assert.equal(nodes(tree,'TabView')[0].props.selection.value, 'rules'); assert.equal(nodes(tree, app.RulesPage).length, 1)
+    const appearance = render(app.AppearanceRoot, {}, true); assert.equal(appearance.props.preferredColorScheme, 'dark'); tree = render(app.Root, {}, true); assert.equal(nodes(tree,'TabView')[0].props.selection.value, 'rules'); assert.equal(nodes(tree, app.RulesPage).length, 1)
     tree = render(ui.GlobalConfigPage, { active: null }, true); assert.ok(!text(tree).includes('应用图标')); assert.ok(nodes(tree, 'Toggle').some(n => n.props.title === '自定义代理组图标'))
   })
   await test('曲线几何：真实历史不变、横向连续滚动、末端视觉插值和无过冲路径', () => {
@@ -249,7 +247,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     const rootSource = source.slice(source.indexOf('function Root()'))
     assert.ok(!rootSource.includes('onDragGesture')); assert.ok(!rootSource.includes('onTapGesture')); assert.ok(!rootSource.includes('<NavigationStack>\n    <TabView'))
     const overview = source.slice(source.indexOf('function OverviewPage'), source.indexOf('function WrtInterfacesPage'))
-    assert.ok(!overview.includes('loadClashOverview')); assert.ok(!overview.includes('运行模式')); assert.ok(!overview.includes('<NavigationLink'))
+    assert.ok(!overview.includes('loadClashOverview')); assert.ok(!overview.includes('运行模式')); assert.equal((overview.match(/<NavigationLink/g) || []).length, 1); assert.ok(overview.includes('destination={<SettingsPage'))
   })
   await test('共享栈内原生Tab只挂载可见业务页；反复选择不保留隐藏采样组件', () => {
     pref.savePreferences({ defaultPage: 'overview' })
@@ -260,7 +258,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) assert.equal(nodes(tree, types[i]).length, ids[i] === id ? 1 : 0)
     }
-    assert.equal(api.VERSION, '1.5.49'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.5.50'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('1.5.46 共享栈/简单ToolBarProps：唯一业务页owner、隐藏Tab无注册', () => {
     pref.savePreferences({ defaultPage: 'overview' })
@@ -295,7 +293,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
         assert.equal(nodes(toolbar,'ToolbarItem').length,0)
         if(id==='more'){assert.equal(toolbar.topBarTrailing,undefined);continue}
         const menu=trailing(toolbar)
-        if(id==='home'){assert.equal(menu.type,'Button');assert.equal(menu.props.systemImage,'ellipsis.circle');menus++;continue}
+        if(id==='home'){assert.equal(menu.type,'NavigationLink');assert.equal(nodes(menu,'Image')[0].props.systemName,'ellipsis.circle');menus++;continue}
         assert.equal(menu.type,'Menu');assert.equal(nodes(menu,'Image').length,0) // label单独验证，不能把正文图标算成toolbar
         assert.equal(menu.props.label.props.systemName,'ellipsis.circle');menus++
         assert.deepEqual(nodes(menu,'Button').map(b=>b.props.title),commands[id])
@@ -310,9 +308,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
   await test('1.5.46 编辑控制器仍进管理页；共享栈push详情不附根X', () => {
     let closes=0
     let page=render(app.OverviewPage,{active:c,version:0,onSwitch(){},onClose(){closes++}},true)
-    trailing(page.props.toolbar).props.action()
-    page=render(app.OverviewPage,{active:c,version:0,onSwitch(){},onClose(){closes++}})
-    const destination=page.props.navigationDestination.content
+    const destination=trailing(page.props.toolbar).props.destination
     assert.equal(destination.type,app.SettingsPage)
     assert.equal(destination.props.onClose,undefined)
     const settings=render(destination.type,destination.props,true)
@@ -324,36 +320,51 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     const dns=render(pages.DNSPage,{c},true);assert.equal(dns.props.toolbar,undefined)
     const management=render(pages.ManagementPage,{c,kind:'profile'},true);assert.equal(management.props.toolbar,undefined)
   })
-  await test('首页实际模拟请求仅ubus；不可见停止新采样且清理计时器', async () => {
-    pref.savePreferences({ connectionBackground: false })
-    const router = api.listControllers().find(x => x.kind === 'openwrt'); calls.length = 0
-    responder = () => ({ body: { result: [0, { uptime: 1, load: [0,0,0], memory: { total: 100, free: 50 }, interface: [], data: '2' }] } })
-    render(app.OverviewPage, { active: router, version: 0, onSwitch() {} }, true); await flush()
-    assert.ok(calls.length > 0); assert.ok(calls.every(x => x.url.endsWith('/ubus')))
-    let tree = render(app.OverviewPage, { active: router, version: 0, onSwitch() {} }); tree.props.onDisappear(); render(app.OverviewPage, { active: router, version: 0, onSwitch() {} }); await flush()
-    assert.ok(![...intervals.values()].some(x => x.ms === 1000)); unmount(); assert.equal(intervals.size, 0)
-  })
-  await test('主页返回设置后恢复轮询：返回回调与onAppear各自能解除双暂停', async () => {
+  await test('主页设置覆盖期间持续ubus采样，卸载清理，重新进入恢复且不重复轮询', async () => {
     pref.savePreferences({ connectionBackground: false })
     const router = api.listControllers().find(x => x.kind === 'openwrt')
-    responder = () => ({ body: { result: [0, { uptime: 1, load: [0,0,0], memory: { total: 100, free: 50 }, interface: [], data: '2' }] } })
+    let uptime = 1
+    responder = (_url, init) => {
+      const body = JSON.parse(init.body)
+      if (body.params?.[1] === 'session') return { body: { id: body.id, result: [0, { ubus_rpc_session: 'poll-test' }] } }
+      return { body: { id: body.id, result: [0, { uptime: uptime++, load: [0,0,0], memory: { total: 100, free: 50 }, interface: [], data: '2' }] } }
+    }
     const props = { active: router, version: 0, onSwitch() {} }
-    render(app.OverviewPage, props, true); await flush()
     const polling = () => [...intervals.values()].filter(x => x.ms === 1000)
-    for (const route of ['callback', 'appear', 'callback']) {
-      let tree = render(app.OverviewPage, props)
-      trailing(tree.props.toolbar).props.action(); tree.props.onDisappear()
-      tree = render(app.OverviewPage, props); await flush(); assert.equal(polling().length, 0)
-      if (route === 'callback') tree.props.navigationDestination.onChanged(false)
-      else tree.props.onAppear()
-      tree = render(app.OverviewPage, props); await flush()
-      assert.equal(tree.props.navigationDestination.isPresented, false); assert.equal(polling().length, 1)
-      const before = calls.length; await polling()[0].fn(); await flush(); assert.ok(calls.length > before)
+    calls.length = 0
+    render(app.OverviewPage, props, true); await flush()
+    assert.ok(calls.length > 0); assert.ok(calls.every(x => x.url.endsWith('/ubus')))
+    for (let i = 0; i < 3; i++) {
+      const tree = render(app.OverviewPage, props); await flush()
+      assert.equal(trailing(tree.props.toolbar).props.destination.type, app.SettingsPage)
+      assert.equal(tree.props.onDisappear, undefined); assert.equal(tree.props.onAppear, undefined)
+      assert.equal(polling().length, 1)
+      const before = calls.length, beforeParts = nodes(tree, app.StatCard).find(n => n.props.title === '内存使用').props.parts
+      const beforeUptime = nodes(tree, app.InfoItem).find(n => n.props.title === '运行时间').props.value
+      await polling()[0].fn(); await flush(); assert.ok(calls.length > before)
+      const updated = render(app.OverviewPage, props)
+      assert.ok(nodes(updated, app.StatCard).find(n => n.props.title === '内存使用').props.parts)
+      assert.notEqual(nodes(updated, app.InfoItem).find(n => n.props.title === '运行时间').props.value, beforeUptime)
+      assert.ok(beforeParts)
     }
     unmount(); assert.equal(intervals.size, 0)
-    const tree = render(ui.GlobalConfigPage, { active: null }, true)
-    assert.ok(!text(tree).includes('碎片化移除特效'))
-    unmount()
+    render(app.OverviewPage, props, true); await flush(); assert.equal(polling().length, 1)
+    unmount(); assert.equal(intervals.size, 0)
+    const tree = render(ui.GlobalConfigPage, { active: null }, true); assert.ok(!text(tree).includes('碎片化移除特效')); unmount()
+  })
+  await test('外观壳响应浅深色与跟随系统，主题更新保持根导航元素身份', async () => {
+    pref.savePreferences({ theme: 'system' })
+    let tree = render(app.AppearanceRoot, {}, true); await flush()
+    const content = tree.props.children[0]
+    assert.equal(content.type, app.Root); assert.equal(tree.props.preferredColorScheme, undefined)
+    for (const theme of ['dark', 'light', 'system', 'dark']) {
+      pref.savePreferences({ theme })
+      tree = render(app.AppearanceRoot, {}); await flush()
+      assert.equal(tree.props.preferredColorScheme, theme === 'system' ? undefined : theme)
+      assert.equal(tree.props.children[0], content)
+    }
+    pref.savePreferences({ headersEnabled: false }); tree = render(app.AppearanceRoot, {}); assert.equal(tree.props.children[0], content)
+    unmount(); pref.savePreferences({ theme: 'system', headersEnabled: true })
   })
   await test('1.5.46 OpenWrt卡：目标平台、内核版本、CPU两次采样', async () => {
     const router = { ...api.listControllers().find(x => x.kind === 'openwrt'), id: 'cpu-test' }
@@ -624,7 +635,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     pref.savePreferences({ theme: 'dark' }); assert.notEqual(render(Probe, {}), first); assert.equal(render(Probe, {}).theme, 'dark')
     unmount(); pref.savePreferences({ headersEnabled: true, theme: 'system' })
     const src = fs.readFileSync(path.join(root, 'index.tsx'), 'utf8')
-    assert.ok(src.includes('const prefs = getPreferences(), dismiss')); assert.ok(src.includes('usePreferences(["connectionBackground"], page === "")')); assert.ok(src.includes('onAppear={() => setPrefs(getPreferences())}'))
+    assert.ok(src.includes('function AppearanceRoot()')); assert.ok(src.includes('usePreferences(["connectionBackground"])'));  assert.ok(src.includes('onAppear={() => setPrefs(getPreferences())}'))
   })
   await test('五种节点排序：升降序、超时未测速最后、原始顺序不变', () => {
     const g = { all: ['C','B','A','D','E'], delays: { A: 10, B: 20, C: 0, E: 20 } }

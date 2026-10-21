@@ -143,16 +143,16 @@ function RateChart({ down, up, enabled = true }: { down: number[]; up: number[];
 }
 
 function OverviewPage({ active, version, onSwitch, onClose }: { active: Controller | null; version: number; onSwitch: () => void; onClose?: () => void }) {
-  const [page, setPage] = useState<"" | "settings">("")
-  const prefs = usePreferences(["connectionBackground"], page === "")
+  const prefs = usePreferences(["connectionBackground"])
   const [hosts, setHosts] = useState<string[]>([])
   const [ov, setOv] = useState<Overview | null>(null)
   const [err, setErr] = useState("")
   const [dn, setDn] = useState<number[]>([])
   const [upH, setUpH] = useState<number[]>([])
-  const [visible, setVisible] = useState(true)
   const all = listControllers()
-  const showCharts = visible && page === ""
+  // The active tab owns this component. Keep sampling while settings covers it;
+  // tab changes/unmount clean up timers without depending on native push/pop callbacks.
+  const showCharts = true
   useEffect(() => { setDn([]); setUpH([]); setOv(null) }, [active?.id, active?.url])
   useEffect(() => {
     if (!active || !showCharts) return
@@ -185,15 +185,9 @@ function OverviewPage({ active, version, onSwitch, onClose }: { active: Controll
   }, [active?.id, prefs.connectionBackground, showCharts])
   const w = ov?.wrt
   const memUsed = w ? Math.max(0, w.memTotal - w.memFree) : 0
-  const toolbar = rootToolbar("home", onClose, <Button title="" systemImage="ellipsis.circle" action={() => setPage("settings")} />)
-  const destination = {
-    isPresented: page !== "",
-    onChanged: (v: boolean) => { if (!v) { setVisible(true); setPage(""); onSwitch() } },
-    content: page === "settings" ? <SettingsPage active={active} onChanged={onSwitch} />
-      : <Text>-</Text>,
-  }
-  if (!active) return <Form navigationTitle="dashboard" navigationBarTitleDisplayMode="inline" toolbar={toolbar} navigationDestination={destination}><NoController /></Form>
-  return <ScrollView onAppear={() => { setVisible(true); setPage("") }} onDisappear={() => setVisible(false)} navigationTitle="OpenWrt 状态" navigationBarTitleDisplayMode="inline" toolbar={toolbar} navigationDestination={destination}>
+  const toolbar = rootToolbar("home", onClose, <NavigationLink destination={<SettingsPage active={active} onChanged={onSwitch} />}><Image systemName="ellipsis.circle" /></NavigationLink>)
+  if (!active) return <Form navigationTitle="dashboard" navigationBarTitleDisplayMode="inline" toolbar={toolbar}><NoController /></Form>
+  return <ScrollView navigationTitle="OpenWrt 状态" navigationBarTitleDisplayMode="inline" toolbar={toolbar}>
     <VStack spacing={12} padding={{ horizontal: 14, top: 2, bottom: 8 }}>
       <HStack spacing={4} frame={{ maxWidth: "infinity" }} padding={{ top: -14 }}>
         <Spacer />
@@ -649,13 +643,13 @@ function MorePage({ active, onChanged, onClose }: { active: Controller | null; o
   </Card>} />
 }
 function Root() {
-  const prefs = getPreferences(), dismiss = Navigation.useDismiss()
+  const dismiss = Navigation.useDismiss()
   const [version, setVersion] = useState(0)
   const selection = useObservable<RootTab>(() => { const p = getPreferences().defaultPage; return p === "overview" ? "home" : p })
   const tab = selection.value
   const active = getActive(), bump = () => { setVersion(v => v + 1) }
 
-  return <TabView selection={selection} preferredColorScheme={prefs.theme === "system" ? undefined : prefs.theme} font={14} foregroundStyle={MAIN_FG}>
+  return <TabView selection={selection} font={14} foregroundStyle={MAIN_FG}>
     <Tab key="home" title="主页" systemImage="house.fill" value="home">
       <NavigationStack key="home-stack">
         {tab === "home" ? <OverviewPage key={`home:${active?.id ?? "empty"}`} active={active} version={version} onSwitch={bump} onClose={dismiss} /> : null}
@@ -684,9 +678,16 @@ function Root() {
   </TabView>
 }
 
+// Keep navigation content identity stable when the appearance shell updates.
+function AppearanceRoot() {
+  const prefs = usePreferences(["theme"])
+  const [content] = useState(() => <Root />)
+  return <ZStack preferredColorScheme={prefs.theme === "system" ? undefined : prefs.theme} frame={{ maxWidth: "infinity", maxHeight: "infinity" }}>{content}</ZStack>
+}
+
 async function run() {
   recordEvent("start", true)
-  await Navigation.present({ element: <Root />, modalPresentationStyle: "fullScreen" })
+  await Navigation.present({ element: <AppearanceRoot />, modalPresentationStyle: "fullScreen" })
   Script.exit()
 }
 run()
