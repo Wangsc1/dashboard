@@ -75,6 +75,31 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     assert.ok(!JSON.stringify(store.get('dashboard_preferences_v140')).includes('NOPE'))
     failStorage = true; assert.throws(() => pref.savePreferences({ theme: 'light' })); failStorage = false; unsub()
   })
+  await test('偏好异步落盘期间往返设置不反弹，连续修改不覆盖且重启可读', async () => {
+    const key = 'dashboard_preferences_v140', originalSet = context.Storage.set
+    pref.savePreferences({ customIcons: true, showHidden: false })
+    const pending = []
+    context.Storage.set = (k, v) => k === key ? (pending.push([k, clone(v)]), true) : originalSet(k, v)
+    try {
+      let tree = render(ui.GlobalConfigPage, { active: null }, true); await flush()
+      nodes(tree, 'Toggle').find(n => n.props.key === 'customIcons').props.onChanged(false)
+      assert.equal(store.get(key).customIcons, true)
+      assert.equal(pref.getPreferences().customIcons, false)
+      unmount(); tree = render(ui.GlobalConfigPage, { active: null }, true); await flush()
+      assert.equal(nodes(tree, 'Toggle').find(n => n.props.key === 'customIcons').props.value, false)
+      nodes(tree, 'Toggle').find(n => n.props.key === 'showHidden').props.onChanged(true)
+      assert.equal(pref.getPreferences().customIcons, false); assert.equal(pref.getPreferences().showHidden, true)
+      assert.equal(pending.at(-1)[1].customIcons, false)
+      for (const [k,v] of pending) originalSet(k, v)
+      const savedModule = cache.get('preferences'); cache.delete('preferences')
+      try { const restarted = load('preferences'); assert.equal(restarted.getPreferences().customIcons, false); assert.equal(restarted.getPreferences().showHidden, true) }
+      finally { cache.set('preferences', savedModule) }
+    } finally { context.Storage.set = originalSet; unmount(); pref.savePreferences({ customIcons: true, showHidden: false }) }
+    let notified = 0; const unsub = pref.subscribePreferences(() => notified++)
+    failStorage = true
+    try { assert.throws(() => pref.savePreferences({ customIcons: false })); assert.equal(pref.getPreferences().customIcons, true); assert.equal(notified, 0) }
+    finally { failStorage = false; unsub() }
+  })
   await test('请求头 Keychain 保存与认证/传输覆盖、CRLF拒绝', () => {
     pref.saveHeaders('{"X-Client":"private-header-value"}')
     assert.equal(pref.customHeaders()['X-Client'], 'private-header-value')
@@ -262,7 +287,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) assert.equal(nodes(tree, types[i]).length, ids[i] === id ? 1 : 0)
     }
-    assert.equal(api.VERSION, '1.5.54'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.5.55'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('1.5.46 共享栈/简单ToolBarProps：唯一业务页owner、隐藏Tab无注册', () => {
     pref.savePreferences({ defaultPage: 'overview' })

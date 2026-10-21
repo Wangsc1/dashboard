@@ -20,7 +20,13 @@ export const DEFAULTS: Preferences = {
 const KEY = "dashboard_preferences_v140"
 const listeners = new Set<() => void>()
 export function subscribePreferences(fn: () => void) { listeners.add(fn); return () => { listeners.delete(fn) } }
-export function getPreferences(): Preferences { return normalizePreferences(Storage.get<Partial<Preferences>>(KEY) ?? {}) }
+// Storage persists asynchronously. Keep an accepted write visible to this instance
+// instead of rereading an older persisted value during navigation/subscriber updates.
+let preferenceSnapshot: Preferences | undefined
+export function getPreferences(): Preferences {
+  if (!preferenceSnapshot) preferenceSnapshot = normalizePreferences(Storage.get<Partial<Preferences>>(KEY) ?? {})
+  return normalizePreferences(preferenceSnapshot)
+}
 export function normalizePreferences(raw: Partial<Preferences>): Preferences {
   const p = { ...DEFAULTS }
   for (const k of Object.keys(DEFAULTS) as (keyof Preferences)[]) {
@@ -42,6 +48,7 @@ export function normalizePreferences(raw: Partial<Preferences>): Preferences {
 export function savePreferences(patch: Partial<Preferences>) {
   const p = normalizePreferences({ ...getPreferences(), ...patch })
   if (!Storage.set(KEY, p)) throw new Error("本地设置保存失败")
+  preferenceSnapshot = p
   trimLogs(p.logLimit)
   for (const fn of listeners) fn()
 }
