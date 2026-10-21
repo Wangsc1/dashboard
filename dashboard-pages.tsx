@@ -1,6 +1,6 @@
 import { NikkiManagement, NikkiSubscription, NikkiRule, NikkiFile, NikkiManagementError, NIKKI_RULE_TYPES, loadNikkiManagement, saveNikkiSubscription, deleteNikkiSubscription, updateNikkiSubscription, saveNikkiRule, deleteNikkiRule, setNikkiRulesEnabled, reorderNikkiRules, selectNikkiProfile, readNikkiFile, saveNikkiFile } from "./api"
 import { rootToolbar } from "./root-toolbar"
-import { AppEvents, Button, Divider, HStack, VStack, Text, Image, Circle, RoundedRectangle, Spacer, ScrollView, LazyVStack, NavigationLink, Menu, Picker, TextField, Toggle, Form, Section, Label, ProgressView, TabView, WebView, modifiers, Safari, useState, useEffect } from "scripting"
+import { AppEvents, Button, Divider, HStack, VStack, Text, Image, Circle, RoundedRectangle, Spacer, ScrollView, LazyVStack, NavigationLink, Menu, Picker, TextField, Toggle, Form, Section, Label, ProgressView, TabView, WebView, ZStack, modifiers, Safari, useState, useEffect } from "scripting"
 import { Controller, Group, Conn, Rule, Provider, loadGroups, testGroup, testNodes, selectProxy, loadProviders, updateProvider, loadRules, loadConnections, closeConnection, closeAllConnections, fmtBytes, fmtSpeed, fmtUptime, delayColor, loadRuntimeVersions, loadNikkiRuntime, NikkiRuntime, verifyCoreRestart, lastControllerMode, loadConfig, nikkiService, nikkiServiceStatus, coreAction, CoreAction, queryDNS, webpage } from "./api"
 import { usePreferences, KernelConfigPage } from "./settings-ui"
 import { NODE_SORT_OPTIONS, savePreferences, cachedIcon, traceIconPreference, feedback } from "./preferences"
@@ -282,12 +282,11 @@ export function NikkiManagementPage({c,kind}:{c:Controller;kind:"profile"|"subsc
         {data&&kind==="rule"?<>
           {data.rules.length===0?<VStack spacing={14} frame={{maxWidth:"infinity",minHeight:360}}><Image systemName="text.badge.plus" font={56} foregroundStyle="secondaryLabel"/><Text font="title2" fontWeight="bold">没有规则</Text><Note>点击右上角菜单添加规则</Note></VStack>:<><Note>{`总开关：${data.appendRules?"启用":"禁用"} · 提交可能自动重载 Nikki 服务`}</Note>{data.rules.map(r=><Panel key={r.id}><HStack><Text fontWeight="semibold">{r.type}</Text><Spacer/><Badge>{r.enabled?"启用":"禁用"}</Badge></HStack><Text>{r.matcher||"所有请求"}</Text><Note>{`${r.node}${r.noResolve?" · no-resolve":""}`}</Note><HStack><Button title="编辑" disabled={work.busy} action={()=>openEdit({kind:"rule",value:r})}/><Spacer/><Button title="删除规则" systemImage="trash" role="destructive" disabled={work.busy} action={()=>work.run(()=>work.commitConfirm(`删除规则「${r.type} · ${r.matcher}」？`,async()=>{await deleteNikkiRule(work.owner,data,r.id);if(work.current())refresh()}))}/></HStack></Panel>)}</>}
         </>:null}
-        {data&&kind==="subscription"?<>{data.subscriptions.length===0?<Note>暂无订阅，请点击右上角 + 添加</Note>:data.subscriptions.map(s=>subscriptionCard({s,busy:work.busy,edit:()=>openEdit({kind:"subscription",value:s}),update:()=>update(s),remove:()=>removeSubscription(s)}))}<HStack><Spacer/><Button title="刷新" buttonStyle="plain" disabled={work.busy} action={refresh}>{providerRefreshLabel(false,"label")}</Button></HStack><Note>新增后可更新订阅。设置提交可能自动重载 Nikki，远程优先订阅可能在重载时下载；提交前会再次确认。</Note></>:null}
+        {data&&kind==="subscription"?<>{data.subscriptions.length===0?<Note>暂无订阅，请点击右上角 + 添加</Note>:data.subscriptions.map(s=>subscriptionCard({s,busy:work.busy,edit:()=>openEdit({kind:"subscription",value:s}),update:()=>update(s),remove:()=>removeSubscription(s)}))}</>:null}
         {data&&kind==="profile"?<>
           <Note>左右滑动切换，点击卡片启用</Note>
           {data.filesError?<Note error>部分目录无读取权限，文件列表或元信息可能不完整。</Note>:null}
-          {data.files.length===0?<Note>没有配置文件，请先在订阅管理添加并更新订阅，或通过原有设备文件管理上传本地配置。</Note>:<TabView tabViewStyle="page" frame={{height:370}}>{data.files.map(f=><VStack key={f.key} padding={{horizontal:6,vertical:12}}><Panel><Button buttonStyle="plain" disabled={work.busy} action={()=>enable(f)}><VStack alignment="leading" spacing={18} frame={{maxWidth:"infinity",minHeight:200,alignment:"leading"}}><HStack><Badge>{f.origin==="subscription"?"订阅":"本地"}</Badge><Spacer/>{data.profile===f.key?<Image systemName="checkmark.circle.fill" foregroundStyle="systemGreen"/>:null}</HStack><Text font="title2" fontWeight="bold" lineLimit={2}>{f.name}</Text><Note>{data.profile===f.key?"当前选用":"点击启用"}</Note><Note>{`更新于 ${f.mtime&&f.mtime>0?new Date(f.mtime*1000).toLocaleString():"未提供"}`}</Note><Note>{f.size===null?"文件大小未提供（可能尚未下载）":fmtBytes(f.size)}</Note></VStack></Button><Button title="编辑" systemImage="pencil" buttonStyle="plain" disabled={work.busy||f.size===null} action={()=>openEdit({kind:"file",value:f})}>{nikkiEditLabel()}</Button></Panel></VStack>)}</TabView>}
-          <Note>勾选来自 Nikki 已保存的配置选择，不代表已核验内核运行配置。列表不读取配置正文。</Note>
+          {data.files.length===0?<Note>没有配置文件，请先在订阅管理添加并更新订阅，或通过原有设备文件管理上传本地配置。</Note>:<TabView tabViewStyle="page" frame={{height:370}}>{data.files.map(f=><VStack key={f.key} padding={{horizontal:6,vertical:12}}><Panel><Button buttonStyle="plain" disabled={work.busy} action={()=>enable(f)}><VStack alignment="leading" spacing={18} frame={{maxWidth:"infinity",minHeight:200,alignment:"leading"}}><HStack><Badge>{f.origin==="subscription"?"订阅":"本地"}</Badge><Spacer/>{data.profile===f.key?<Image systemName="checkmark.circle.fill" foregroundStyle="systemGreen"/>:null}</HStack><Text font="title2" fontWeight="bold" lineLimit={2}>{f.name}</Text>{data.profile!==f.key?<Note>点击启用</Note>:null}<Note>{`更新于 ${f.mtime&&f.mtime>0?new Date(f.mtime*1000).toLocaleString():"未提供"}`}</Note><Note>{f.size===null?"文件大小未提供（可能尚未下载）":fmtBytes(f.size)}</Note></VStack></Button><Button accessibilityLabel="编辑" buttonStyle="plain" disabled={work.busy||f.size===null} action={()=>openEdit({kind:"file",value:f})}>{nikkiEditLabel()}</Button></Panel></VStack>)}</TabView>}
         </>:null}
       </>}
     </VStack>
@@ -310,7 +309,7 @@ export function nikkiRelativeUpdate(value:string,now=Date.now()):string {
   if(seconds<86400)return Math.floor(seconds/3600)+"小时前"
   return Math.floor(seconds/86400)+"天前"
 }
-function nikkiEditLabel() {return <HStack spacing={5} padding={{horizontal:10,vertical:7}} foregroundStyle="label" background={<RoundedRectangle cornerRadius={8} fill="tertiarySystemFill"/>}><Image systemName="pencil" font={13}/><Text font={13}>编辑</Text></HStack>}
+function nikkiEditLabel() {return <Image systemName="pencil" font={14} foregroundStyle="label" frame={{width:34,height:34}} background={<Circle fill="tertiarySystemFill"/>}/>}
 function subscriptionCard({s,busy,edit,update,remove}:{s:NikkiSubscription;busy:boolean;edit:()=>void;update:()=>void;remove:()=>void}) {
   return <Panel key={s.id}>
     <HStack spacing={5} padding={{horizontal:8,vertical:5}} background={<RoundedRectangle cornerRadius={7} fill="tertiarySystemBackground"/>}><Image systemName="link" font={12}/><Text font={12}>订阅</Text></HStack>
@@ -318,10 +317,10 @@ function subscriptionCard({s,busy,edit,update,remove}:{s:NikkiSubscription;busy:
     <Text font={13} foregroundStyle="secondaryLabel" lineLimit={1}>{s.url||"未设置URL"}</Text>
     <HStack spacing={6} foregroundStyle="secondaryLabel"><Image systemName="clock" font={12}/><Text font={12}>{`更新: ${nikkiRelativeUpdate(s.updated)}`}</Text></HStack>
     <HStack spacing={10}>
-      <Button title="编辑" systemImage="pencil" buttonStyle="plain" disabled={busy} action={edit}>{nikkiEditLabel()}</Button>
+      <Button accessibilityLabel="编辑" buttonStyle="plain" disabled={busy} action={edit}>{nikkiEditLabel()}</Button>
       <Spacer/>
-      <Button title="更新订阅" buttonStyle="plain" disabled={busy} action={update}>{providerRefreshLabel(busy,"label")}</Button>
-      <Button title="删除订阅" buttonStyle="plain" disabled={busy} action={remove}><Image systemName="trash" font={14} foregroundStyle="label" frame={{width:34,height:34}} background={<Circle fill="tertiarySystemFill"/>}/></Button>
+      <Button accessibilityLabel="更新订阅" buttonStyle="plain" disabled={busy} action={update}>{providerRefreshLabel(busy,"label")}</Button>
+      <Button accessibilityLabel="删除订阅" buttonStyle="plain" disabled={busy} action={remove}><Image systemName="trash" font={14} foregroundStyle="label" frame={{width:34,height:34}} background={<Circle fill="tertiarySystemFill"/>}/></Button>
     </HStack>
   </Panel>
 }
@@ -495,8 +494,14 @@ export function NikkiFileEditor({c,base,file,done,entryKey="direct"}:{c:Controll
   }
   return <VStack alignment="leading" spacing={12} padding={16} background="systemBackground" frame={{maxWidth:"infinity",maxHeight:"infinity"}} navigationTitle={file.name} navigationBarTitleDisplayMode="inline" toolbar={EditorActions({work,done,save,disabled:!ready||original===null||original===text})} onAppear={()=>{work.onAppear();setAppeared(true)}} onDisappear={work.onDisappear}>
     <Note>{base.profile===file.key?"当前选用 · 保存不会自动应用":"未选用"}</Note><HStack><Image systemName="doc.text"/><Text>{file.filename}</Text></HStack>
-    {loadError?<><Note error>{loadError}</Note><Button title="重试读取" action={()=>setTick(t=>t+1)}/>{original!==null?<><Note>完整正文（只读恢复显示；行号编辑器未就绪，不能保存）</Note><ScrollView frame={{maxHeight:"infinity"}}><Text font={13} fontDesign="monospaced">{text}</Text></ScrollView></>:null}</>:!ready?<Note>{original===null?"正在完整读取配置正文…":"正文已完整读取，正在初始化本地行号编辑器…"}</Note>:null}
-    {!loadError?<WebView controller={host.controller} frame={{maxWidth:"infinity",maxHeight:"infinity",minHeight:280}}/>:null}
+    <ZStack frame={{maxWidth:"infinity",maxHeight:"infinity",minHeight:280}}>
+      {/* Keep the native host mounted from the first render, including before onAppear.
+          Only visibility changes after the full-body handshake, never its identity. */}
+      <WebView controller={host.controller} opacity={ready&&!loadError?1:0} disabled={!ready||!!loadError} frame={{maxWidth:"infinity",maxHeight:"infinity",minHeight:280}}/>
+      {!ready||loadError?<VStack spacing={14} padding={16} background="secondarySystemBackground" frame={{maxWidth:"infinity",maxHeight:"infinity",minHeight:280}}>
+        {loadError?<><Note error>{loadError}</Note><Button title="重试读取" action={()=>setTick(t=>t+1)}/>{original!==null?<><Note>完整正文（只读恢复显示；行号编辑器未就绪，不能保存）</Note><ScrollView frame={{maxHeight:"infinity"}}><Text font={13} fontDesign="monospaced">{text}</Text></ScrollView></>:null}</>:<><ProgressView progressViewStyle="circular" foregroundStyle="secondaryLabel"/><Note>{original===null?"正在完整读取配置正文…":"正文已完整读取，正在初始化本地行号编辑器…"}</Note></>}
+      </VStack>:null}
+    </ZStack>
     <Status work={work}/>{work.changed?<Note error>来源已改变，请取消后重新进入</Note>:null}
   </VStack>
 }
