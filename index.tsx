@@ -125,7 +125,7 @@ function RateChart({ down, up, enabled = true }: { down: number[]; up: number[];
   const label = (f: number) => fmtSpeed(max * f)
   return <Card>
     <HStack>
-      <HStack spacing={8}><Badge icon="chart.xyaxis.line" color="#6366F1" /><Text fontWeight="semibold" font={15}>速率图表</Text></HStack>
+      <HStack spacing={8}><Badge icon="chart.xyaxis.line" color="#6366F1" /><Text fontWeight="semibold" font={15}>速度</Text></HStack>
       <Spacer />
       <HStack spacing={4}><Circle fill="#3B82F6" frame={{ width: 5, height: 5 }} /><Text font={12} foregroundStyle="secondaryLabel">下载</Text></HStack><HStack spacing={4}><Circle fill="#34C759" frame={{ width: 5, height: 5 }} /><Text font={12} foregroundStyle="secondaryLabel">上传</Text></HStack>
     </HStack>
@@ -177,7 +177,6 @@ function OverviewPage({ active, version, onSwitch, onClose }: { active: Controll
     void read(); const t = setInterval(read, 10000)
     return () => { alive = false; clearInterval(t) }
   }, [active?.id, prefs.connectionBackground, showCharts])
-  const rate = ov?.traffic ?? null
   const w = ov?.wrt
   const memUsed = w ? Math.max(0, w.memTotal - w.memFree) : 0
   const toolbar = rootToolbar("home", onClose, <Menu label={<Image systemName="ellipsis.circle" />}>
@@ -216,10 +215,6 @@ function OverviewPage({ active, version, onSwitch, onClose }: { active: Controll
         <InfoItem icon="waveform.path.ecg" color="#F59E0B" title="系统负载" value={w ? w.load.map(v => v.toFixed(2)).join(" ") : "-"} />
       </Card> : null}
 
-      <HStack spacing={12}>
-        <StatCard enabled={showCharts} icon="arrow.down.circle.fill" color="#3B82F6" title="下载速率" parts={rate ? fmtParts(rate.down, true) : null} spark={dn} />
-        <StatCard enabled={showCharts} icon="arrow.up.circle.fill" color="#34C759" title="上传速率" parts={rate ? fmtParts(rate.up, true) : null} spark={upH} />
-      </HStack>
       <HStack spacing={12}>
         <StatCard enabled={showCharts} icon="icloud.and.arrow.down.fill" color="#3B82F6" title="下载总量" droplets parts={ov ? fmtParts(ov.downTotal) : null} />
         <StatCard enabled={showCharts} icon="icloud.and.arrow.up.fill" color="#34C759" title="上传总量" droplets parts={ov ? fmtParts(ov.upTotal) : null} />

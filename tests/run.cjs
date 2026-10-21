@@ -185,7 +185,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     pref.savePreferences({ defaultPage: 'rules', theme: 'dark', showWrt: false })
     let tree = render(app.OverviewPage, { active: c, version: 0, onSwitch() {} }, true); assert.equal(tree.props.navigationDestination.isPresented, false)
     assert.ok(!text(tree).includes('OpenWrt 状态'))
-    const cards = nodes(tree, app.StatCard); assert.equal(cards.filter(n => n.props.spark).length, 2); assert.equal(cards.filter(n => n.props.droplets).length, 2)
+    const cards = nodes(tree, app.StatCard); assert.equal(cards.length, 4); assert.equal(cards.filter(n => n.props.spark).length, 0); assert.equal(cards.filter(n => n.props.droplets).length, 2)
     assert.ok(cards.filter(n => ['活动连接', '内存使用'].includes(n.props.title)).every(n => !n.props.spark))
     tree = render(app.Root, {}, true); assert.equal(nodes(tree,'TabView')[0].props.preferredColorScheme, 'dark'); assert.equal(nodes(tree,'TabView')[0].props.selection.value, 'rules'); assert.equal(nodes(tree, app.RulesPage).length, 1)
     tree = render(ui.AppearancePage, {}, true); assert.ok(!text(tree).includes('应用图标')); assert.equal(nodes(tree, 'Toggle').length, 8)
@@ -254,9 +254,9 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 1)
       for (let i = 0; i < ids.length; i++) assert.equal(nodes(tree, types[i]).length, ids[i] === id ? 1 : 0)
     }
-    assert.equal(api.VERSION, '1.5.3'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.5.4'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
-  await test('1.5.3 共享栈/简单ToolBarProps：唯一业务页owner、隐藏Tab无注册', () => {
+  await test('1.5.4 共享栈/简单ToolBarProps：唯一业务页owner、隐藏Tab无注册', () => {
     pref.savePreferences({ defaultPage: 'overview' })
     let rootTree = render(app.Root, {}, true)
     const pagesByTab = { home: app.OverviewPage, proxies: app.ProxiesPage, rules: app.RulesPage, connections: app.ConnectionsPage, more: app.MorePage }
@@ -300,7 +300,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     assert.ok(!source.includes('const content ='));assert.ok(!source.includes('ROOT_TABS.map'));assert.ok(!source.includes('toolbar={'));assert.ok(!source.includes('topBarLeading'))
     const helper=fs.readFileSync(path.join(root,'root-toolbar.tsx'),'utf8');assert.ok(!helper.includes('ToolbarItem'));assert.ok(!helper.includes('<Toolbar'));assert.ok(!helper.includes('key='));assert.ok(!helper.includes('id='))
   })
-  await test('1.5.3 编辑控制器仍进管理页；共享栈push详情不附根X', () => {
+  await test('1.5.4 编辑控制器仍进管理页；共享栈push详情不附根X', () => {
     let closes=0
     let page=render(app.OverviewPage,{active:c,version:0,onSwitch(){},onClose(){closes++}},true)
     button(trailing(page.props.toolbar),'编辑控制器').props.action()
@@ -452,7 +452,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
   await test('1.5首页与根导航源码完整保持1.4.4关键行为', () => {
     const source=fs.readFileSync(path.join(root,'index.tsx'),'utf8'),before=require('child_process').execFileSync('git',['show','HEAD:index.tsx'],{cwd:root,encoding:'utf8'})
     const portion=s=>s.slice(s.indexOf('const MAIN_FG'),s.indexOf('// ---------- '+(s.includes('// ---------- 策略组')?'策略组':'OpenWrt 页面')))
-    const normalize=s=>portion(s).replace(/function OverviewPage\([^\n]+/, 'function OverviewPage(SIGNATURE)').replace(/  const toolbar = [\s\S]*?  const destination =/, '  const toolbar = TOOLBAR\n  const destination =');assert.equal(normalize(source),normalize(before));assert.ok(source.includes('(Date.now() - at) / 950'));assert.ok(source.includes('}, 16)'))
+    const normalize=s=>portion(s).replace(/function OverviewPage\([^\n]+/, 'function OverviewPage(SIGNATURE)').replace(/  const toolbar = [\s\S]*?  const destination =/, '  const toolbar = TOOLBAR\n  const destination =');assert.ok(!source.includes('title="下载速率"'));assert.ok(!source.includes('title="上传速率"'));assert.ok(source.includes('>速度</Text>'));assert.ok(source.includes('<RateChart down={dn} up={upH}'));assert.ok(source.includes('(Date.now() - at) / 950'));assert.ok(source.includes('}, 16)'))
   })
   console.log(`\n${count} tests passed. All fetch, Storage, Keychain, iCloud and UI bindings were mocked; no device/remote effects executed.`)
 })().catch(e => { console.error(e); process.exitCode = 1 })

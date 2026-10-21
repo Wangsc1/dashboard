@@ -1,3 +1,7 @@
+## 1.5.4 首页调整
+
+移除上传/下载速率小卡片，保留总量、连接、内存四卡。下方图表标题改为“速度”，实时曲线不变。
+
 # dashboard · v1.5.3
 
 在 iPhone「Scripting」中管理 OpenWrt，并通过 LuCI ubus 自动读取 OpenClash / Nikki / MihomoTProxy 的代理控制器地址和密钥。非官方实现。
