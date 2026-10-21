@@ -35,7 +35,7 @@ const context = {
     } else r = responder(url, init)
     if (r.throw) throw Error(r.throw)
     const status = r.status ?? 200
-    return { ok: status >= 200 && status < 300, status, headers: { get: () => r.contentType ?? 'application/json' }, text: async () => { if(r.wait) await r.wait; return JSON.stringify(r.body ?? {}) }, data: async () => r.data ?? 'fake-image-data' }
+    return { ok: status >= 200 && status < 300, status, headers: { get: () => r.contentType ?? 'application/json' }, text: async () => { if(r.wait) await r.wait; return JSON.stringify(r.body ?? {}) }, data: async () => { if (r.imageWait) await r.imageWait; return r.data ?? 'fake-image-data' } }
   },
 }
 function load(name) {
@@ -258,7 +258,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) assert.equal(nodes(tree, types[i]).length, ids[i] === id ? 1 : 0)
     }
-    assert.equal(api.VERSION, '1.5.51'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.5.52'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('1.5.46 共享栈/简单ToolBarProps：唯一业务页owner、隐藏Tab无注册', () => {
     pref.savePreferences({ defaultPage: 'overview' })
@@ -687,6 +687,23 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     for (const key of ['showHidden','customIcons','nestedDelay','haptics']) assert.ok(nodes(tree, 'Toggle').some(n => n.props.key === key))
     assert.ok(nodes(tree, ui.Choice).some(n => n.props.title === '外观模式')); assert.ok(button(tree, '清除图片缓存'))
     unmount()
+  })
+  await test('关闭自定义图标隐藏默认、映射及网络图标，迟到下载不恢复图标', async () => {
+    const g = { name: 'icon-toggle', type: 'Selector', all: [], now: '', delays: {}, icon: 'https://icons.invalid/toggle.png' }
+    pref.savePreferences({ customIcons: false, groupIcons: {} }); calls.length = 0
+    let tree = render(pages.GroupIcon, { g }, true); await flush(); assert.equal(tree, null); assert.equal(calls.length, 0)
+    pref.savePreferences({ customIcons: true, groupIcons: { [g.name]: 'globe' } })
+    tree = render(pages.GroupIcon, { g }); await flush(); assert.equal(tree.props.systemName, 'globe')
+    pref.savePreferences({ customIcons: false }); assert.equal(render(pages.GroupIcon, { g }), null); await flush()
+    let release; const imageWait = new Promise(resolve => { release = resolve })
+    responder = () => ({ contentType: 'image/png', data: 'downloaded-icon', imageWait })
+    pref.savePreferences({ customIcons: true, groupIcons: {} }); render(pages.GroupIcon, { g }); await flush()
+    pref.savePreferences({ customIcons: false }); assert.equal(render(pages.GroupIcon, { g }), null); await flush()
+    release(); await flush(); assert.equal(render(pages.GroupIcon, { g }), null)
+    pref.savePreferences({ customIcons: true }); render(pages.GroupIcon, { g }); await flush()
+    tree = render(pages.GroupIcon, { g }); assert.ok(tree.props.image)
+    pref.savePreferences({ customIcons: false }); assert.equal(render(pages.GroupIcon, { g }), null); await flush()
+    unmount(); pref.savePreferences({ customIcons: true, groupIcons: {} })
   })
   await test('主页内存固定一位小数，流量默认精度不变', () => {
     assert.deepEqual(Array.from(api.fmtParts(128.56 * 1048576, false, 1)), ['128.6', 'MB'])

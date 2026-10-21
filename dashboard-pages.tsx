@@ -17,7 +17,8 @@ function Empty() { return <Hint>尚未添加控制器，请从主页右上角进
 export function GroupIcon({g}:{g:Group}) {
   const p=usePreferences(), [image,setImage]=useState<any>(null), symbol=p.groupIcons[g.name]
   useEffect(()=>{ let alive=true;setImage(null);if(p.customIcons&&!symbol&&g.icon) cachedIcon(g.icon).then(x=>{if(alive)setImage(x)}).catch(()=>{});return()=>{alive=false} },[p.customIcons,symbol,g.icon])
-  return image ? <Image image={image} resizable scaleToFit frame={{width:22,height:22}}/> : <Image systemName={p.customIcons&&symbol?symbol:"point.3.connected.trianglepath.dotted"} foregroundStyle="systemBlue" frame={{width:22,height:22}}/>
+  if (!p.customIcons) return null
+  return image ? <Image image={image} resizable scaleToFit frame={{width:22,height:22}}/> : <Image systemName={symbol || "point.3.connected.trianglepath.dotted"} foregroundStyle="systemBlue" frame={{width:22,height:22}}/>
 }
 export function GroupNodesPage({c,g,onChanged}:{c:Controller;g:Group;onChanged:()=>void}) {
   const prefs=usePreferences(), [current,setCurrent]=useState(g.now),[delays,setDelays]=useState(g.delays),[q,setQ]=useState(""),[limit,setLimit]=useState(80),[busy,setBusy]=useState(false),[guard]=useState({alive:true})
