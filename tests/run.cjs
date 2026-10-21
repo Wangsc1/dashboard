@@ -295,31 +295,33 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     calls.length = 0; responder = () => ({ status: 500 }); await assert.rejects(() => api.selectProxy(c, 'g', 'n')); assert.equal(calls.length, 1)
     responder = (u, i) => ({ status: i.method === 'DELETE' ? 500 : 200 }); await assert.rejects(() => api.selectProxy(c, 'g', 'n'), /代理已切换/)
   })
-  await test('测速设置实际进入请求；逐节点并发测速并逐个回报，仅失败节点再用整组测速兜底', async () => {
+  await test('统一全局测速URL、节点超时最多2秒，逐个回报且失败不再整组重测', async () => {
     pref.savePreferences({ testURL: 'https://test.invalid/probe', testTimeout: 3200 }); calls.length = 0
     responder = u => u.includes('/group/') ? { body: { C: 41 } } : u.includes('/proxies/C/') ? { status: 504 } : { body: { delay: 23 } }
     const seen = []; const result = await api.testGroup(c, { name: 'G', all: ['A', 'B', 'C'] }, (n, d) => seen.push([n, d]))
-    assert.equal(result.A, 23); assert.equal(result.B, 23); assert.equal(result.C, 41); assert.equal(seen.length, 3); assert.equal(calls.filter(x => x.url.includes('/group/')).length, 1)
-    assert.ok(calls.every(x => x.url.includes('timeout=3200') && x.url.includes(encodeURIComponent('https://test.invalid/probe')))); 
+    assert.equal(result.A, 23); assert.equal(result.B, 23); assert.equal(result.C, 0); assert.equal(seen.length, 3); assert.ok(seen.some(([n,d]) => n === 'C' && d === 0)); assert.equal(calls.filter(x => x.url.includes('/group/')).length, 0)
+    assert.ok(calls.every(x => x.url.includes('timeout=2000') && x.url.includes(encodeURIComponent('https://test.invalid/probe'))));
   })
-  await test('测速优先当前节点，最多16个并发；慢节点未完成时已回报快结果，完成后再次点击会重测', async () => {
+  await test('测速优先当前节点，最多5个并发；慢节点未完成时已回报快结果，完成后再次点击会重测', async () => {
     const all = Array.from({ length: 20 }, (_, i) => 'priority-' + i), current = all[19]
     const gates = new Map(all.map(n => { let resolve; const promise = new Promise(r => { resolve = r }); return [n, { promise, resolve }] }))
     calls.length = 0; responder = url => { const n = decodeURIComponent(url.split('/proxies/')[1].split('/')[0]); return { wait: gates.get(n).promise, body: { delay: 38 } } }
     let done = false; const seen = [], pending = api.testGroup(c, { name: 'PriorityGroup', now: current, all }, (n, d) => seen.push([n, d])).then(r => { done = true; return r })
-    await flush(); assert.equal(calls.length, 16); assert.ok(calls[0].url.includes('/' + current + '/delay'))
-    gates.get(current).resolve(); await flush(); assert.deepEqual(seen, [[current, 38]]); assert.equal(done, false); assert.equal(calls.length, 17)
+    await flush(); assert.equal(calls.length, 5); assert.ok(calls[0].url.includes('/' + current + '/delay'))
+    gates.get(current).resolve(); await flush(); assert.deepEqual(seen, [[current, 38]]); assert.equal(done, false); assert.equal(calls.length, 6)
     for (const gate of gates.values()) gate.resolve(); const result = await pending; assert.equal(Object.keys(result).length, 20); assert.equal(seen.length, 20)
     const before = calls.length; await api.testNodes(c, [current]); assert.equal(calls.length, before + 1)
   })
   await test('重叠测速共享在途请求但不跨来源、测速URL、超时或认证共享', async () => {
     let release; const wait = new Promise(r => { release = r }); calls.length = 0
+    pref.savePreferences({ testTimeout: 1000 })
     responder = () => ({ wait, body: { delay: 54 } })
     const a = api.testGroup(c, { name: 'ConcurrentGroup', all: ['dedup-node'] }), b = api.testNodes(c, ['dedup-node', 'dedup-node'])
     await flush(); assert.equal(calls.length, 1)
     const source = api.testNodes({ ...c, url: 'http://other-delay-source.invalid' }, ['dedup-node'])
-    const url = api.testNodes(c, ['dedup-node'], 'https://other-probe.invalid/204')
-    await flush(); assert.equal(calls.length, 3)
+    const originalURL = pref.getPreferences().testURL; pref.savePreferences({ testURL: 'https://other-probe.invalid/204' })
+    const url = api.testNodes(c, ['dedup-node'])
+    await flush(); assert.equal(calls.length, 3); pref.savePreferences({ testURL: originalURL })
     const original = pref.getPreferences().testTimeout; pref.savePreferences({ testTimeout: original + 100 })
     const timeout = api.testNodes(c, ['dedup-node']); await flush(); assert.equal(calls.length, 4)
     pref.savePreferences({ testTimeout: original })
@@ -328,14 +330,56 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     if (oldSecret === undefined) secrets.delete('neko_secret_' + c.id); else secrets.set('neko_secret_' + c.id, oldSecret)
     release(); for (const p of [a, b, source, url, timeout, auth]) assert.equal((await p)['dedup-node'], 54)
   })
-  await test('策略组自带testUrl时测速用它而不是偏好里的链接；loadGroups读取testUrl', async () => {
+  await test('策略组即使自带testUrl也使用全局测速URL；不修改原始testUrl', async () => {
     pref.savePreferences({ testURL: 'https://test.invalid/probe', testTimeout: 3200 }); calls.length = 0
     responder = () => ({ body: { delay: 23 } })
     await api.testGroup(c, { name: 'G', all: ['A'], testUrl: 'http://1.1.1.1/generate_204' })
-    await api.testNodes(c, ['B'], 'http://1.1.1.1/generate_204')
-    assert.ok(calls.length === 2 && calls.every(x => x.url.includes(encodeURIComponent('http://1.1.1.1/generate_204')) && !x.url.includes('test.invalid')))
+    await api.testNodes(c, ['B'])
+    assert.ok(calls.length === 2 && calls.every(x => x.url.includes(encodeURIComponent('https://test.invalid/probe')) && !x.url.includes('1.1.1.1')))
     responder = () => ({ body: { proxies: { GLOBAL: { type: 'Selector', all: ['G'], now: 'G' }, G: { type: 'Selector', all: ['A'], now: 'A', testUrl: 'http://1.1.1.1/generate_204' }, A: { type: 'Shadowsocks' } } } })
     assert.equal((await api.loadGroups(c)).find(x => x.name === 'G').testUrl, 'http://1.1.1.1/generate_204'); unmount(); responder = () => ({ status: 204 })
+  })
+  await test('提供者延迟历史合并、嵌套解析与专用测速接口；所有节点仍用同一个全局URL', async () => {
+    pref.savePreferences({ nestedDelay: false, testURL: 'https://global-probe.invalid/204', testTimeout: 5000 })
+    const global = { proxies: { GLOBAL: { all: ['Routing'] }, Routing: { name: 'Routing', type: 'Selector', all: ['Nested', 'Leaf / A', 'DIRECT', 'REJECT'], now: 'Nested', testUrl: 'https://group-probe.invalid/204' }, Nested: { type: 'Selector', all: ['Deep'], now: 'Deep', history: [{ delay: 99 }] }, Deep: { type: 'Selector', all: ['Leaf / A'], now: 'Leaf / A' }, DIRECT: { type: 'Direct', history: [{ delay: 10 }] }, REJECT: { type: 'Reject' } } }
+    const provided = { providers: { 'Remote / One': { vehicleType: 'HTTP', proxies: [{ name: 'Leaf / A', type: 'Shadowsocks', history: [{ delay: 190 }] }] }, default: { vehicleType: 'Compatible', proxies: [{ name: 'DIRECT', type: 'Direct' }] } } }
+    responder = url => ({ body: url.endsWith('/providers/proxies') ? provided : global }); calls.length = 0
+    const groups = await api.loadGroups(c), g = groups.find(g => g.name === 'Routing')
+    assert.equal(calls.length, 2); assert.equal(g.delays['Leaf / A'], 190); assert.equal(g.delays.Nested, 99)
+    assert.equal(g.types.Nested, 'Shadowsocks'); assert.deepEqual(clone(g.testTargets.Nested), { name: 'Leaf / A', provider: 'Remote / One', type: 'Shadowsocks' })
+    assert.equal(g.testTargets.DIRECT.provider, undefined); assert.ok(!groups.some(g => g.name === 'Leaf / A'))
+    calls.length = 0; responder = () => ({ body: { delay: 35 } }); const seen = []
+    const result = await api.testGroup(c, g, (n,d) => seen.push([n,d]))
+    assert.equal(result.Nested, 35); assert.equal(result['Leaf / A'], 35); assert.equal(result.DIRECT, 35); assert.equal(result.REJECT, undefined)
+    assert.equal(calls.length, 2); assert.ok(calls.some(x => x.url.includes('/providers/proxies/Remote%20%2F%20One/Leaf%20%2F%20A/healthcheck?')))
+    assert.ok(calls.some(x => x.url.includes('/proxies/DIRECT/delay?'))); assert.ok(calls.every(x => x.url.includes(encodeURIComponent('https://global-probe.invalid/204')) && x.url.includes('timeout=2000')))
+    assert.equal(seen.length, 3); assert.ok(!calls.some(x => x.url.includes('/group/') || x.url.includes('Nested') || x.url.includes('REJECT')))
+    // Existing provider history must render without triggering automatic network tests.
+    const props = { c: { ...c, id: 'provider-history-ui' }, g: { ...g, name: 'HistoryUI', all: ['Leaf / A'], now: 'Leaf / A' }, onChanged() {} }
+    let tree = render(pages.GroupSection, props, true); await flush(); calls.length = 0
+    nodes(tree, 'Button').find(n => n.props.frame?.alignment === 'leading').props.action(); render(pages.GroupSection, props); await flush()
+    tree = render(pages.GroupSection, props); assert.ok(text(tree).includes('190ms')); assert.equal(calls.length, 0); unmount()
+  })
+  await test('多个策略组和来源共用5个测速并发，排队请求保留提交时认证且异常回调不会阻塞队列', async () => {
+    let release; const wait = new Promise(r => { release = r }); const originalFetch = context.fetch, oldSecret = secrets.get('neko_secret_' + c.id)
+    let activeRequests = 0, peak = 0
+    context.fetch = async (...args) => { activeRequests++; peak = Math.max(peak, activeRequests); const r = await originalFetch(...args); return { ...r, text: async () => { try { return await r.text() } finally { activeRequests-- } } } }
+    try {
+      responder = () => ({ wait, body: { delay: 36 } }); calls.length = 0
+      const a = api.testGroup(c, { name: 'QueueOne', all: Array.from({ length: 8 }, (_, i) => 'queue-a-' + i) }, () => { throw Error('mock callback') })
+      const b = api.testGroup({ ...c, url: 'http://queue-other-source.invalid' }, { name: 'QueueTwo', all: Array.from({ length: 4 }, (_, i) => 'queue-b-' + i) })
+      await flush(); assert.equal(calls.length, 5); assert.equal(peak, 5)
+      secrets.set('neko_secret_' + c.id, 'mock-changed-while-queued'); release(); const results = await Promise.all([a,b])
+      assert.equal(Object.keys(results[0]).length, 8); assert.equal(Object.keys(results[1]).length, 4); assert.equal(calls.length, 12); assert.equal(peak, 5); assert.equal(activeRequests, 0)
+      assert.ok(calls.every(x => x.init.headers.Authorization === 'Bearer ' + oldSecret))
+    } finally { context.fetch = originalFetch; if (oldSecret === undefined) secrets.delete('neko_secret_' + c.id); else secrets.set('neko_secret_' + c.id, oldSecret) }
+  })
+  await test('提供者目录不可用时保留普通节点测速；低于2秒的用户超时仍生效', async () => {
+    pref.savePreferences({ testTimeout: 1200 })
+    responder = url => url.endsWith('/providers/proxies') ? { status: 403 } : { body: { proxies: { G: { type: 'Selector', all: ['Local'], now: 'Local' }, Local: { type: 'Direct', history: [{ delay: 17 }] } } } }
+    const g = (await api.loadGroups(c)).find(g => g.name === 'G'); assert.equal(g.delays.Local, 17)
+    calls.length = 0; responder = () => ({ status: 504 }); const result = await api.testGroup(c, g)
+    assert.equal(result.Local, 0); assert.equal(calls.length, 1); assert.ok(calls[0].url.includes('/proxies/Local/delay?')); assert.ok(calls[0].url.includes('timeout=1200'))
   })
   await test('真实模拟登录/自动发现：敏感响应、错误原文均不进应用日志', async () => {
     const wrt = api.saveController({ name: 'router', host: 'mock.invalid', port: 80, https: false, username: 'root', plugin: 'nikki', auto: true, cport: 9090 }, 'password-sensitive', '')
@@ -626,7 +670,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) { const lazy = ['proxies','rules','connections'].includes(ids[i]) && ids[i] !== id; assert.equal(nodes(tree, types[i]).length, lazy ? 0 : 1); if (!lazy) assert.equal(nodes(tree, types[i])[0].props.selected, ids[i] === id) }
     }
-    assert.equal(api.VERSION, '1.5.155'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.5.156'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('独立导航栈保留业务owner和身份，只有选中页提供可见工具栏', () => {
     pref.savePreferences({ defaultPage: 'overview' })
@@ -1477,17 +1521,17 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     assert.equal(calls.filter(x => x.url.includes('/proxies/')).length, 2); assert.ok(!calls.some(x => x.url.includes('/probe-known/')))
     assert.equal(calls.filter(x => x.url.includes('/group/')).length, 0)
     release(); await flush(); await flush(); tree = render(pages.GroupSection, props)
-    assert.equal(calls.filter(x => x.url.includes('/proxies/')).length, 2); assert.equal(calls.filter(x => x.url.includes('/group/')).length, 1)
+    assert.equal(calls.filter(x => x.url.includes('/proxies/')).length, 2); assert.equal(calls.filter(x => x.url.includes('/group/')).length, 0)
     assert.ok(text(nodes(tree, 'Button').find(n => text(n).includes('probe-slow'))).includes('超时')); unmount()
   })
-  await test('自动补测：单节点测速失败时用整组测速兜底；超时不写入共享缓存', async () => {
+  await test('自动补测失败即结束，不追加整组重测；超时不写入共享缓存', async () => {
     const g = { name: 'FallbackGroup', type: 'Selector', all: ['OK', 'ONLYGROUP', 'DEAD'], now: 'OK', delays: { OK: 20 } }
     responder = url => url.includes('/group/') ? { body: { ONLYGROUP: 196, DEAD: 0 } } : { body: { delay: 0 }, status: 504 }
     calls.length = 0
     let t = render(pages.GroupSection, { c, g, onChanged() {} }, true); await flush()
     nodes(t, 'Button').find(n => n.props.frame?.alignment === 'leading').props.action(); t = render(pages.GroupSection, { c, g, onChanged() {} }); await flush(); await flush(); await flush()
     t = render(pages.GroupSection, { c, g, onChanged() {} })
-    assert.ok(calls.some(x => x.url.includes('/group/FallbackGroup/delay'))); assert.ok(text(t).includes('196ms'))
+    assert.ok(!calls.some(x => x.url.includes('/group/FallbackGroup/delay'))); assert.ok(!text(t).includes('196ms')); assert.equal(calls.length, 2)
     const dead = nodes(t, 'Button').find(n => text(n).includes('DEAD')); assert.ok(text(dead).includes('超时')); assert.ok(!text(dead).includes('未测速'))
     unmount()
     calls.length = 0; responder = url => url.includes('/group/') ? { body: { DEAD: 0 } } : { status: 504 }
@@ -1656,7 +1700,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       const diagnostic = logs.filter(x => x.startsWith('[preferences-icon]'))
       for (const stage of ['change','accepted','proxies-render','group-render']) assert.ok(diagnostic.some(x => x.includes('stage=' + stage) && x.includes('enabled=false')))
       assert.ok(diagnostic.every(x => !x.includes('private.invalid') && !x.includes('private-group-name') && !x.includes('secret-')))
-      assert.ok(diagnostic.every(x => x.includes('build=1.5.155') && /instance=[a-z0-9]+/.test(x)))
+      assert.ok(diagnostic.every(x => x.includes('build=1.5.156') && /instance=[a-z0-9]+/.test(x)))
       assert.equal(new Set(diagnostic.map(x => x.match(/instance=([^ ]+)/)[1])).size, 1)
     } finally { context.console = originalConsole; unmount(); pref.savePreferences({ customIcons: true, testURL: 'https://www.gstatic.com/generate_204' }) }
   })

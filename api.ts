@@ -1,6 +1,6 @@
 
 import { getPreferences, customHeaders, recordEvent, controllerHealth, feedback } from "./preferences"
-export const VERSION = "1.5.155"
+export const VERSION = "1.5.156"
 
 export type Kind = "clash" | "openwrt"
 export type Plugin = "openclash" | "nikki" | "mihomo"
@@ -10,7 +10,8 @@ export interface Controller {
   host?: string; port?: number; https?: boolean; plugin?: Plugin; auto?: boolean; cport?: number
 }
 export interface ControllerInput { id?: string; name: string; host: string; port: number; https: boolean; username: string; plugin: Plugin; auto: boolean; cport: number }
-export interface Group { name: string; type: string; now: string; all: string[]; delays: Record<string, number>; types?: Record<string, string>; hidden?: boolean; icon?: string; testUrl?: string }
+export interface ProxyTestTarget { name: string; provider?: string; type?: string }
+export interface Group { name: string; type: string; now: string; all: string[]; delays: Record<string, number>; types?: Record<string, string>; hidden?: boolean; icon?: string; testUrl?: string; testTargets?: Record<string, ProxyTestTarget> }
 export interface Conn { id: string; host: string; src: string; dst: string; network: string; rule: string; chain: string; up: number; down: number; start: number; upSpeed?: number; downSpeed?: number; sourceIP?: string; inboundType?: string; chains?: string[]; closedAt?: number }
 export interface Rule { type: string; payload: string; proxy: string }
 export interface Traffic { up: number; down: number; upTotal?: number; downTotal?: number }
@@ -73,11 +74,11 @@ export function getActive(): Controller | null {
 }
 export function setActive(id: string) { Storage.set(K_ACTIVE, id); feedback(); recordEvent("switch", true) }
 
-async function http(c: Controller, path: string, init: { method?: string; body?: any; timeout?: number } = {}): Promise<any> {
+async function http(c: Controller, path: string, init: { method?: string; body?: any; timeout?: number; headers?: Record<string, string> } = {}): Promise<any> {
   const secret = getSecret(c.id)
-  const headers: Record<string, string> = customHeaders()
+  const headers: Record<string, string> = init.headers ? { ...init.headers } : customHeaders()
   if (init.body !== undefined) headers["Content-Type"] = "application/json"
-  if (secret) headers["Authorization"] = "Bearer " + secret
+  if (!init.headers && secret) headers["Authorization"] = "Bearer " + secret
   const r = await apiFetch(c.url + path, {
     method: init.method ?? "GET", headers, allowInsecureRequest: true, timeout: init.timeout ?? getPreferences().requestTimeout,
     body: init.body !== undefined ? JSON.stringify(init.body) : undefined,
@@ -382,8 +383,31 @@ export async function setMode(c: Controller, mode: string) { await patchConfig(c
 export async function loadGroups(c0: Controller, options: { includeGlobal?: boolean } = {}): Promise<Group[]> {
   const c = await cc(c0)
   {
-    const j = await http(c, "/proxies")
-    const all: Record<string, any> = j.proxies ?? {}
+    const [j, pj] = await Promise.all([http(c, "/proxies"), http(c, "/providers/proxies").catch(() => ({}))])
+    const all: Record<string, any> = j.proxies ?? {}, providerNodes: Record<string, any> = {}, providerNames: Record<string, string> = {}
+    const testableProviders = new Set<string>()
+    for (const [name, provider] of Object.entries<any>(pj.providers ?? {})) {
+      const testable = name !== "default" && provider.vehicleType !== "Compatible"
+      if (testable) testableProviders.add(name)
+      for (const node of provider.proxies ?? []) if (typeof node?.name === "string") {
+        providerNodes[node.name] = node
+        if (testable && !providerNames[node.name]) providerNames[node.name] = name
+      }
+    }
+    const nodes: Record<string, any> = { ...providerNodes }
+    for (const [name, node] of Object.entries<any>(all)) nodes[name] = { ...providerNodes[name], ...node }
+    function targetOf(name: string): ProxyTestTarget {
+      const seen = new Set<string>()
+      let current = name, node = nodes[current]
+      while (node?.now && node.now !== current && !seen.has(current)) {
+        seen.add(current)
+        if (!nodes[node.now]) break
+        current = String(node.now); node = nodes[current]
+      }
+      const declared = node?.["provider-name"]
+      const provider = typeof declared === "string" && testableProviders.has(declared) ? declared : providerNames[current]
+      return { name: current, ...(provider ? { provider } : {}), ...(typeof node?.type === "string" ? { type: node.type } : {}) }
+    }
     const order: string[] = all.GLOBAL?.all ?? Object.keys(all)
     const names = [...order.filter(n => all[n]?.all), ...Object.keys(all).filter(n => all[n]?.all && !order.includes(n))]
     const prefs = getPreferences()
@@ -404,29 +428,22 @@ export async function loadGroups(c0: Controller, options: { includeGlobal?: bool
     function delayOf(name: string, seen = new Set<string>()): number | undefined {
       if (seen.has(name)) return undefined
       seen.add(name)
-      const node = all[name]
+      const node = nodes[name]
       if (prefs.nestedDelay && node?.all && node?.now) return delayOf(node.now, seen)
       return lastDelay(node)
     }
-    const providerTypes: Record<string, string> = {}
     const visible = names.filter(n => (n !== "GLOBAL" || prefs.showGlobal || options.includeGlobal === true) && (prefs.showHidden || !all[n]?.hidden))
-    if (visible.some(n => (all[n].all as string[]).some(m => typeof all[m]?.type !== "string"))) {
-      try {
-        const pj = await http(c, "/providers/proxies")
-        for (const p of Object.values<any>(pj?.providers ?? {})) for (const x of (p?.proxies ?? [])) if (typeof x?.name === "string" && typeof x?.type === "string") providerTypes[x.name] = x.type
-      } catch {}
-    }
     function protocolOf(name: string, seen = new Set<string>()): string | undefined {
       if (seen.has(name)) return undefined
       seen.add(name)
-      const node = all[name]
+      const node = nodes[name]
       if (node?.all && node?.now) return protocolOf(String(node.now), seen) ?? (typeof node.type === "string" ? node.type : undefined)
-      return typeof node?.type === "string" ? node.type : providerTypes[name]
+      return typeof node?.type === "string" ? node.type : undefined
     }
     return visible.map(n => {
-      const g = all[n]; const delays: Record<string, number> = {}, types: Record<string, string> = {}
-      for (const m of g.all as string[]) { const delay = delayOf(m); if (delay !== undefined) delays[m] = delay; const t = protocolOf(m); types[m] = t || (all[m] ? "无type字段" : "无节点信息") }
-      return { name: n, type: String(g.type ?? ""), now: String(g.now ?? ""), all: g.all, delays, types, hidden: !!g.hidden, icon: typeof g.icon === "string" ? g.icon : undefined, testUrl: typeof g.testUrl === "string" && /^https?:\/\/[^\s]+$/i.test(g.testUrl) ? g.testUrl : undefined }
+      const g = all[n]; const delays: Record<string, number> = {}, types: Record<string, string> = {}, testTargets: Record<string, ProxyTestTarget> = {}
+      for (const m of g.all as string[]) { const delay = delayOf(m); if (delay !== undefined) delays[m] = delay; const t = protocolOf(m); types[m] = t || (nodes[m] ? "无type字段" : "无节点信息"); testTargets[m] = targetOf(m) }
+      return { name: n, type: String(g.type ?? ""), now: String(g.now ?? ""), all: g.all, delays, types, testTargets, hidden: !!g.hidden, icon: typeof g.icon === "string" ? g.icon : undefined, testUrl: typeof g.testUrl === "string" && /^https?:\/\/[^\s]+$/i.test(g.testUrl) ? g.testUrl : undefined }
     })
   }
 }
@@ -441,45 +458,49 @@ export async function selectProxy(c0: Controller, group: string, name: string) {
 
 // Only share requests still in flight. Completed measurements are never reused as a new test.
 const pendingDelayRequests = new Map<string, Promise<any>>()
+const delayQueue: Array<() => void> = []
+let activeDelayRequests = 0
+function pumpDelayQueue() {
+  while (activeDelayRequests < 5 && delayQueue.length) { activeDelayRequests++; delayQueue.shift()!() }
+}
+function scheduleDelay(request: () => Promise<any>): Promise<any> {
+  return new Promise((resolve, reject) => {
+    delayQueue.push(() => { void request().then(resolve, reject).finally(() => { activeDelayRequests--; pumpDelayQueue() }) })
+    pumpDelayQueue()
+  })
+}
 async function delayRequest(c: Controller, path: string, timeout: number): Promise<any> {
-  const key = JSON.stringify([c, getSecret(c.id), customHeaders(), path, timeout])
+  const headers = customHeaders(), secret = getSecret(c.id)
+  if (secret) headers["Authorization"] = "Bearer " + secret
+  const key = JSON.stringify([c, headers, path, timeout])
   const previous = pendingDelayRequests.get(key)
   if (previous) return previous
-  const request = http(c, path, { timeout: Math.ceil(timeout / 1000) + 2 })
+  const request = scheduleDelay(() => http(c, path, { timeout: Math.ceil(timeout / 1000) + 2, headers }))
   pendingDelayRequests.set(key, request)
   try { return await request } finally { if (pendingDelayRequests.get(key) === request) pendingDelayRequests.delete(key) }
 }
-async function probeNodes(c: Controller, names: string[], url: string, timeout: number, onProgress?: (name: string, delay: number) => void): Promise<Record<string, number>> {
-  const res: Record<string, number> = {}, queue = [...new Set(names)]
-  await Promise.all(Array.from({ length: Math.min(16, queue.length) }, async () => {
-    while (queue.length) {
-      const n = queue.shift()!
-      let d = 0
-      try { const j = await delayRequest(c, `/proxies/${enc(n)}/delay?url=${enc(url)}&timeout=${timeout}`, timeout); d = num(j.delay) } catch { d = 0 }
-      res[n] = d
-      if (d > 0) { try { onProgress?.(n, d) } catch {} }
-    }
+async function probeNodes(c: Controller, names: string[], url: string, timeout: number, targets?: Record<string, ProxyTestTarget>, onProgress?: (name: string, delay: number) => void): Promise<Record<string, number>> {
+  const res: Record<string, number> = {}
+  await Promise.all([...new Set(names)].map(async n => {
+    const target = targets?.[n] ?? { name: n }
+    if (["reject", "rejectdrop", "reject-drop", "block"].includes(target.type?.toLowerCase() ?? "")) return
+    const route = target.provider ? `/providers/proxies/${enc(target.provider)}/${enc(target.name)}/healthcheck` : `/proxies/${enc(target.name)}/delay`
+    let d = 0
+    try { const j = await delayRequest(c, `${route}?url=${enc(url)}&timeout=${timeout}`, timeout); d = num(j.delay) } catch { d = 0 }
+    res[n] = d
+    try { onProgress?.(n, d) } catch {}
   }))
   return res
 }
-export async function testNodes(c0: Controller, names: string[], url?: string): Promise<Record<string, number>> {
+export async function testNodes(c0: Controller, names: string[]): Promise<Record<string, number>> {
   const c = await cc(c0), prefs = getPreferences()
-  return probeNodes(c, names, url || prefs.testURL, prefs.testTimeout)
+  return probeNodes(c, names, prefs.testURL, Math.min(2000, prefs.testTimeout))
 }
 export async function testGroup(c0: Controller, g: Group, onProgress?: (name: string, delay: number) => void): Promise<Record<string, number>> {
   const c = await cc(c0)
-  const prefs = getPreferences(), testURL = g.testUrl || prefs.testURL, timeout = prefs.testTimeout
-  const report = (n: string, d: number) => { try { onProgress?.(n, d) } catch {} }
+  const prefs = getPreferences(), testURL = prefs.testURL, timeout = Math.min(2000, prefs.testTimeout)
   const names = [...new Set(g.now && g.all.includes(g.now) ? [g.now, ...g.all] : g.all)]
-  const res = await probeNodes(c, names, testURL, timeout, report)
-  // Phase 2: some nodes only answer the group delay API; ask it once for the nodes that failed individually.
-  const failed = names.filter(n => !(res[n] > 0))
-  if (failed.length) {
-    try {
-      const j = await delayRequest(c, `/group/${enc(g.name)}/delay?url=${enc(testURL)}&timeout=${timeout}`, timeout)
-      for (const n of failed) { const v = num((j as any)[n]); if (v > 0) { res[n] = v; report(n, v) } }
-    } catch { recordEvent("fallback", false, { warning: true }) }
-  }
+  const res = await probeNodes(c, names, testURL, timeout, g.testTargets, onProgress)
   recordEvent("test", Object.values(res).some(v => v > 0))
   return res
 }
