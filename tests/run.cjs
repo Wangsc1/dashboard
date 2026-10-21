@@ -187,7 +187,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     assert.ok(!text(tree).includes('OpenWrt 状态'))
     const cards = nodes(tree, app.StatCard); assert.equal(cards.filter(n => n.props.spark).length, 2); assert.equal(cards.filter(n => n.props.droplets).length, 2)
     assert.ok(cards.filter(n => ['活动连接', '内存使用'].includes(n.props.title)).every(n => !n.props.spark))
-    tree = render(app.Root, {}, true); assert.equal(tree.props.preferredColorScheme, 'dark'); assert.equal(tree.props.selection.value, 'rules'); assert.equal(nodes(tree, app.RulesPage).length, 1)
+    tree = render(app.Root, {}, true); assert.equal(nodes(tree,'TabView')[0].props.preferredColorScheme, 'dark'); assert.equal(nodes(tree,'TabView')[0].props.selection.value, 'rules'); assert.equal(nodes(tree, app.RulesPage).length, 1)
     tree = render(ui.AppearancePage, {}, true); assert.ok(!text(tree).includes('应用图标')); assert.equal(nodes(tree, 'Toggle').length, 8)
   })
   await test('曲线几何：真实历史不变、横向连续滚动、末端视觉插值和无过冲路径', () => {
@@ -217,46 +217,46 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     enabled = false; render(renderPlot, {}); await flush(); assert.equal(intervals.size, base)
     unmount(); assert.equal(intervals.size, base)
   })
-  await test('原生TabView五入口、selection默认值/切换、每tab独立栈与根X', () => {
+  await test('共享NavigationStack内原生TabView五入口、selection默认值/切换与根X', () => {
     pref.savePreferences({ defaultPage: 'overview', connectionBackground: false })
     let tree = render(app.Root, {}, true)
-    assert.equal(tree.type, 'TabView'); assert.equal(tree.props.selection.value, 'home')
+    assert.equal(tree.type, 'NavigationStack'); assert.equal(tree.props.children[0].type,'TabView');assert.equal(tree.props.toolbar,undefined);assert.equal(tree.props.children[0].props.toolbar,undefined); assert.equal(nodes(tree,'TabView')[0].props.selection.value, 'home')
     const tabs = nodes(tree, 'Tab')
     assert.deepEqual(tabs.map(t => t.props.title), ['主页', '代理', '规则', '连接', '更多'])
     assert.deepEqual(tabs.map(t => t.props.value), ['home', 'proxies', 'rules', 'connections', 'more'])
-    assert.equal(nodes(tree, 'NavigationStack').length, 5)
+    assert.equal(nodes(tree, 'NavigationStack').length, 1)
     for (const tab of tabs) {
-      assert.equal(tab.props.children[0].type, 'NavigationStack')
-      assert.equal(nodes(tab, 'NavigationStack').length, 1)
-      assert.equal(tab.props.children[0].props.children[0].props.toolbar, undefined)
-      for (const child of tab.props.children[0].props.children[0].props.children) assert.equal(typeof child.props.onClose, 'function')
+      assert.equal(tab.props.children[0].type, 'VStack')
+      assert.equal(nodes(tab, 'NavigationStack').length, 0)
+      assert.equal(tab.props.children[0].props.toolbar, undefined)
+      for (const child of tab.props.children[0].props.children) assert.equal(typeof child.props.onClose, 'function')
     }
     assert.equal(nodes(tree, app.OverviewPage).length, 1); assert.equal(nodes(tree, app.ProxiesPage).length, 0)
     // 系统点击/拖动通过同一个 Observable selection 回传；脚本不实现手势。
-    tree.props.selection.setValue('proxies'); tree = render(app.Root, {})
+    nodes(tree,'TabView')[0].props.selection.setValue('proxies'); tree = render(app.Root, {})
     assert.equal(nodes(tree, app.ProxiesPage).length, 1); assert.equal(nodes(tree, app.OverviewPage).length, 0)
-    tree.props.selection.setValue('more'); tree = render(app.Root, {})
+    nodes(tree,'TabView')[0].props.selection.setValue('more'); tree = render(app.Root, {})
     assert.equal(nodes(tree, app.MorePage).length, 1); assert.equal(nodes(tree, app.ProxiesPage).length, 0)
     const more = render(pages.MorePage, { active: c, onChanged() {} }, true); assert.ok(nodes(more, 'NavigationLink').some(n => n.props.destination.type === ui.KernelConfigPage))
     const source = fs.readFileSync(path.join(root, 'index.tsx'), 'utf8')
     for (const removed of ['FloatingBar', 'safeAreaInset', 'UIGlass', 'GlassEffectContainer']) assert.ok(!source.includes(removed))
     const rootSource = source.slice(source.indexOf('function Root()'))
-    assert.ok(!rootSource.includes('onDragGesture')); assert.ok(!rootSource.includes('onTapGesture')); assert.ok(!rootSource.includes('<NavigationStack>\n    <TabView'))
+    assert.ok(!rootSource.includes('onDragGesture')); assert.ok(!rootSource.includes('onTapGesture')); assert.ok(rootSource.includes('<NavigationStack>\n    <TabView'))
     const overview = source.slice(source.indexOf('function OverviewPage'), source.indexOf('// ---------- OpenWrt 页面'))
     assert.ok(!overview.includes('loadClashOverview')); assert.ok(!overview.includes('运行模式')); assert.ok(!overview.includes('<NavigationLink'))
   })
-  await test('原生Tab保留栈时也只挂载可见业务页；反复选择不保留隐藏采样组件', () => {
+  await test('共享栈内原生Tab只挂载可见业务页；反复选择不保留隐藏采样组件', () => {
     pref.savePreferences({ defaultPage: 'overview' })
     let tree = render(app.Root, {}, true)
     const ids = ['home', 'proxies', 'rules', 'connections', 'more'], types = [app.OverviewPage, app.ProxiesPage, app.RulesPage, app.ConnectionsPage, app.MorePage]
     for (const id of [...ids, 'home', 'connections', 'home']) {
-      tree.props.selection.setValue(id); tree = render(app.Root, {})
-      assert.equal(nodes(tree, 'NavigationStack').length, 5)
+      nodes(tree,'TabView')[0].props.selection.setValue(id); tree = render(app.Root, {})
+      assert.equal(nodes(tree, 'NavigationStack').length, 1)
       for (let i = 0; i < ids.length; i++) assert.equal(nodes(tree, types[i]).length, ids[i] === id ? 1 : 0)
     }
-    assert.equal(api.VERSION, '1.5.2'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.5.3'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
-  await test('1.5.2 唯一toolbar owner：根X与菜单合并、显式唯一item id、隐藏Tab无注册', () => {
+  await test('1.5.3 共享栈/简单ToolBarProps：唯一业务页owner、隐藏Tab无注册', () => {
     pref.savePreferences({ defaultPage: 'overview' })
     let rootTree = render(app.Root, {}, true)
     const pagesByTab = { home: app.OverviewPage, proxies: app.ProxiesPage, rules: app.RulesPage, connections: app.ConnectionsPage, more: app.MorePage }
@@ -269,11 +269,12 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     }
     const roots = new Map()
     for (const selected of ['home','proxies','rules','connections','more','proxies','home','rules','connections','home']) {
-      rootTree.props.selection.setValue(selected);rootTree=render(app.Root,{})
+      nodes(rootTree,'TabView')[0].props.selection.setValue(selected);rootTree=render(app.Root,{})
       let menus=0
       for (const tab of nodes(rootTree,'Tab')) {
-        const id=tab.props.value, stack=tab.props.children[0], owner=stack.props.children[0]
-        const identity=[tab.props.key,stack.props.key,owner.props.key].join('/')
+        const id=tab.props.value, owner=tab.props.children[0]
+        assert.equal(nodes(tab,'NavigationStack').length,0)
+        const identity=[tab.props.key,owner.props.key].join('/')
         if(roots.has(id))assert.equal(identity,roots.get(id));else roots.set(id,identity)
         assert.equal(owner.props.toolbar,undefined)
         const children=owner.props.children
@@ -282,11 +283,11 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
         let page=inspectPage(children[0]);if(id==='more')page=inspectPage(page);const owners=[]
         function scan(n){if(!n||typeof n!=='object')return;if(n.props?.toolbar)owners.push(n);for(const child of n.props?.children??[])scan(child)}
         scan(page);assert.equal(owners.length,1)
-        const toolbar=owners[0].props.toolbar;assert.equal(toolbar.type,'Toolbar')
-        const items=nodes(toolbar,'ToolbarItem');assert.equal(items.length,id==='more'?1:2)
-        assert.deepEqual(items.map(n=>n.props.key),id==='more'?[`dashboard.${id}.close`]:[`dashboard.${id}.close`,`dashboard.${id}.menu`])
-        assert.equal(items[0].props.placement,'topBarLeading');assert.equal(nodes(items[0],'Button')[0].props.systemImage,'xmark');assert.equal(nodes(items[0],'Button')[0].props.action,children[0].props.onClose)
-        if(id==='more')continue
+        const toolbar=owners[0].props.toolbar;assert.equal(toolbar.type,undefined)
+        assert.deepEqual(Object.keys(toolbar),['topBarLeading','topBarTrailing'])
+        assert.equal(toolbar.topBarLeading.props.systemImage,'xmark');assert.equal(toolbar.topBarLeading.props.action,children[0].props.onClose)
+        assert.equal(nodes(toolbar,'ToolbarItem').length,0)
+        if(id==='more'){assert.equal(toolbar.topBarTrailing,undefined);continue}
         const menu=trailing(toolbar)
         assert.equal(menu.type,'Menu');assert.equal(nodes(menu,'Image').length,0) // label单独验证，不能把正文图标算成toolbar
         assert.equal(menu.props.label.props.systemName,'ellipsis.circle');menus++
@@ -297,8 +298,9 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     }
     const source=fs.readFileSync(path.join(root,'index.tsx'),'utf8').split('function Root()')[1]
     assert.ok(!source.includes('const content ='));assert.ok(!source.includes('ROOT_TABS.map'));assert.ok(!source.includes('toolbar={'));assert.ok(!source.includes('topBarLeading'))
+    const helper=fs.readFileSync(path.join(root,'root-toolbar.tsx'),'utf8');assert.ok(!helper.includes('ToolbarItem'));assert.ok(!helper.includes('<Toolbar'));assert.ok(!helper.includes('key='));assert.ok(!helper.includes('id='))
   })
-  await test('1.5.2 编辑控制器仅更名仍进管理页；push详情不附根X', () => {
+  await test('1.5.3 编辑控制器仍进管理页；共享栈push详情不附根X', () => {
     let closes=0
     let page=render(app.OverviewPage,{active:c,version:0,onSwitch(){},onClose(){closes++}},true)
     button(trailing(page.props.toolbar),'编辑控制器').props.action()
@@ -308,8 +310,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     assert.equal(destination.props.onClose,undefined)
     const settings=render(destination.type,destination.props,true)
     assert.equal(settings.props.toolbar,undefined)
-    const rootItem=nodes(page.props.toolbar,'ToolbarItem').find(n=>n.props.key==='dashboard.home.close')
-    nodes(rootItem,'Button')[0].props.action();assert.equal(closes,1)
+    page.props.toolbar.topBarLeading.props.action();assert.equal(closes,1)
     const group=render(pages.GroupNodesPage,{c,g:{name:'G',type:'Selector',all:['A'],now:'A',delays:{}},onChanged(){}},true)
     assert.equal(nodes(group.props.toolbar,'Button').filter(n=>n.props.systemImage==='xmark').length,0)
     assert.equal(nodes(group.props.toolbar,'ToolbarItem').filter(n=>n.props.key?.endsWith('.close')).length,0)

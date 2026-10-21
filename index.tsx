@@ -375,7 +375,7 @@ function SettingsPage({ active, onChanged }: { active: Controller | null; onChan
   </Form>
 }
 
-// ---------- 根：与 scriptgit 一致的原生 TabView；每个 tab 独立 NavigationStack ----------
+// ---------- 根：共享 NavigationStack 承载原生 TabView ----------
 type RootTab = "home" | "proxies" | "rules" | "connections" | "more"
 function MorePage({ active, onChanged, onClose }: { active: Controller | null; onChanged: () => void; onClose?: () => void }) {
   return <DashboardMorePage active={active} onChanged={onChanged} onClose={onClose} settings={<Card>
@@ -390,47 +390,37 @@ function Root() {
   const selection = useObservable<RootTab>(() => { const p = getPreferences().defaultPage; return p === "overview" ? "home" : p })
   const tab = selection.value
   const active = getActive(), bump = () => { setVersion(v => v + 1) }
-  // 与 ScriptGit 一样，每个 Tab 在自己的固定结构位置声明专属内容。
-  // 保留固定Tab结构；1.5.1真机仍重复，本轮不再把key视作解决依据。
-  // Tab根页面唯一toolbar owner合并X与菜单；外层无toolbar，子详情不附根X。
-  // 隐藏业务页仍卸载，停止采样并移除菜单声明。
-  return <TabView selection={selection} preferredColorScheme={prefs.theme === "system" ? undefined : prefs.theme} font={14} foregroundStyle={MAIN_FG}>
-    <Tab key="home" title="主页" systemImage="house.fill" value="home">
-      <NavigationStack key="home-stack">
+  // 单一共享导航栈承载原生TabView；各Tab只挂载选中的业务页。
+  // X与菜单只由业务页根的简单ToolBarProps声明，容器不注册toolbar。
+  return <NavigationStack>
+    <TabView selection={selection} preferredColorScheme={prefs.theme === "system" ? undefined : prefs.theme} font={14} foregroundStyle={MAIN_FG}>
+      <Tab key="home" title="主页" systemImage="house.fill" value="home">
         <VStack key="home-root" spacing={0} frame={{ maxWidth: "infinity", maxHeight: "infinity" }}>
           {tab === "home" ? <OverviewPage key={`home:${active?.id ?? "empty"}`} active={active} version={version} onSwitch={bump} onClose={dismiss} /> : null}
         </VStack>
-      </NavigationStack>
-    </Tab>
-    <Tab key="proxies" title="代理" systemImage="point.3.connected.trianglepath.dotted" value="proxies">
-      <NavigationStack key="proxies-stack">
+      </Tab>
+      <Tab key="proxies" title="代理" systemImage="point.3.connected.trianglepath.dotted" value="proxies">
         <VStack key="proxies-root" spacing={0} frame={{ maxWidth: "infinity", maxHeight: "infinity" }}>
           {tab === "proxies" ? <ProxiesPage onClose={dismiss} key={`proxies:${active?.id ?? "empty"}`} active={active} version={version} /> : null}
         </VStack>
-      </NavigationStack>
-    </Tab>
-    <Tab key="rules" title="规则" systemImage="list.bullet.rectangle" value="rules">
-      <NavigationStack key="rules-stack">
+      </Tab>
+      <Tab key="rules" title="规则" systemImage="list.bullet.rectangle" value="rules">
         <VStack key="rules-root" spacing={0} frame={{ maxWidth: "infinity", maxHeight: "infinity" }}>
           {tab === "rules" ? <RulesPage onClose={dismiss} key={`rules:${active?.id ?? "empty"}`} active={active} version={version} /> : null}
         </VStack>
-      </NavigationStack>
-    </Tab>
-    <Tab key="connections" title="连接" systemImage="arrow.up.arrow.down" value="connections">
-      <NavigationStack key="connections-stack">
+      </Tab>
+      <Tab key="connections" title="连接" systemImage="arrow.up.arrow.down" value="connections">
         <VStack key="connections-root" spacing={0} frame={{ maxWidth: "infinity", maxHeight: "infinity" }}>
           {tab === "connections" ? <ConnectionsPage onClose={dismiss} key={`connections:${active?.id ?? "empty"}`} active={active} version={version} /> : null}
         </VStack>
-      </NavigationStack>
-    </Tab>
-    <Tab key="more" title="更多" systemImage="ellipsis.circle" value="more">
-      <NavigationStack key="more-stack">
+      </Tab>
+      <Tab key="more" title="更多" systemImage="ellipsis.circle" value="more">
         <VStack key="more-root" spacing={0} frame={{ maxWidth: "infinity", maxHeight: "infinity" }}>
           {tab === "more" ? <MorePage onClose={dismiss} key={`more:${active?.id ?? "empty"}`} active={active} onChanged={bump} /> : null}
         </VStack>
-      </NavigationStack>
-    </Tab>
-  </TabView>
+      </Tab>
+    </TabView>
+  </NavigationStack>
 }
 
 async function run() {
