@@ -460,13 +460,14 @@ function FrpPage({ active }: { active: Controller }) {
 const maskUrl = (u: string) => u.replace(/(\d{1,3}\.\d{1,3}\.\d{1,3}\.)\d{1,3}(?=[:/]|$)/, "$1***")
 function FrpCommonPage({ active, info, onDone }: { active: Controller; info: FrpInfo; onDone: () => void }) {
   const dismiss = Navigation.useDismiss()
-  const [addr, setAddr] = useState(info.common.addr), [port, setPort] = useState(info.common.port), [tls, setTls] = useState(info.common.tls), [busy, setBusy] = useState(false)
-  const save = () => guarded(setBusy, async () => { if (await confirmed(`${active.name} · frpc`, "保存服务端参数并重启 frpc；穿透会短暂中断，参数错误会导致断连。", () => saveFrpCommon(active, { addr: addr.trim(), port: port.trim(), tls }))) { onDone(); dismiss() } })
+  const [addr, setAddr] = useState(info.common.addr), [port, setPort] = useState(info.common.port), [tls, setTls] = useState(info.common.tls), [token, setToken] = useState(info.common.token), [busy, setBusy] = useState(false)
+  const save = () => guarded(setBusy, async () => { if (await confirmed(`${active.name} · frpc`, "保存服务端参数并重启 frpc；穿透会短暂中断，参数错误会导致断连。", () => saveFrpCommon(active, { addr: addr.trim(), port: port.trim(), tls, token: token.trim() }))) { onDone(); dismiss() } })
   return <Form navigationTitle="服务端参数" navigationBarTitleDisplayMode="inline">
     <Section>
       <Field title="服务器地址" value={addr} onChanged={setAddr} />
       <Field title="服务器端口" value={port} onChanged={setPort} />
       <Toggle title="启用 TLS" value={tls} onChanged={setTls} />
+      <Field title="Token" value={token} onChanged={setToken} />
 
     </Section>
     <Section><Button title="保存" disabled={busy} action={save} /></Section>
