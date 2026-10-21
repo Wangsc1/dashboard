@@ -188,7 +188,7 @@ function OverviewPage({ active, version, onSwitch, onClose }: { active: Controll
   const w = ov?.wrt
   const memUsed = w ? Math.max(0, w.memTotal - w.memFree) : 0
   const toolbar = rootToolbar("home", onClose, <Menu label={<Image systemName="ellipsis.circle" />}>
-      <Button title="添加面板" systemImage="gearshape" action={() => setPage("settings")} />
+      <Button title="面板管理" systemImage="gearshape" action={() => setPage("settings")} />
       <Button title="运行日志" systemImage="doc.text" action={() => setPage("logs")} />
       <Button title="外观设置" systemImage="paintpalette" action={() => setPage("appearance")} />
       <Button title="全局配置" systemImage="slider.horizontal.3" action={() => setPage("global")} />
