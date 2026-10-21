@@ -21,7 +21,7 @@ const context = {
   Storage: { get: k => clone(store.get(k) ?? null), set: (k, v) => { if (failStorage) return false; store.set(k, clone(v)); return true }, remove: k => store.delete(k), getData: k => store.get(k), setData: (k, v) => store.set(k, v) },
   Keychain: { get: k => secrets.get(k) ?? null, set: (k, v) => { secrets.set(k, v); return true }, remove: k => secrets.delete(k) },
   HapticFeedback: { selection() { haptics++ } }, Pasteboard: { async setString(s) { clipboard = s } },
-  UIImage: { fromData: d => d ? { image: true } : null },
+  UIImage: { fromData: d => d ? { image: true } : null, fromBase64String: s => s ? { image: true } : null },
   FileManager: { isiCloudEnabled: true, iCloudDocumentsDirectory: '/fake-cloud', async downloadFileFromiCloud() { return true }, async readAsString(p) { if (!files.has(p)) throw Error('missing'); return files.get(p) }, async writeAsString(p, s) { files.set(p, s) } },
   Dialog: { async confirm(opts) { confirms.push(opts); return context.confirmResult }, async alert(opts) { alerts.push(opts) } }, confirmResult: true,
   setInterval: (fn, ms) => { const id = nextInterval++; intervals.set(id, { fn, ms }); return id }, clearInterval(id) { intervals.delete(id) }, setTimeout: f => f(), clearTimeout() {},
@@ -259,9 +259,9 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) assert.equal(nodes(tree, types[i]).length, ids[i] === id ? 1 : 0)
     }
-    assert.equal(api.VERSION, '1.5.20'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.5.21'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
-  await test('1.5.20 共享栈/简单ToolBarProps：唯一业务页owner、隐藏Tab无注册', () => {
+  await test('1.5.21 共享栈/简单ToolBarProps：唯一业务页owner、隐藏Tab无注册', () => {
     pref.savePreferences({ defaultPage: 'overview' })
     let rootTree = render(app.Root, {}, true)
     const pagesByTab = { home: app.OverviewPage, proxies: app.ProxiesPage, rules: app.RulesPage, connections: app.ConnectionsPage, more: app.MorePage }
@@ -305,7 +305,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     assert.ok(!source.includes('const content ='));assert.ok(!source.includes('ROOT_TABS.map'));assert.ok(!source.includes('toolbar={'));assert.ok(!source.includes('topBarLeading'))
     const helper=fs.readFileSync(path.join(root,'root-toolbar.tsx'),'utf8');assert.ok(!helper.includes('ToolbarItem'));assert.ok(!helper.includes('<Toolbar'));assert.ok(!helper.includes('key='));assert.ok(!helper.includes('id='))
   })
-  await test('1.5.20 编辑控制器仍进管理页；共享栈push详情不附根X', () => {
+  await test('1.5.21 编辑控制器仍进管理页；共享栈push详情不附根X', () => {
     let closes=0
     let page=render(app.OverviewPage,{active:c,version:0,onSwitch(){},onClose(){closes++}},true)
     button(trailing(page.props.toolbar),'添加面板').props.action()
@@ -331,7 +331,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     let tree = render(app.OverviewPage, { active: router, version: 0, onSwitch() {} }); tree.props.onDisappear(); render(app.OverviewPage, { active: router, version: 0, onSwitch() {} }); await flush()
     assert.ok(![...intervals.values()].some(x => x.ms === 1000)); unmount(); assert.equal(intervals.size, 0)
   })
-  await test('1.5.20 OpenWrt卡：目标平台、内核版本、CPU两次采样', async () => {
+  await test('1.5.21 OpenWrt卡：目标平台、内核版本、CPU两次采样', async () => {
     const router = { ...api.listControllers().find(x => x.kind === 'openwrt'), id: 'cpu-test' }
     let stat = 'cpu  100 0 100 800 0 0 0 0 0 0\n'
     responder = (url, init) => { const b = JSON.parse(init.body || '{}'), path = b.params?.[3]?.path
@@ -343,13 +343,13 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     o = await api.loadOverview(router); assert.equal(Math.round(o.wrt.cpu), 50)
     const src = fs.readFileSync(path.join(root, 'index.tsx'), 'utf8'); for (const t of ['目标平台','内核版本','CPU 使用率']) assert.ok(src.includes(`title="${t}"`))
   })
-  await test('1.5.20 图标地址：路径中的@允许，查询串/片段/用户信息仍拒绝', async () => {
+  await test('1.5.21 图标地址：路径中的@允许，查询串/片段/用户信息仍拒绝', async () => {
     responder = () => ({ body: {}, contentType: 'image/png' })
     assert.ok(await pref.cachedIcon('https://fastly.jsdelivr.net/gh/Koolson/Qure@master/IconSet/Color/Emby.png'))
     for (const u of ['http://x.invalid/a.png', 'https://x.invalid/a.png?k=1', 'https://x.invalid/a.png#f', 'https://user:pw@x.invalid/a.png']) assert.equal(await pref.cachedIcon(u), null)
     const src = fs.readFileSync(path.join(root, 'index.tsx'), 'utf8'); assert.ok(src.includes('navigationTitle="OpenWrt 状态"')); assert.ok(src.includes('运行正常')); assert.ok(src.indexOf('运行正常') < src.indexOf('title="目标平台"'))
   })
-  await test('1.5.20 Docker/FRP管理：解析、敏感字段不外露、操作参数校验', async () => {
+  await test('1.5.21 Docker/FRP管理：解析、敏感字段不外露、操作参数校验', async () => {
     const router = { ...api.listControllers().find(x => x.kind === 'openwrt'), id: 'dock-test' }
     const calls2 = []
     responder = (url, init) => { const b = JSON.parse(init.body || '{}'), [, obj, method, args] = b.params || []
@@ -363,13 +363,13 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     const ds = await api.loadDockerContainers(router); assert.equal(ds.length, 1); assert.equal(ds[0].name, 'miaospeed'); assert.ok(!JSON.stringify(ds).includes('SECRET'))
     await api.dockerAction(router, ds[0].id, 'restart'); assert.ok(calls2.some(x => x.obj === 'docker.container' && x.method === 'restart'))
     await assert.rejects(() => api.dockerAction(router, '../x', 'stop'))
-    const f = await api.loadFrp(router); assert.equal(f.running, true); assert.equal(f.server, '1.2.3.4:8055'); assert.equal(f.proxies.length, 1); assert.equal(f.proxies[0].remote, '8022'); assert.ok(!JSON.stringify(f).includes('SECRET'))
+    const f = await api.loadFrp(router); assert.equal(f.running, true); assert.equal(f.server, '1.2.3.4:8055'); assert.equal(f.proxies.length, 1); assert.equal(f.proxies[0].remote, '8022');
     await api.frpAction(router, 'restart'); assert.ok(calls2.some(x => x.obj === 'rc' && x.method === 'init' && x.args.name === 'frpc' && x.args.action === 'restart'))
     const src = fs.readFileSync(path.join(root, 'index.tsx'), 'utf8')
     for (const t of ['面板设置', 'Docker 管理', 'FRP 管理', '添加面板']) assert.ok(src.includes(t))
     assert.ok(!src.includes('title="代理内核配置"')); assert.ok(!src.includes('title="编辑控制器"'))
   })
-  await test('1.5.20 Docker/FRP参数编辑：校验、uci提交+重启、失败回滚、不泄露token', async () => {
+  await test('1.5.21 Docker/FRP参数编辑：校验、uci提交+重启、失败回滚、token可见可改', async () => {
     const router = { ...api.listControllers().find(x => x.kind === 'openwrt'), id: 'edit-test' }
     const seen = []; let failSet = false
     responder = (url, init) => { const b = JSON.parse(init.body || '{}'), [, obj, method, args] = b.params || []
@@ -382,9 +382,10 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       if (obj === 'docker.image') return { body: { result: [0, { code: 200, body: [{}] }] } }
       if (obj === 'docker.container') return { body: { result: [0, { code: 200 }] } }
       return { body: { result: [0, {}] } } }
-    const f = await api.loadFrp(router); assert.equal(f.proxies[0].id, 'c1'); assert.equal(f.common.hasToken, true); assert.ok(!JSON.stringify(f).includes('SECRET'))
+    const f = await api.loadFrp(router); assert.equal(f.proxies[0].id, 'c1'); assert.equal(f.common.token, 'SECRET')
     await api.saveFrpCommon(router, { addr: 'a.example.com', port: '8055', tls: false })
     assert.ok(seen.some(x => x.obj === 'uci' && x.method === 'commit')); assert.ok(seen.some(x => x.obj === 'rc' && x.method === 'init' && x.args.action === 'restart')); assert.ok(!seen.some(x => x.method === 'set' && x.args?.values?.token))
+    seen.length = 0; await api.saveFrpCommon(router, { addr: 'a.example.com', port: '8055', tls: true, token: 'NEWTOKEN' }); assert.ok(seen.some(x => x.method === 'set' && x.args?.values?.token === 'NEWTOKEN')); await assert.rejects(() => api.saveFrpCommon(router, { addr: 'a.example.com', port: '8055', tls: true, token: 'bad token' }))
     await assert.rejects(() => api.saveFrpCommon(router, { addr: 'bad host', port: '8055', tls: false })); await assert.rejects(() => api.saveFrpCommon(router, { addr: 'a.com', port: '70000', tls: false }))
     await assert.rejects(() => api.saveFrpProxy(router, { name: 'a b', type: 'tcp', local_ip: '10.0.0.1', local_port: '1', remote_port: '2' })); await assert.rejects(() => api.saveFrpProxy(router, { name: 'x', type: 'http', local_ip: '10.0.0.1', local_port: '1', remote_port: '2' }))
     seen.length = 0; await api.saveFrpProxy(router, { name: 'new', type: 'tcp', local_ip: '10.0.0.1', local_port: '80', remote_port: '8008' }); assert.ok(seen.some(x => x.obj === 'uci' && x.method === 'add'))
@@ -395,7 +396,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     seen.length = 0; await api.saveDockerSettings(router, { logLevel: 'info', httpProxy: '', httpsProxy: '', noProxy: '' }); assert.ok(seen.some(x => x.method === 'commit' && x.args.config === 'dockerd')); assert.ok(seen.some(x => x.obj === 'rc' && x.args.name === 'dockerd'))
     assert.equal(await api.loadContainerPolicy(router, 'f01e8c0c992d37147ed051e6'), 'always'); await assert.rejects(() => api.saveContainerPolicy(router, 'f01e8c0c992d37147ed051e6', 'bad'))
     await api.saveContainerPolicy(router, 'f01e8c0c992d37147ed051e6', 'unless-stopped'); assert.ok(seen.some(x => x.obj === 'docker.container' && x.method === 'update'))
-    const src = fs.readFileSync(path.join(root, 'index.tsx'), 'utf8'); assert.ok(src.includes('#2496ED')); assert.ok(src.includes('<DockerLogo')); assert.ok(!src.includes('systemImage="shippingbox" /></NavigationLink>')); assert.ok(!src.includes('title="刷新" systemImage="arrow.clockwise" action={() => setTick'))
+    const src = fs.readFileSync(path.join(root, 'index.tsx'), 'utf8'); assert.ok(fs.readFileSync(path.join(root, 'docker-icon.ts'), 'utf8').includes('DOCKER_PNG_BASE64')); assert.ok(src.includes('UIImage.fromBase64String')); assert.ok(src.includes('<DockerLogo')); assert.ok(src.includes('title="保持"')); assert.ok(!src.includes('保存并重启')); assert.ok(!src.includes('SecureField title="Token')); assert.ok(!src.includes('systemImage="shippingbox" /></NavigationLink>')); assert.ok(!src.includes('title="刷新" systemImage="arrow.clockwise" action={() => setTick'))
     const ov = await api.loadDockerOverview(router); assert.equal(ov.version, '29.6.1'); assert.equal(ov.api, '1.55'); assert.equal(ov.root, '/opt/docker')
   })
   await test('六卡104pt；速率SVG全高背景且前景文字最后绘制；连接内存无曲线', () => {
@@ -426,7 +427,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     button(trailing(tree.props.toolbar), '✓ 信息').props.action(); tree = render(ui.LogsPage, {}); assert.equal(nodes(tree, 'VStack').length, 3)
     button(trailing(tree.props.toolbar), '搜索日志').props.action(); tree = render(ui.LogsPage, {}); nodes(tree, 'TextField')[0].props.onChanged('路由器'); tree = render(ui.LogsPage, {}); assert.equal(nodes(tree, 'VStack').length, 2)
   })
-  await test('1.5.20 控制器左滑删除按钮（trailingSwipeActions）与右对齐版本', () => {
+  await test('1.5.21 控制器左滑删除按钮（trailingSwipeActions）与右对齐版本', () => {
     const source = fs.readFileSync(path.join(root, 'index.tsx'), 'utf8')
     const body = source.match(/function remove\(id: string\) \{([\s\S]*?)\n  \}/)[1].trim()
     assert.equal(body, `removeController(id)

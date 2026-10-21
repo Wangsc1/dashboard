@@ -1,6 +1,6 @@
 // dashboard 数据层：Clash 外部控制 API 与 OpenWrt（LuCI ubus JSON-RPC）
 import { getPreferences, customHeaders, recordEvent, controllerHealth, feedback } from "./preferences"
-export const VERSION = "1.5.20"
+export const VERSION = "1.5.21"
 
 export type Kind = "clash" | "openwrt"
 export type Plugin = "openclash" | "nikki" | "mihomo"
@@ -19,7 +19,7 @@ export interface Overview { version: string; mode: string; traffic: Traffic; upT
 export interface WrtIface { name: string; proto: string; up: boolean; ip: string; device: string; uptime: number }
 export interface DockerContainer { id: string; name: string; image: string; state: string; status: string }
 export interface FrpProxy { id: string; name: string; type: string; local: string; remote: string }
-export interface FrpInfo { running: boolean; enabled: boolean; server: string; proxies: FrpProxy[]; common: { addr: string; port: string; tls: boolean; hasToken: boolean } }
+export interface FrpInfo { running: boolean; enabled: boolean; server: string; proxies: FrpProxy[]; common: { addr: string; port: string; tls: boolean; token: string } }
 export interface DockerOverview { version: string; api: string; threads: number; memTotal: number; root: string; index: string; mirrors: string[]; containers: number; running: number; images: number }
 export interface DockerSettings { logLevel: string; httpProxy: string; httpsProxy: string; noProxy: string; dataRoot: string }
 export interface WrtLease { host: string; ip: string; mac: string; expires: number }
@@ -585,7 +585,7 @@ export async function webpage(c: Controller, page: "home"|"profile"|"mixin"|"log
 }
 export async function nikkiServiceStatus(c: Controller): Promise<boolean | null> { requireNikki(c); const j = await ubus(c,"rc","list",{name:"nikki"}); return typeof j.nikki?.running === "boolean" ? j.nikki.running : null }
 
-// ---------- Docker / frp 管理（走 OpenWrt ubus，仅暴露展示所需字段；不读取命令行、环境变量、token）----------
+// ---------- Docker / frp 管理（走 OpenWrt ubus，仅暴露展示所需字段；不读取容器命令行、环境变量）----------
 const dockerBody = (j: any) => { if (!j || typeof j.code !== "number" || j.code >= 400) throw new Error("Docker 请求失败（" + String(j?.code ?? "无响应") + "）"); return j.body }
 export async function loadDockerContainers(c: Controller): Promise<DockerContainer[]> {
   const body = dockerBody(await ubus(c, "docker.container", "list", { query: { all: "true" } }))
@@ -606,7 +606,7 @@ export async function loadFrp(c: Controller): Promise<FrpInfo> {
   }))
   const common = values.common ?? {}
   return { running: !!st.running, enabled: !!st.enabled, server: common.server_addr ? `${common.server_addr}:${common.server_port ?? ""}` : "", proxies,
-    common: { addr: String(common.server_addr ?? ""), port: String(common.server_port ?? ""), tls: common.tls_enable === "true" || common.tls_enable === "1", hasToken: !!common.token } }
+    common: { addr: String(common.server_addr ?? ""), port: String(common.server_port ?? ""), tls: common.tls_enable === "true" || common.tls_enable === "1", token: String(common.token ?? "") } }
 }
 export async function frpAction(c: Controller, action: "start" | "stop" | "restart") {
   await ubus(c, "rc", "init", { name: "frpc", action })
@@ -623,7 +623,7 @@ async function uciCommit(c: Controller, config: string, steps: (() => Promise<an
 export async function saveFrpCommon(c: Controller, v: { addr: string; port: string; tls: boolean; token?: string }) {
   if (!okHost(v.addr)) throw new Error("服务器地址无效"); if (!okPort(v.port)) throw new Error("服务器端口无效（1-65535）")
   const values: Record<string, string> = { server_addr: v.addr, server_port: v.port, tls_enable: v.tls ? "true" : "false" }
-  if (v.token) values.token = v.token
+  if (v.token !== undefined && /^[\x21-\x7e]{0,128}$/.test(v.token)) { if (v.token) values.token = v.token } else if (v.token !== undefined) throw new Error("Token 含非法字符")
   await uciCommit(c, "frpc", [() => ubus(c, "uci", "set", { config: "frpc", section: "common", values })])
   await frpAction(c, "restart")
 }

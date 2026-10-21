@@ -17,5 +17,5 @@ declare class TextDecoder { decode(b: any, o?: any): string }
 
 declare var HapticFeedback: { selection(): void };
 declare var Pasteboard: { setString(s: string): Promise<void> };
-declare var UIImage: { fromData(d: any): any };
+declare var UIImage: { fromData(d: any): any; fromBase64String(s: string): any };
 declare var FileManager: { isiCloudEnabled: boolean; iCloudDocumentsDirectory: string; downloadFileFromiCloud(p: string): Promise<boolean>; readAsString(p: string): Promise<string>; writeAsString(p: string, text: string): Promise<void> };

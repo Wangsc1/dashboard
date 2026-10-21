@@ -11,6 +11,7 @@ import {
 } from "./api"
 
 import { confirmed } from "./dashboard-model"
+import { DOCKER_PNG_BASE64 } from "./docker-icon"
 import { useSmoothPlot } from "./chart-ui"
 import { CHART_HISTORY } from "./chart"
 import { AppearancePage, GlobalConfigPage, LogsPage, KernelConfigPage, usePreferences } from "./settings-ui"
@@ -270,9 +271,12 @@ function WrtLeasesPage({ active, version }: { active: Controller; version: numbe
   </Form>
 }
 
-// Docker 官方品牌图标（Simple Icons，CC0），官方蓝 #2496ED。
-const DOCKER_SVG = (size: number) => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" preserveAspectRatio="xMidYMid meet"><path fill="#2496ED" d="M13.983 11.078h2.119a.186.186 0 00.186-.185V9.006a.186.186 0 00-.186-.186h-2.119a.185.185 0 00-.185.185v1.888c0 .102.083.185.185.185m-2.954-5.43h2.118a.186.186 0 00.186-.186V3.574a.186.186 0 00-.186-.185h-2.118a.185.185 0 00-.185.185v1.888c0 .102.082.185.185.185m0 2.716h2.118a.187.187 0 00.186-.186V6.29a.186.186 0 00-.186-.185h-2.118a.185.185 0 00-.185.185v1.887c0 .102.082.185.185.186m-2.93 0h2.12a.186.186 0 00.184-.186V6.29a.185.185 0 00-.185-.185H8.1a.185.185 0 00-.185.185v1.887c0 .102.083.185.185.186m-2.964 0h2.119a.186.186 0 00.185-.186V6.29a.185.185 0 00-.185-.185H5.136a.186.186 0 00-.186.185v1.887c0 .102.084.185.186.186m5.893 2.715h2.118a.186.186 0 00.186-.185V9.006a.186.186 0 00-.186-.186h-2.118a.185.185 0 00-.185.185v1.888c0 .102.082.185.185.185m-2.93 0h2.12a.185.185 0 00.184-.185V9.006a.185.185 0 00-.184-.186h-2.12a.185.185 0 00-.184.185v1.888c0 .102.083.185.185.185m-2.964 0h2.119a.185.185 0 00.185-.185V9.006a.185.185 0 00-.184-.186h-2.12a.186.186 0 00-.186.186v1.887c0 .102.084.185.186.185m-2.92 0h2.12a.185.185 0 00.184-.185V9.006a.185.185 0 00-.184-.186h-2.12a.185.185 0 00-.184.185v1.888c0 .102.082.185.185.185M23.763 9.89c-.065-.051-.672-.51-1.954-.51-.338.001-.676.03-1.01.087-.248-1.7-1.653-2.53-1.716-2.566l-.344-.199-.226.327c-.284.438-.49.922-.612 1.43-.23.97-.09 1.882.403 2.661-.595.332-1.55.413-1.744.42H.751a.751.751 0 00-.75.748 11.376 11.376 0 00.692 4.062c.545 1.428 1.355 2.48 2.41 3.124 1.18.723 3.1 1.137 5.275 1.137.983.003 1.963-.086 2.93-.266a12.248 12.248 0 003.823-1.389c.98-.567 1.86-1.288 2.61-2.136 1.252-1.418 1.998-2.997 2.553-4.4h.221c1.372 0 2.215-.549 2.68-1.009.309-.293.55-.65.707-1.046l.098-.288Z"/></svg>`
-function DockerLogo({ size = 24 }: { size?: number }) { return <SVG code={DOCKER_SVG(size)} resizable frame={{ width: size, height: size }} /> }
+// Docker 官方品牌图标：内嵌 PNG 经 UIImage 显示（同代理组自定义图标的原生图片路径；内联 SVG 在设备上不渲染）。
+let dockerImage: any
+function DockerLogo({ size = 24 }: { size?: number }) {
+  dockerImage = dockerImage ?? UIImage.fromBase64String(DOCKER_PNG_BASE64)
+  return dockerImage ? <Image image={dockerImage} resizable scaleToFit frame={{ width: size, height: size }} /> : <Image systemName="shippingbox" frame={{ width: size, height: size }} />
+}
 async function guarded(setBusy: (v: boolean) => void, fn: () => Promise<any>) {
   setBusy(true)
   try { await fn() } catch (e: any) { await Dialog.alert({ title: "操作未完成", message: String(e?.message || "路由器未响应或权限不足。").slice(0, 120) }) } finally { setBusy(false) }
@@ -308,9 +312,9 @@ function DockerPage({ active }: { active: Controller }) {
       <HStack><Text>总内存</Text><Spacer /><Text foregroundStyle="secondaryLabel">{gi(ov.memTotal)}</Text></HStack>
       <HStack><Text>Docker 根目录</Text><Spacer /><Text foregroundStyle="secondaryLabel">{ov.root || "-"}</Text></HStack>
       <HStack><Text>索引服务器地址</Text><Spacer /><Text font={13} foregroundStyle="secondaryLabel">{ov.index || "-"}</Text></HStack>
-      <HStack><Text>Registry 镜像</Text><Spacer /><Text font={13} foregroundStyle="secondaryLabel">{ov.mirrors.length ? ov.mirrors.join(", ") : "-"}</Text></HStack>
+      <VStack alignment="leading" spacing={4}><Text>Registry 镜像</Text>{ov.mirrors.length ? ov.mirrors.map(m => <Text key={m} font={13} foregroundStyle="secondaryLabel">{m}</Text>) : <Text font={13} foregroundStyle="secondaryLabel">无</Text>}</VStack>
     </Section> : null}
-    <Section><NavigationLink destination={<DockerSettingsPage active={active} />}><HStack spacing={10}><DockerLogo size={22} /><Text>Docker 参数</Text></HStack></NavigationLink></Section>
+    <Section><NavigationLink destination={<DockerSettingsPage active={active} />}><Label title="Docker 参数" systemImage="slider.horizontal.3" /></NavigationLink></Section>
     <Section header={<Text>{`容器 ${list.length}`}</Text>} footer={<Text>左滑启动、停止或重启；点进容器可改重启策略。</Text>}>
       {list.map(x => <NavigationLink key={x.id} destination={<ContainerPage active={active} x={x} />}
           trailingSwipeActions={{ allowsFullSwipe: false, actions: [
@@ -344,7 +348,7 @@ function ContainerPage({ active, x }: { active: Controller; x: DockerContainer }
       <Picker title="重启策略" pickerStyle="menu" value={policy} onChanged={setPolicy}>
         <Text tag="no">不自动重启</Text><Text tag="always">总是重启</Text><Text tag="unless-stopped">除非手动停止</Text><Text tag="on-failure">失败时重启</Text>
       </Picker>
-      <Button title="保存" systemImage="checkmark" disabled={busy || policy === orig} action={save} />
+      <Button title="保持" disabled={busy || policy === orig} action={save} />
     </Section> : null}
   </Form>
 }
@@ -367,7 +371,7 @@ function DockerSettingsPage({ active }: { active: Controller }) {
       <Field title="HTTPS" value={s.httpsProxy} onChanged={v => set("httpsProxy", v)} />
       <Field title="不代理" value={s.noProxy} onChanged={v => set("noProxy", v)} />
     </Section> : null}
-    {s ? <Section><Button title="保存并重启 Docker" systemImage="checkmark" disabled={busy} action={save} /></Section> : null}
+    {s ? <Section><Button title="保持" disabled={busy} action={save} /></Section> : null}
   </Form>
 }
 
@@ -404,16 +408,17 @@ function FrpPage({ active }: { active: Controller }) {
 
 function FrpCommonPage({ active, info, onDone }: { active: Controller; info: FrpInfo; onDone: () => void }) {
   const dismiss = Navigation.useDismiss()
-  const [addr, setAddr] = useState(info.common.addr), [port, setPort] = useState(info.common.port), [tls, setTls] = useState(info.common.tls), [token, setToken] = useState(""), [busy, setBusy] = useState(false)
-  const save = () => guarded(setBusy, async () => { if (await confirmed(`${active.name} · frpc`, "保存服务端参数并重启 frpc；穿透会短暂中断，参数错误会导致断连。", () => saveFrpCommon(active, { addr: addr.trim(), port: port.trim(), tls, token: token || undefined }))) { onDone(); dismiss() } })
+  const [addr, setAddr] = useState(info.common.addr), [port, setPort] = useState(info.common.port), [tls, setTls] = useState(info.common.tls), [token, setToken] = useState(info.common.token), [busy, setBusy] = useState(false)
+  const save = () => guarded(setBusy, async () => { if (await confirmed(`${active.name} · frpc`, "保存服务端参数并重启 frpc；穿透会短暂中断，参数错误会导致断连。", () => saveFrpCommon(active, { addr: addr.trim(), port: port.trim(), tls, token: token.trim() }))) { onDone(); dismiss() } })
   return <Form navigationTitle="服务端参数" navigationBarTitleDisplayMode="inline">
-    <Section footer={<Text>{info.common.hasToken ? "已设置 Token；不显示，留空表示不修改。" : "尚未设置 Token。"}</Text>}>
+    <Section>
       <Field title="服务器地址" value={addr} onChanged={setAddr} />
       <Field title="服务器端口" value={port} onChanged={setPort} />
       <Toggle title="启用 TLS" value={tls} onChanged={setTls} />
-      <SecureField title="Token（留空不修改）" value={token} onChanged={setToken} />
+      <Field title="Token" value={token} onChanged={setToken} />
+
     </Section>
-    <Section><Button title="保存并重启 frpc" systemImage="checkmark" disabled={busy} action={save} /></Section>
+    <Section><Button title="保持" disabled={busy} action={save} /></Section>
   </Form>
 }
 
@@ -432,7 +437,7 @@ function FrpProxyPage({ active, initial, onDone }: { active: Controller; initial
       <Field title="本地端口" value={lport} onChanged={setLport} />
       <Field title="远程端口" value={rport} onChanged={setRport} />
     </Section>
-    <Section><Button title="保存并重启 frpc" systemImage="checkmark" disabled={busy} action={save} /></Section>
+    <Section><Button title="保持" disabled={busy} action={save} /></Section>
   </Form>
 }
 
