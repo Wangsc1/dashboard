@@ -457,7 +457,7 @@ function FrpPage({ active }: { active: Controller }) {
 }
 
 // 仅用于显示：IPv4 地址的最后一段以 *** 代替（域名不变）。
-const maskUrl = (u: string) => u.replace(/(\d{1,3}\.\d{1,3}\.\d{1,3}\.)\d{1,3}(?=[:/]|$)/, "$1***")
+const maskUrl = (u: string) => u.replace(/(\d{1,3}\.\d{1,3}\.)\d{1,3}\.\d{1,3}(?=[:/]|$)/, "$1*.*")
 function FrpCommonPage({ active, info, onDone }: { active: Controller; info: FrpInfo; onDone: () => void }) {
   const dismiss = Navigation.useDismiss()
   const [addr, setAddr] = useState(info.common.addr), [port, setPort] = useState(info.common.port), [tls, setTls] = useState(info.common.tls), [token, setToken] = useState(info.common.token), [busy, setBusy] = useState(false)
