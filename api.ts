@@ -1,6 +1,6 @@
 // dashboard 数据层：Clash 外部控制 API 与 OpenWrt（LuCI ubus JSON-RPC）
 import { getPreferences, customHeaders, recordEvent, controllerHealth, feedback } from "./preferences"
-export const VERSION = "1.5.7"
+export const VERSION = "1.5.8"
 
 export type Kind = "clash" | "openwrt"
 export type Plugin = "openclash" | "nikki" | "mihomo"
@@ -165,6 +165,7 @@ function pickWan(dump: any): { name: string; device: string } {
   const w = list.find(hasDefault) ?? list.find(i => i.interface === "wan") ?? list.find(i => i.interface !== "loopback" && i.up)
   return { name: String(w?.interface ?? ""), device: String(w?.l3_device ?? w?.device ?? "") }
 }
+const MAX_RATE = 1.25e9 // 10 Gbps 字节/秒；超过视为计数跳变
 async function wrtOverview(c: Controller): Promise<Overview> {
   const [board, info, dump, devs, ct] = await Promise.all([
     ubus(c, "system", "board"), ubus(c, "system", "info"), ubus(c, "network.interface", "dump").catch(() => ({})),
@@ -174,12 +175,17 @@ async function wrtOverview(c: Controller): Promise<Overview> {
   const st = devs?.[wan.device]?.statistics ?? {}
   const rx = num(st.rx_bytes), tx = num(st.tx_bytes), now = Date.now()
   const key = "neko_prev_" + c.id
-  const prev = Storage.get<{ t: number; rx: number; tx: number }>(key)
-  let up = 0, down = 0
+  const prev = Storage.get<{ t: number; rx: number; tx: number; up?: number; down?: number }>(key)
+  let up = 0, down = 0, keep = false
   if (prev && now > prev.t && rx >= prev.rx && tx >= prev.tx && now - prev.t < 10 * 60 * 1000) {
-    const dt = (now - prev.t) / 1000; down = (rx - prev.rx) / dt; up = (tx - prev.tx) / dt
+    const dt = (now - prev.t) / 1000
+    if (dt < 0.5) { up = prev.up ?? 0; down = prev.down ?? 0; keep = true } // 间隔过短（并发/重复请求）不重算，避免放大
+    else {
+      down = (rx - prev.rx) / dt; up = (tx - prev.tx) / dt
+      if (down > MAX_RATE || up > MAX_RATE) { up = prev.up ?? 0; down = prev.down ?? 0 } // 超过物理上限的跳变计数不当作速率
+    }
   }
-  Storage.set(key, { t: now, rx, tx })
+  if (!keep) Storage.set(key, { t: now, rx, tx, up, down })
   return {
     version: String(board.release?.description ?? ""), mode: "", traffic: { up, down }, upTotal: tx, downTotal: rx,
     connCount: parseInt(String(ct.data ?? "0"), 10) || 0,
