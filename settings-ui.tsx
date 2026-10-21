@@ -53,26 +53,6 @@ function IconsPage() {
   }
   return <Form navigationTitle="自定义代理组图标" navigationBarTitleDisplayMode="inline"><Section footer={<Text>本地替代：按组名配置 SF Symbols；未覆盖时使用内核提供的 HTTPS 图标（仅脚本管理的缓存）。不修改内核配置。</Text>}><TextField title="图标映射 JSON" value={text} onChanged={setText} prompt={'{"节点选择":"globe"}'} /><Button title="保存图标" action={save} /><Text foregroundStyle="secondaryLabel">{err}</Text></Section></Form>
 }
-export function AppearancePage() {
-  const p = usePreferences()
-  const toggle = (key: keyof Preferences, title: string) => <Toggle key={key} title={title} value={!!p[key]} onChanged={(v: boolean) => update({ [key]: v })} />
-  async function clear() {
-    if (!await Dialog.confirm({ title: "清除图片缓存", message: "仅删除本脚本缓存的代理组图片；不会删除账号、密码、密钥、设置或日志。", confirmLabel: "清除" })) return
-    const n = clearImageCache(); await Dialog.alert({ message: `已清除 ${n} 项脚本图片缓存；已显示图片在重新进入代理页后重载。` })
-  }
-  return <Form navigationTitle="外观设置" navigationBarTitleDisplayMode="inline">
-    <Section header={<Text>主题</Text>}><Choice title="外观模式" value={p.theme} values={[["system", "跟随系统"], ["light", "浅色"], ["dark", "深色"]]} onChanged={v => update({ theme: v as any })} /></Section>
-    <Section header={<Text>列表与动画</Text>}>
-      <Choice title="连接列表样式" value={p.connectionStyle} values={[["standard", "标准"], ["compact", "简约"]]} onChanged={v => update({ connectionStyle: v as any })} />
-      <Choice title="代理卡片样式" value={p.proxyStyle} values={[["list", "列表"], ["compact", "简约"]]} onChanged={v => update({ proxyStyle: v as any })} />
-      {toggle("collapseGesture", "卡片折叠菜单手势")}
-    </Section>
-    <Section header={<Text>延迟阈值设置</Text>}><NavigationLink destination={<ThresholdPage />}><Text>{`延迟阈值范围　${p.delayGreen}–${p.delayRed} ms`}</Text></NavigationLink></Section>
-    <Section header={<Text>代理组</Text>}>{toggle("showHidden", "显示隐藏代理组")}{toggle("customIcons", "自定义代理组图标")}</Section>
-    <Section header={<Text>概览页面</Text>}>{toggle("showWrt", "显示 OpenWrt 状态")}{toggle("droplets", "水滴动画效果")}{toggle("connectionBackground", "连接信息背景")}{toggle("ripple", "概览卡片水波纹特效")}</Section>
-    <Section header={<Text>缓存管理</Text>}><Button title="清除图片缓存" action={clear} /></Section>
-  </Form>
-}
 function HeaderFields() {
   const p = usePreferences()
   const [rows, setRows] = useState(() => {
@@ -139,11 +119,24 @@ export function KernelConfigPage({ c }: { c: Controller }) {
 export function GlobalConfigPage({ active }: { active: Controller | null }) {
   const p = usePreferences(), [url, setURL] = useState(p.testURL)
   const toggle = (key: keyof Preferences, title: string) => <Toggle key={key} title={title} value={!!p[key]} onChanged={(v: boolean) => update({ [key]: v })} />
+  async function clear() {
+    if (!await Dialog.confirm({ title: "清除图片缓存", message: "仅删除本脚本缓存的代理组图片；不会删除账号、密码、密钥、设置或日志。", confirmLabel: "清除" })) return
+    const n = clearImageCache(); await Dialog.alert({ message: `已清除 ${n} 项脚本图片缓存；已显示图片在重新进入代理页后重载。` })
+  }
   async function saveURL() {
     if (!/^https?:\/\/[^\s]+$/i.test(url) || /https?:\/\/[^/]*@/i.test(url)) return Dialog.alert({ message: "请输入不含账号密码的 HTTP(S) 测速链接" })
     try { savePreferences({ testURL: url.trim() }); await Dialog.alert({ message: "测速链接已保存；下一次测速生效" }) } catch { await Dialog.alert({ message: "保存失败" }) }
   }
   return <Form navigationTitle="全局配置" navigationBarTitleDisplayMode="inline">
+    <Section header={<Text>主题</Text>}><Choice title="外观模式" value={p.theme} values={[["system", "跟随系统"], ["light", "浅色"], ["dark", "深色"]]} onChanged={v => update({ theme: v as any })} /></Section>
+    <Section header={<Text>列表与动画</Text>}>
+      <Choice title="连接列表样式" value={p.connectionStyle} values={[["standard", "标准"], ["compact", "简约"]]} onChanged={v => update({ connectionStyle: v as any })} />
+      <Choice title="代理卡片样式" value={p.proxyStyle} values={[["list", "列表"], ["compact", "简约"]]} onChanged={v => update({ proxyStyle: v as any })} />
+      {toggle("collapseGesture", "卡片折叠菜单手势")}
+    </Section>
+    <Section header={<Text>延迟阈值设置</Text>}><NavigationLink destination={<ThresholdPage />}><Text>{`延迟阈值范围　${p.delayGreen}–${p.delayRed} ms`}</Text></NavigationLink></Section>
+    <Section header={<Text>代理组</Text>}>{toggle("showHidden", "显示隐藏代理组")}{toggle("customIcons", "自定义代理组图标")}</Section>
+    <Section header={<Text>缓存管理</Text>}><Button title="清除图片缓存" action={clear} /></Section>
     <Section header={<Text>控制器管理</Text>}>{toggle("foldOffline", "自动折叠离线控制器")}</Section>
     <Section header={<Text>切换代理设置</Text>}>{toggle("disconnectOnSwitch", "自动断开旧连接")}</Section>
     <Section header={<Text>交互体验</Text>}>{toggle("haptics", "触感反馈")}</Section>

@@ -14,7 +14,7 @@ import { confirmed } from "./dashboard-model"
 import { DOCKER_PNG_BASE64 } from "./docker-icon"
 import { useSmoothPlot } from "./chart-ui"
 import { CHART_HISTORY } from "./chart"
-import { AppearancePage, GlobalConfigPage, LogsPage, KernelConfigPage, usePreferences } from "./settings-ui"
+import { GlobalConfigPage, LogsPage, KernelConfigPage, usePreferences } from "./settings-ui"
 import { getPreferences, controllerHealth, cachedIcon, feedback, recordEvent } from "./preferences"
 
 const msg = (e: any) => String(e?.message ?? e ?? "未知错误")
@@ -144,7 +144,7 @@ function RateChart({ down, up, enabled = true }: { down: number[]; up: number[];
 
 function OverviewPage({ active, version, onSwitch, onClose }: { active: Controller | null; version: number; onSwitch: () => void; onClose?: () => void }) {
   const [page, setPage] = useState<"" | "settings">("")
-  const prefs = usePreferences(["showWrt", "connectionBackground"], page === "")
+  const prefs = usePreferences(["connectionBackground"], page === "")
   const [hosts, setHosts] = useState<string[]>([])
   const [ov, setOv] = useState<Overview | null>(null)
   const [err, setErr] = useState("")
@@ -207,13 +207,13 @@ function OverviewPage({ active, version, onSwitch, onClose }: { active: Controll
         </Picker>
       </Card> : null}
 
-      {prefs.showWrt ? <Card>
+      <Card>
         <InfoItem icon="cpu" color="#10B981" title="目标平台" value={w?.target || "-"} />
         <InfoItem icon="shippingbox" color="#A855F7" title="内核版本" value={w?.kernel || "-"} />
         <InfoItem icon="gauge.medium" color="#EF4444" title="CPU 使用率" value={w?.cpu !== undefined ? `${w.cpu.toFixed(0)}%` : "-"} />
         <InfoItem icon="waveform.path.ecg" color="#F59E0B" title="系统负载" value={w ? w.load.map(v => v.toFixed(2)).join(" ") : "-"} />
         <InfoItem icon="clock" color="#3B82F6" title="运行时间" value={w ? fmtUptime(w.uptime, true) : "-"} />
-      </Card> : null}
+      </Card>
 
       <HStack spacing={12}>
         <StatCard enabled={showCharts} icon="icloud.and.arrow.down.fill" color="#3B82F6" title="下载总量" droplets parts={ov ? fmtParts(ov.downTotal) : null} />
@@ -624,7 +624,6 @@ function SettingsPage({ active, onChanged }: { active: Controller | null; onChan
             : <Text font={12} foregroundStyle="secondaryLabel">{maskUrl(c.url)}</Text>}</VStack>
         </NavigationLink>)}
       <NavigationLink destination={<EditController onDone={reload} />}><Label title="添加 OpenWrt" systemImage="plus" /></NavigationLink>
-      <NavigationLink destination={<AppearancePage />}><Label title="外观设置" systemImage="paintpalette" /></NavigationLink>
     </Section>
     {!active ? <Section header={<Text>路由器详情</Text>}>
       <NavigationLink destination={<GlobalConfigPage active={null} />}><Label title="全局配置" systemImage="slider.horizontal.3" /></NavigationLink>
@@ -645,7 +644,6 @@ function SettingsPage({ active, onChanged }: { active: Controller | null; onChan
 type RootTab = "home" | "proxies" | "rules" | "connections" | "more"
 function MorePage({ active, onChanged, onClose }: { active: Controller | null; onChanged: () => void; onClose?: () => void }) {
   return <DashboardMorePage active={active} onChanged={onChanged} onClose={onClose} settings={<Card>
-    <NavigationLink destination={<AppearancePage />}><Label title="外观设置" systemImage="paintpalette" /></NavigationLink>
     <NavigationLink destination={<GlobalConfigPage active={active} />}><Label title="全局配置" systemImage="slider.horizontal.3" /></NavigationLink>
     <NavigationLink destination={<SettingsPage active={active} onChanged={onChanged} />}><Label title="设置（控制器管理）" systemImage="gearshape" /></NavigationLink>
   </Card>} />

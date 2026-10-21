@@ -43,7 +43,8 @@ function load(name) {
   if (cache.has(name)) return cache.get(name)
   const file = path.join(root, name + (name === 'index' || name === 'settings-ui' || name === 'dashboard-pages' || name === 'root-toolbar' ? '.tsx' : '.ts'))
   let source = fs.readFileSync(file, 'utf8')
-  if (name === 'index') source = source.replace(/\nrun\(\)\s*$/, '') + '\nexport { OverviewPage, SettingsPage, ConnectionsPage, ProxiesPage, RulesPage, Spark, RateChart, StatCard, GroupSection, MorePage, Root };'
+  if (name === 'index') source = source.replace(/\nrun\(\)\s*$/, '') + '\nexport { OverviewPage, InfoItem, SettingsPage, ConnectionsPage, ProxiesPage, RulesPage, Spark, RateChart, StatCard, GroupSection, MorePage, Root };'
+  if (name === 'settings-ui') source += '\nexport { Choice };'
   const code = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020, jsx: ts.JsxEmit.React, jsxFactory: 'h' } }).outputText
   const module = { exports: {} }; cache.set(name, module.exports)
   vm.runInNewContext('(function(require,module,exports){' + code + '\n})', context, { filename: file })(n => n === 'scripting' ? scripting : load(n), module, module.exports)
@@ -190,11 +191,11 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
   await test('默认界面选择tab；主题与外观项接入、概览数据布局不变', () => {
     pref.savePreferences({ defaultPage: 'rules', theme: 'dark', showWrt: false })
     let tree = render(app.OverviewPage, { active: c, version: 0, onSwitch() {} }, true); assert.equal(tree.props.navigationDestination.isPresented, false)
-    assert.ok(!text(tree).includes('OpenWrt 状态'))
+    assert.ok(nodes(tree, app.InfoItem).some(n => n.props.title === '目标平台')); assert.ok(!fs.readFileSync(path.join(root, 'index.tsx'), 'utf8').includes('prefs.showWrt'))
     const cards = nodes(tree, app.StatCard); assert.equal(cards.length, 4); assert.equal(cards.filter(n => n.props.spark).length, 0); assert.equal(cards.filter(n => n.props.droplets).length, 2)
     assert.ok(cards.filter(n => ['活动连接', '内存使用'].includes(n.props.title)).every(n => !n.props.spark))
     tree = render(app.Root, {}, true); assert.equal(nodes(tree,'TabView')[0].props.preferredColorScheme, 'dark'); assert.equal(nodes(tree,'TabView')[0].props.selection.value, 'rules'); assert.equal(nodes(tree, app.RulesPage).length, 1)
-    tree = render(ui.AppearancePage, {}, true); assert.ok(!text(tree).includes('应用图标')); assert.equal(nodes(tree, 'Toggle').length, 7)
+    tree = render(ui.GlobalConfigPage, { active: null }, true); assert.ok(!text(tree).includes('应用图标')); assert.ok(nodes(tree, 'Toggle').some(n => n.props.title === '自定义代理组图标'))
   })
   await test('曲线几何：真实历史不变、横向连续滚动、末端视觉插值和无过冲路径', () => {
     const chart = load('chart'), previous = [100, 300], current = [100, 300, 900]
@@ -259,7 +260,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) assert.equal(nodes(tree, types[i]).length, ids[i] === id ? 1 : 0)
     }
-    assert.equal(api.VERSION, '1.5.48'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.5.49'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('1.5.46 共享栈/简单ToolBarProps：唯一业务页owner、隐藏Tab无注册', () => {
     pref.savePreferences({ defaultPage: 'overview' })
@@ -350,7 +351,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       const before = calls.length; await polling()[0].fn(); await flush(); assert.ok(calls.length > before)
     }
     unmount(); assert.equal(intervals.size, 0)
-    const tree = render(ui.AppearancePage, {}, true)
+    const tree = render(ui.GlobalConfigPage, { active: null }, true)
     assert.ok(!text(tree).includes('碎片化移除特效'))
     unmount()
   })
@@ -471,7 +472,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
   await test('1.5.46 面板设置页布局：外观设置在添加OpenWrt下；全局配置在路由器详情最上；运行日志在软件管理后', () => {
     const src = fs.readFileSync(path.join(root, 'index.tsx'), 'utf8'), body = src.slice(src.indexOf('function SettingsPage'), src.indexOf('function MorePage'))
     const at = s => body.indexOf(s)
-    assert.ok(at('title="添加 OpenWrt"') < at('title="外观设置"') && at('title="外观设置"') < at('<Text>路由器详情</Text>'))
+    assert.ok(at('title="添加 OpenWrt"') < at('<Text>路由器详情</Text>')); assert.ok(!src.includes('AppearancePage'))
     assert.ok(body.indexOf('title="全局配置"') < body.indexOf('title="网络接口"')); assert.ok(body.indexOf('title="软件管理"') < body.indexOf('title="运行日志"', body.indexOf('title="软件管理"')))
     assert.ok(!src.includes('page === "appearance"') && !src.includes('page === "global"') && !src.includes('setPage("appearance")') && !src.includes('setPage("global")'))
   })
@@ -623,7 +624,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     pref.savePreferences({ theme: 'dark' }); assert.notEqual(render(Probe, {}), first); assert.equal(render(Probe, {}).theme, 'dark')
     unmount(); pref.savePreferences({ headersEnabled: true, theme: 'system' })
     const src = fs.readFileSync(path.join(root, 'index.tsx'), 'utf8')
-    assert.ok(src.includes('const prefs = getPreferences(), dismiss')); assert.ok(src.includes('usePreferences(["showWrt", "connectionBackground"], page === "")')); assert.ok(src.includes('onAppear={() => setPrefs(getPreferences())}'))
+    assert.ok(src.includes('const prefs = getPreferences(), dismiss')); assert.ok(src.includes('usePreferences(["connectionBackground"], page === "")')); assert.ok(src.includes('onAppear={() => setPrefs(getPreferences())}'))
   })
   await test('五种节点排序：升降序、超时未测速最后、原始顺序不变', () => {
     const g = { all: ['C','B','A','D','E'], delays: { A: 10, B: 20, C: 0, E: 20 } }
@@ -638,10 +639,10 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     const src = fs.readFileSync(path.join(root, 'settings-ui.tsx'), 'utf8'), body = src.slice(src.indexOf('export function GlobalConfigPage'), src.indexOf('function CloudSettingsPage'))
     assert.ok(!body.includes('iCloud 同步')); assert.ok(!body.includes('代理内核')); assert.ok(!body.includes('CloudSettingsPage')); assert.ok(!body.includes('KernelConfigPage')); assert.ok(src.includes('export function KernelConfigPage'))
   })
-  await test('外观设置移除说明及括号注释，开关保留', () => {
-    const src = fs.readFileSync(path.join(root, 'settings-ui.tsx'), 'utf8'), body = src.slice(src.indexOf('export function AppearancePage'), src.indexOf('function HeaderFields'))
-    assert.ok(!body.includes('footer=')); assert.ok(!body.includes('（本地替代）')); assert.ok(!body.includes('（长按组标题）')); assert.ok(!body.includes('（淡出替代）'))
-    for (const k of ['collapseGesture','showWrt','droplets','connectionBackground','ripple','customIcons']) assert.ok(body.includes(k))
+  await test('外观选项移入全局配置，概览选项不移动', () => {
+    const src = fs.readFileSync(path.join(root, 'settings-ui.tsx'), 'utf8'), body = src.slice(src.indexOf('export function GlobalConfigPage'), src.indexOf('function CloudSettingsPage'))
+    assert.ok(!body.includes('（本地替代）')); assert.ok(!body.includes('（长按组标题）')); assert.ok(!body.includes('（淡出替代）'))
+    for (const k of ['theme','connectionStyle','proxyStyle','collapseGesture','delayGreen','showHidden','customIcons','clearImageCache']) assert.ok(body.includes(k))
   })
   await test('设置子页打开时暂停主页偏好刷新，返回补齐；外观去掉编辑组图标', async () => {
     pref.savePreferences({ showWrt: true })
@@ -651,8 +652,21 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     pref.savePreferences({ showWrt: false }); assert.equal(render(Probe, { enabled: false }), first)
     render(Probe, { enabled: true }); await flush(); assert.equal(render(Probe, { enabled: true }).showWrt, false)
     unmount(); pref.savePreferences({ showWrt: true })
-    const src = fs.readFileSync(path.join(root, 'settings-ui.tsx'), 'utf8'), body = src.slice(src.indexOf('export function AppearancePage'), src.indexOf('function HeaderFields'))
+    const src = fs.readFileSync(path.join(root, 'settings-ui.tsx'), 'utf8'), body = src.slice(src.indexOf('export function GlobalConfigPage'), src.indexOf('function CloudSettingsPage'))
     assert.ok(!body.includes('编辑组图标')); assert.ok(!body.includes('IconsPage')); assert.ok(body.includes('自定义代理组图标'))
+  })
+  await test('全局配置包含迁移项且无概览组，两个外观入口都删除', async () => {
+    pref.savePreferences({ theme: 'dark', customIcons: true, showWrt: false })
+    let tree = render(ui.GlobalConfigPage, { active: null }, true)
+    assert.ok(!text(tree).includes('概览页面'))
+    for (const key of ['showWrt','droplets','connectionBackground','ripple']) assert.ok(!nodes(tree, 'Toggle').some(n => n.props.key === key))
+    for (const title of ['外观模式','连接列表样式','代理卡片样式']) assert.ok(nodes(tree, ui.Choice).some(n => n.props.title === title))
+    const icons = nodes(tree, 'Toggle').find(n => n.props.title === '自定义代理组图标'); assert.equal(icons.props.value, true)
+    icons.props.onChanged(false); assert.equal(pref.getPreferences().customIcons, false)
+    assert.ok(button(tree, '清除图片缓存'))
+    assert.equal(pref.getPreferences().theme, 'dark')
+    const src = fs.readFileSync(path.join(root, 'index.tsx'), 'utf8'); assert.ok(!src.includes('AppearancePage')); assert.ok(!src.includes('prefs.showWrt'))
+    pref.savePreferences({ theme: 'system', showWrt: true }); unmount()
   })
   await test('主页内存固定一位小数，流量默认精度不变', () => {
     assert.deepEqual(Array.from(api.fmtParts(128.56 * 1048576, false, 1)), ['128.6', 'MB'])
