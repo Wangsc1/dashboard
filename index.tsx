@@ -672,13 +672,13 @@ function Root() {
   const tab = selection.value
   const active = getActive(), bump = () => { setVersion(v => v + 1) }
 
-  return <TabView selection={selection} font={14} foregroundStyle={MAIN_FG}>
+  return <TabView selection={selection} symbolVariant="none" font={14} foregroundStyle={MAIN_FG}>
     <Tab key="home" title="主页" systemImage="square.stack.fill" value="home">
       <NavigationStack key="home-stack">
         <OverviewPage selected={tab === "home"} key={`home:${active?.id ?? "empty"}`} active={active} version={version} onSwitch={bump} onClose={dismiss} />
       </NavigationStack>
     </Tab>
-    <Tab key="proxies" title="代理" systemImage="globe" value="proxies">
+    <Tab key="proxies" title="代理" systemImage="network" value="proxies">
       <NavigationStack key="proxies-stack">
         {tab === "proxies" ? <ProxiesPage selected onClose={dismiss} key={`proxies:${active?.id ?? "empty"}`} active={active} version={version} /> : null}
       </NavigationStack>
