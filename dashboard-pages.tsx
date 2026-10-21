@@ -300,7 +300,7 @@ const errorText = (e:unknown) => e instanceof NikkiManagementError ? e.message :
 function Note({children,error=false}:{children?:any;error?:boolean}) { return <Text font={12} foregroundStyle={error?"systemRed":"secondaryLabel"}>{children}</Text> }
 function Panel({children}:{children?:any}) { return <VStack alignment="leading" spacing={14} padding={18} frame={{maxWidth:"infinity",alignment:"leading"}} background={<RoundedRectangle cornerRadius={18} fill="secondarySystemBackground"/>}>{children}</VStack> }
 function Badge({children}:{children?:any}) { return <Text font={12} padding={{horizontal:8,vertical:4}} background={<RoundedRectangle cornerRadius={6} fill="tertiarySystemBackground"/>}>{children}</Text> }
-function Status({work}:{work:ReturnType<typeof useWork>}) { return <>{work.error?<Note error>{work.error}</Note>:null}{work.notice?<Note>{work.notice}</Note>:null}{work.busy?<Note>处理中…</Note>:null}</> }
+function Status({work}:{work:ReturnType<typeof useWork>}) { return <>{work.error?<Note error>{work.error}</Note>:null}{work.notice?<Note>{work.notice}</Note>:null}</> }
 // Busy is also synchronous, so double taps cannot race before the next native render.
 function useWork(c:Controller) {
   const [owner]=useState(()=>({...c})),[guard]=useState({alive:true,visible:true,busy:false,source:source(c)}),[busy,setBusy]=useState(false),[error,setError]=useState(""),[notice,setNotice]=useState("")
@@ -309,8 +309,9 @@ function useWork(c:Controller) {
   useEffect(()=>{guard.alive=true;return()=>{guard.alive=false;guard.visible=false}},[])
   async function run(fn:()=>Promise<void>) {if(guard.busy||!current())return;guard.busy=true;setBusy(true);setError("");setNotice("");try{await fn()}catch(e){if(current())setError(errorText(e))}finally{guard.busy=false;if(current())setBusy(false)}}
   async function confirm(effect:string,fn:()=>Promise<void>) {if(await Dialog.confirm({title:"确认操作",message:`目标：${owner.name}\n${effect}`,confirmLabel:"继续",cancelLabel:"取消"})&&current())await fn()}
+  async function simpleConfirm(title:string,message:string,confirmLabel:string,fn:()=>Promise<void>) {if(await Dialog.confirm({title,message,confirmLabel,cancelLabel:"取消"})&&current())await fn()}
   const commitConfirm=(effect:string,fn:()=>Promise<void>)=>confirm(effect+"\n"+COMMIT_WARNING,fn)
-  return {owner,guard,busy,error,notice,setNotice,resetStatus:()=>{setError("");setNotice("")},current,run,confirm,commitConfirm,changed:source(c)!==source(owner),onAppear:()=>{guard.visible=true;setBusy(guard.busy)},onDisappear:()=>{guard.visible=false}}
+  return {owner,guard,busy,error,notice,setNotice,resetStatus:()=>{setError("");setNotice("")},current,run,confirm,simpleConfirm,commitConfirm,changed:source(c)!==source(owner),onAppear:()=>{guard.visible=true;setBusy(guard.busy)},onDisappear:()=>{guard.visible=false}}
 }
 type EditValue = {kind:"subscription"; value:NikkiSubscription|null}|{kind:"rule";value:NikkiRule|null}|{kind:"sort"}|{kind:"file";value:NikkiFile}
 type EditTarget = EditValue & {entry:number; base:NikkiManagement}
@@ -325,8 +326,8 @@ export function NikkiManagementPage({c,kind}:{c:Controller;kind:"profile"|"subsc
   function openEdit(value:EditValue) {if(!data||work.busy)return;const snapshot="value" in value&&value.value?{...value,value:{...value.value}}:value;setEdit({...snapshot,entry:++navigation.entry,base:data} as EditTarget)}
   const entryKey=edit?source(c)+":"+edit.entry:"closed"
   const content=edit ? edit.kind==="subscription"?<NikkiSubscriptionEditor key={entryKey} entryKey={entryKey} c={c} base={edit.base} value={edit.value} done={done}/>:edit.kind==="rule"?<NikkiRuleEditor key={entryKey} c={c} base={edit.base} value={edit.value} done={done}/>:edit.kind==="sort"?<NikkiRuleSort key={entryKey} c={c} base={edit.base} done={done}/>:<NikkiFileEditor key={entryKey} entryKey={entryKey} c={c} base={edit.base} file={edit.value} done={done}/> : <Text/>
-  async function removeSubscription(s:NikkiSubscription) {await work.run(()=>work.commitConfirm(`删除订阅「${s.name}」？仅删除此订阅设置，保留已下载文件；当前选用订阅不可删除。`,async()=>{await deleteNikkiSubscription(work.owner,data!,s.id);if(work.current()){refresh();work.setNotice("订阅设置已删除；系统可能已自动重载")}}))}
-  async function update(s:NikkiSubscription) {await work.run(()=>work.confirm(`更新订阅「${s.name}」？Nikki 将访问订阅地址并覆盖下载文件（包括对此文件的本地编辑），可能是当前选用配置。不会主动发送重载请求。`,async()=>{await updateNikkiSubscription(work.owner,s.id,data!);if(work.current()){refresh();work.setNotice("订阅已更新，未主动重载服务")}}))}
+  async function removeSubscription(s:NikkiSubscription) {await work.run(()=>work.simpleConfirm("删除订阅",`确认要删除订阅「${s.name}」吗？`,"确认删除",async()=>{await deleteNikkiSubscription(work.owner,data!,s.id);if(work.current()){refresh();work.setNotice("订阅设置已删除；系统可能已自动重载")}}))}
+  async function update(s:NikkiSubscription) {await work.run(async()=>{await updateNikkiSubscription(work.owner,s.id,data!);if(work.current()){refresh();work.setNotice("订阅已更新，未主动重载服务")}})}
   async function enable(f:NikkiFile) {if(data?.profile===f.key)return;await work.run(()=>work.commitConfirm(`启用「${f.name}」？将提交为 Nikki 选用配置，由系统触发重载；配置选择成功不代表内核已成功加载。`,async()=>{
     await selectNikkiProfile(work.owner,data!,f.key)
     if(work.current())refresh()
