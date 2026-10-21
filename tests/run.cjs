@@ -418,7 +418,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) { const lazy = ['proxies','rules','connections'].includes(ids[i]) && ids[i] !== id; assert.equal(nodes(tree, types[i]).length, lazy ? 0 : 1); if (!lazy) assert.equal(nodes(tree, types[i])[0].props.selected, ids[i] === id) }
     }
-    assert.equal(api.VERSION, '1.5.80'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.5.81'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('独立导航栈保留业务owner和身份，只有选中页提供可见工具栏', () => {
     pref.savePreferences({ defaultPage: 'overview' })
@@ -964,7 +964,9 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     arrow(tree).props.action(); tree = render(pages.GroupSection, props); await flush(); assert.equal(cards(tree).length, 2)
     responder = () => ({ body: { A: 51, B: 62 } })
     await nodes(tree, 'Button').find(n => n.props.systemImage === 'bolt.fill').props.action(); await flush(); tree = render(pages.GroupSection, props)
-    assert.ok(text(tree).includes('51ms')); unmount()
+    assert.ok(text(tree).includes('51ms'))
+    for (const n of cards(tree)) { const dot = nodes(n, 'Circle').find(x => x.props.frame?.width === 6), label = nodes(n, 'Text').find(x => /ms$/.test(String(x.props.children))); assert.equal(label.props.foregroundStyle, dot.props.fill); assert.notEqual(label.props.foregroundStyle, 'white') }
+    unmount()
     tree = render(pages.GroupSection, props, true); await flush()
     nodes(tree, 'Button').find(n => n.props.frame?.alignment === 'leading').props.action(); tree = render(pages.GroupSection, props); await flush()
     assert.ok(text(tree).includes('51ms')); assert.ok(text(tree).includes('62ms')); unmount(); responder = () => ({ status: 204 })
@@ -990,7 +992,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       const diagnostic = logs.filter(x => x.startsWith('[preferences-icon]'))
       for (const stage of ['change','accepted','proxies-render','group-render']) assert.ok(diagnostic.some(x => x.includes('stage=' + stage) && x.includes('enabled=false')))
       assert.ok(diagnostic.every(x => !x.includes('private.invalid') && !x.includes('private-group-name') && !x.includes('secret-')))
-      assert.ok(diagnostic.every(x => x.includes('build=1.5.80') && /instance=[a-z0-9]+/.test(x)))
+      assert.ok(diagnostic.every(x => x.includes('build=1.5.81') && /instance=[a-z0-9]+/.test(x)))
       assert.equal(new Set(diagnostic.map(x => x.match(/instance=([^ ]+)/)[1])).size, 1)
     } finally { context.console = originalConsole; unmount(); pref.savePreferences({ customIcons: true, testURL: 'https://www.gstatic.com/generate_204' }) }
   })
