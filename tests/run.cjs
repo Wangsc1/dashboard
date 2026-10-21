@@ -570,7 +570,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) { const lazy = ['proxies','rules','connections'].includes(ids[i]) && ids[i] !== id; assert.equal(nodes(tree, types[i]).length, lazy ? 0 : 1); if (!lazy) assert.equal(nodes(tree, types[i])[0].props.selected, ids[i] === id) }
     }
-    assert.equal(api.VERSION, '1.5.133'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.5.134'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('独立导航栈保留业务owner和身份，只有选中页提供可见工具栏', () => {
     pref.savePreferences({ defaultPage: 'overview' })
@@ -964,10 +964,18 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     for(const title of ['运行信息','内核版本','插件版本','核心配置','代理配置','快捷管理','配置管理','订阅管理','附加规则','服务管理','核心操作','DNS 工具','域名查询'])assert.ok(text(tree).includes(title),title)
     const tiles=nodes(tree,'VStack').filter(n=>n.props.modifiers?.steps?.some(s=>s[0]==='background'&&s[1]?.props?.cornerRadius===9))
     assert.equal(tiles.length,3);assert.ok(tiles.every(n=>n.props.modifiers.steps[0][1].maxWidth==='infinity'))
-    // The gray shell fills the row; only its background-free child owns the inset.
-    const panels=nodes(tree,'VStack').filter(n=>n.props.background?.props?.cornerRadius===14&&n.props.background.props.fill==='secondarySystemBackground')
-    assert.equal(panels.length,6);for(const panel of panels){assert.equal(panel.props.padding,undefined);assert.deepEqual(clone(panel.props.frame),{maxWidth:'infinity',alignment:'leading'})}
-    for(const panel of [panels[2],panels[3]]){assert.equal(panel.props.children.length,1);const inset=panel.props.children[0];assert.equal(inset.type,'VStack');assert.equal(inset.props.padding,12);assert.equal(inset.props.background,undefined);assert.equal(inset.props.frame.maxWidth,'infinity')}
+    // Inspect explicit order, not just identical maxWidth props (which missed the 12pt inset).
+    const panels=nodes(tree,'VStack').filter(n=>[n.props.background,...(n.props.modifiers?.steps??[]).filter(s=>s[0]==='background').map(s=>s[1])].some(bg=>bg?.props?.cornerRadius===14&&bg.props.fill==='secondarySystemBackground'))
+    assert.equal(panels.length,6)
+    for(const panel of [panels[0],panels[1],panels[4],panels[5]]){assert.equal(panel.props.modifiers,undefined);assert.equal(panel.props.padding,undefined);assert.deepEqual(clone(panel.props.frame),{maxWidth:'infinity',alignment:'leading'})}
+    // Scoped proposal/response derivation for ONLY these three modifiers; not a native renderer.
+    // Calls wrap inside -> outside. Padding reduces the child's proposal, not the outer paint.
+    function panelWidth(steps,proposal,intrinsic){let painted,contentProposal;function layout(i,width){if(i<0){contentProposal=width;return Math.min(width,intrinsic)}const [kind,value]=steps[i];if(kind==='padding')return layout(i-1,width-2*value)+2*value;if(kind==='frame'){assert.equal(value.minWidth,0);assert.equal(value.maxWidth,'infinity');layout(i-1,width);return width}if(kind==='background'){const reported=layout(i-1,width);painted=reported;return reported}throw Error('unexpected panel modifier: '+kind)}return {reported:layout(steps.length-1,proposal),painted,contentProposal}}
+    for(const [index,panel] of [[2,panels[2]],[3,panels[3]]]){const steps=panel.props.modifiers.steps;assert.deepEqual(steps.map(s=>s[0]),['padding','frame','background']);assert.equal(steps[0][1],12);assert.deepEqual(clone(steps[1][1]),{minWidth:0,maxWidth:'infinity',alignment:'leading'});assert.equal(steps[2][1].props.cornerRadius,14);assert.equal(steps[2][1].props.fill,'secondarySystemBackground');assert.equal(panel.props.padding,undefined);assert.equal(panel.props.frame,undefined);assert.equal(panel.props.background,undefined);assert.equal(panel.props.spacing,index===2?0:8)
+      for(const width of [320,374,430])for(const intrinsic of [100,width,1000]){const result=panelWidth(steps,width,intrinsic);assert.equal(result.reported,width);assert.equal(result.painted,width);assert.equal(result.contentProposal,width-24)}
+      // Counterexample: background inside padding paints 24pt narrower despite full outer frame.
+      const wrong=[steps[1],steps[2],steps[0]],result=panelWidth(wrong,374,1000);assert.equal(result.reported,374);assert.equal(result.painted,350);assert.equal((374-result.painted)/2,12)
+    }
     const quickLinks=nodes(panels[2],'NavigationLink');assert.equal(quickLinks.length,3);assert.ok(quickLinks.every(l=>l.props.frame.minWidth===0&&l.props.frame.maxWidth==='infinity'));assert.deepEqual(clone(tiles.map(t=>t.props.modifiers.steps[0][1])),Array(3).fill({minWidth:0,maxWidth:'infinity',minHeight:88,maxHeight:88,alignment:'center'}))
     for(const tile of tiles){assert.deepEqual(tile.props.modifiers.steps.map(s=>s[0]),['frame','background']);assert.equal(tile.props.modifiers.steps[1][1].props.fill,'tertiarySystemGroupedBackground');assert.equal(tile.props.padding,undefined);assert.equal(tile.props.alignment,'center');const image=nodes(tile,'Image')[0],label=nodes(tile,'Text')[0];assert.deepEqual(clone(image.props.frame),{width:28,height:28,alignment:'center'});assert.deepEqual(clone(label.props.frame),{height:18,alignment:'center'});assert.equal(label.props.lineLimit,1)}
     assert.deepEqual(tiles.map(t=>nodes(t,'Image')[0].props.systemName),['gearshape','icloud.and.arrow.down','list.bullet']);assert.deepEqual(tiles.map(t=>nodes(t,'Image')[0].props.foregroundStyle),['systemOrange','systemIndigo','systemPurple'])
@@ -1532,7 +1540,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       const diagnostic = logs.filter(x => x.startsWith('[preferences-icon]'))
       for (const stage of ['change','accepted','proxies-render','group-render']) assert.ok(diagnostic.some(x => x.includes('stage=' + stage) && x.includes('enabled=false')))
       assert.ok(diagnostic.every(x => !x.includes('private.invalid') && !x.includes('private-group-name') && !x.includes('secret-')))
-      assert.ok(diagnostic.every(x => x.includes('build=1.5.133') && /instance=[a-z0-9]+/.test(x)))
+      assert.ok(diagnostic.every(x => x.includes('build=1.5.134') && /instance=[a-z0-9]+/.test(x)))
       assert.equal(new Set(diagnostic.map(x => x.match(/instance=([^ ]+)/)[1])).size, 1)
     } finally { context.console = originalConsole; unmount(); pref.savePreferences({ customIcons: true, testURL: 'https://www.gstatic.com/generate_204' }) }
   })
