@@ -570,7 +570,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) { const lazy = ['proxies','rules','connections'].includes(ids[i]) && ids[i] !== id; assert.equal(nodes(tree, types[i]).length, lazy ? 0 : 1); if (!lazy) assert.equal(nodes(tree, types[i])[0].props.selected, ids[i] === id) }
     }
-    assert.equal(api.VERSION, '1.5.134'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.5.135'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('独立导航栈保留业务owner和身份，只有选中页提供可见工具栏', () => {
     pref.savePreferences({ defaultPage: 'overview' })
@@ -954,6 +954,16 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
   await test('添加OpenWrt保留显式保存和默认返回，未改Nikki正文保存入口', () => {
     const tree=render(app.EditController,{onDone(){}},true);assert.equal(tree.props.navigationTitle,'添加 OpenWrt');assert.equal(tree.props.navigationBarBackButtonHidden,false);assert.ok(button(tree.props.toolbar.confirmationAction,'保存'));assert.equal(tree.props.toolbar.topBarLeading,undefined);unmount()
   })
+  await test('MorePanel函数组件边界不用padding业务prop，内部12pt链不变（结构检查，非宿主验收）', () => {
+    for(const active of [c,{...c,kind:'openwrt',plugin:'nikki'}]){
+      const tree=render(pages.MorePage,{active,selected:false,onChanged(){}},true),boundaries=[]
+      // Deliberately do NOT call unwrap: it discards custom-component boundary props.
+      function visit(node){if(!node||typeof node!=='object')return;if(typeof node.type==='function'&&node.type.name==='MorePanel')boundaries.push(node);for(const child of node.props?.children??[])visit(child)}
+      visit(tree);assert.equal(boundaries.length,6);assert.ok(boundaries.every(n=>!Object.prototype.hasOwnProperty.call(n.props,'padding')));assert.deepEqual(boundaries.map(n=>n.props.contentInset),[undefined,undefined,12,12,undefined,undefined])
+      for(const boundary of boundaries.filter(n=>n.props.contentInset===12)){const native=boundary.type(boundary.props);assert.equal(native.type,'VStack');assert.equal(native.props.alignment,'leading');assert.equal(native.props.padding,undefined);const steps=native.props.modifiers.steps;assert.deepEqual(steps.map(s=>s[0]),['padding','frame','background']);assert.equal(steps[0][1],12);assert.deepEqual(clone(steps[1][1]),{minWidth:0,maxWidth:'infinity',alignment:'leading'});assert.equal(steps[2][1].props.cornerRadius,14);assert.equal(steps[2][1].props.fill,'secondarySystemBackground')}
+      unmount()
+    }
+  })
   await test('非主页四页标题使用基本信息名称，更多分组与图示入口完整', () => {
     for(const name of ['P320','另一个设备']) for(const Page of [pages.ProxiesPage,pages.RulesPage,pages.ConnectionsPage,pages.MorePage]) {
       const tree=render(Page,{active:{...c,name},version:0,selected:false,onChanged(){}},true)
@@ -969,11 +979,11 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     assert.equal(panels.length,6)
     for(const panel of [panels[0],panels[1],panels[4],panels[5]]){assert.equal(panel.props.modifiers,undefined);assert.equal(panel.props.padding,undefined);assert.deepEqual(clone(panel.props.frame),{maxWidth:'infinity',alignment:'leading'})}
     // Scoped proposal/response derivation for ONLY these three modifiers; not a native renderer.
-    // Calls wrap inside -> outside. Padding reduces the child's proposal, not the outer paint.
+    // Pure model assumption: calls wrap inside -> outside. No host/component-boundary semantics are proved.
     function panelWidth(steps,proposal,intrinsic){let painted,contentProposal;function layout(i,width){if(i<0){contentProposal=width;return Math.min(width,intrinsic)}const [kind,value]=steps[i];if(kind==='padding')return layout(i-1,width-2*value)+2*value;if(kind==='frame'){assert.equal(value.minWidth,0);assert.equal(value.maxWidth,'infinity');layout(i-1,width);return width}if(kind==='background'){const reported=layout(i-1,width);painted=reported;return reported}throw Error('unexpected panel modifier: '+kind)}return {reported:layout(steps.length-1,proposal),painted,contentProposal}}
     for(const [index,panel] of [[2,panels[2]],[3,panels[3]]]){const steps=panel.props.modifiers.steps;assert.deepEqual(steps.map(s=>s[0]),['padding','frame','background']);assert.equal(steps[0][1],12);assert.deepEqual(clone(steps[1][1]),{minWidth:0,maxWidth:'infinity',alignment:'leading'});assert.equal(steps[2][1].props.cornerRadius,14);assert.equal(steps[2][1].props.fill,'secondarySystemBackground');assert.equal(panel.props.padding,undefined);assert.equal(panel.props.frame,undefined);assert.equal(panel.props.background,undefined);assert.equal(panel.props.spacing,index===2?0:8)
       for(const width of [320,374,430])for(const intrinsic of [100,width,1000]){const result=panelWidth(steps,width,intrinsic);assert.equal(result.reported,width);assert.equal(result.painted,width);assert.equal(result.contentProposal,width-24)}
-      // Counterexample: background inside padding paints 24pt narrower despite full outer frame.
+      // Model-only counterexample: background inside padding paints 24pt narrower despite full outer frame.
       const wrong=[steps[1],steps[2],steps[0]],result=panelWidth(wrong,374,1000);assert.equal(result.reported,374);assert.equal(result.painted,350);assert.equal((374-result.painted)/2,12)
     }
     const quickLinks=nodes(panels[2],'NavigationLink');assert.equal(quickLinks.length,3);assert.ok(quickLinks.every(l=>l.props.frame.minWidth===0&&l.props.frame.maxWidth==='infinity'));assert.deepEqual(clone(tiles.map(t=>t.props.modifiers.steps[0][1])),Array(3).fill({minWidth:0,maxWidth:'infinity',minHeight:88,maxHeight:88,alignment:'center'}))
@@ -1540,7 +1550,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       const diagnostic = logs.filter(x => x.startsWith('[preferences-icon]'))
       for (const stage of ['change','accepted','proxies-render','group-render']) assert.ok(diagnostic.some(x => x.includes('stage=' + stage) && x.includes('enabled=false')))
       assert.ok(diagnostic.every(x => !x.includes('private.invalid') && !x.includes('private-group-name') && !x.includes('secret-')))
-      assert.ok(diagnostic.every(x => x.includes('build=1.5.134') && /instance=[a-z0-9]+/.test(x)))
+      assert.ok(diagnostic.every(x => x.includes('build=1.5.135') && /instance=[a-z0-9]+/.test(x)))
       assert.equal(new Set(diagnostic.map(x => x.match(/instance=([^ ]+)/)[1])).size, 1)
     } finally { context.console = originalConsole; unmount(); pref.savePreferences({ customIcons: true, testURL: 'https://www.gstatic.com/generate_204' }) }
   })
