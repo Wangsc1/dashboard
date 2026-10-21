@@ -179,7 +179,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     button(trailing(toolbar), '外观设置').props.action(); tree = render(app.OverviewPage, { active: null, version: 0, onSwitch() {} })
     assert.equal(tree.props.navigationDestination.isPresented, true); assert.equal(tree.props.navigationDestination.content.type, ui.AppearancePage)
     tree.props.navigationDestination.onChanged(false); tree = render(app.OverviewPage, { active: null, version: 0, onSwitch() {} }); assert.equal(tree.props.navigationDestination.isPresented, false)
-    const src = fs.readFileSync(path.join(root, 'index.tsx'), 'utf8'); assert.ok(src.includes('function WrtInterfacesPage')); assert.ok(src.includes('function WrtLeasesPage')); assert.ok(src.includes('onDelete={onDelete}')); assert.ok(!src.includes('sheet='))
+    const src = fs.readFileSync(path.join(root, 'index.tsx'), 'utf8'); assert.ok(src.includes('function WrtInterfacesPage')); assert.ok(src.includes('function WrtLeasesPage')); assert.ok(!src.includes('sheet='))
   })
   await test('默认界面选择tab；主题与外观项接入、概览数据布局不变', () => {
     pref.savePreferences({ defaultPage: 'rules', theme: 'dark', showWrt: false })
@@ -253,9 +253,9 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) assert.equal(nodes(tree, types[i]).length, ids[i] === id ? 1 : 0)
     }
-    assert.equal(api.VERSION, '1.5.15'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.5.16'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
-  await test('1.5.15 共享栈/简单ToolBarProps：唯一业务页owner、隐藏Tab无注册', () => {
+  await test('1.5.16 共享栈/简单ToolBarProps：唯一业务页owner、隐藏Tab无注册', () => {
     pref.savePreferences({ defaultPage: 'overview' })
     let rootTree = render(app.Root, {}, true)
     const pagesByTab = { home: app.OverviewPage, proxies: app.ProxiesPage, rules: app.RulesPage, connections: app.ConnectionsPage, more: app.MorePage }
@@ -299,7 +299,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     assert.ok(!source.includes('const content ='));assert.ok(!source.includes('ROOT_TABS.map'));assert.ok(!source.includes('toolbar={'));assert.ok(!source.includes('topBarLeading'))
     const helper=fs.readFileSync(path.join(root,'root-toolbar.tsx'),'utf8');assert.ok(!helper.includes('ToolbarItem'));assert.ok(!helper.includes('<Toolbar'));assert.ok(!helper.includes('key='));assert.ok(!helper.includes('id='))
   })
-  await test('1.5.15 编辑控制器仍进管理页；共享栈push详情不附根X', () => {
+  await test('1.5.16 编辑控制器仍进管理页；共享栈push详情不附根X', () => {
     let closes=0
     let page=render(app.OverviewPage,{active:c,version:0,onSwitch(){},onClose(){closes++}},true)
     button(trailing(page.props.toolbar),'编辑控制器').props.action()
@@ -325,7 +325,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     let tree = render(app.OverviewPage, { active: router, version: 0, onSwitch() {} }); tree.props.onDisappear(); render(app.OverviewPage, { active: router, version: 0, onSwitch() {} }); await flush()
     assert.ok(![...intervals.values()].some(x => x.ms === 1000)); unmount(); assert.equal(intervals.size, 0)
   })
-  await test('1.5.15 OpenWrt卡：目标平台、内核版本、CPU两次采样', async () => {
+  await test('1.5.16 OpenWrt卡：目标平台、内核版本、CPU两次采样', async () => {
     const router = { ...api.listControllers().find(x => x.kind === 'openwrt'), id: 'cpu-test' }
     let stat = 'cpu  100 0 100 800 0 0 0 0 0 0\n'
     responder = (url, init) => { const b = JSON.parse(init.body || '{}'), path = b.params?.[3]?.path
@@ -337,7 +337,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     o = await api.loadOverview(router); assert.equal(Math.round(o.wrt.cpu), 50)
     const src = fs.readFileSync(path.join(root, 'index.tsx'), 'utf8'); for (const t of ['目标平台','内核版本','CPU 使用率']) assert.ok(src.includes(`title="${t}"`))
   })
-  await test('1.5.15 图标地址：路径中的@允许，查询串/片段/用户信息仍拒绝', async () => {
+  await test('1.5.16 图标地址：路径中的@允许，查询串/片段/用户信息仍拒绝', async () => {
     responder = () => ({ body: {}, contentType: 'image/png' })
     assert.ok(await pref.cachedIcon('https://fastly.jsdelivr.net/gh/Koolson/Qure@master/IconSet/Color/Emby.png'))
     for (const u of ['http://x.invalid/a.png', 'https://x.invalid/a.png?k=1', 'https://x.invalid/a.png#f', 'https://user:pw@x.invalid/a.png']) assert.equal(await pref.cachedIcon(u), null)
@@ -371,14 +371,14 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     button(trailing(tree.props.toolbar), '✓ 信息').props.action(); tree = render(ui.LogsPage, {}); assert.equal(nodes(tree, 'VStack').length, 3)
     button(trailing(tree.props.toolbar), '搜索日志').props.action(); tree = render(ui.LogsPage, {}); nodes(tree, 'TextField')[0].props.onChanged('路由器'); tree = render(ui.LogsPage, {}); assert.equal(nodes(tree, 'VStack').length, 2)
   })
-  await test('控制器左滑删除回调保持原实现', () => {
+  await test('1.5.16 控制器左滑删除按钮（trailingSwipeActions）与右对齐版本', () => {
     const source = fs.readFileSync(path.join(root, 'index.tsx'), 'utf8')
-    const body = source.match(/function onDelete\(indices: number\[\]\) \{([\s\S]*?)\n  \}/)[1].trim()
-    assert.equal(body, `const ids = indices.map(i => list[i]?.id).filter(Boolean) as string[]
-    for (const id of ids) removeController(id)
+    const body = source.match(/function remove\(id: string\) \{([\s\S]*?)\n  \}/)[1].trim()
+    assert.equal(body, `removeController(id)
     setList(listControllers())
     setTimeout(onChanged, 500)`)
-    assert.ok(source.includes('onDelete={onDelete}'))
+    assert.ok(source.includes('trailingSwipeActions={{ allowsFullSwipe: false')); assert.ok(source.includes('title="删除" systemImage="trash" tint="systemRed"')); assert.ok(!source.includes('onDelete={onDelete}'))
+    assert.ok(source.includes('<Spacer /><Text font={12} foregroundStyle="secondaryLabel">{`v${VERSION}`}</Text>')); assert.ok(!source.includes('非官方实现'))
   })
   await test('1.5提供者：真实数量/类型/更新时间及URL编码更新', async () => {
     const xs = api.parseProviders({providers:{'A / B':{type:'Proxy',vehicleType:'HTTP',proxies:[{},{}],updatedAt:'2026-10-20T00:00:00Z'},inline:{type:'Proxy',vehicleType:'Inline'}}},'proxies')

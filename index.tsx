@@ -343,22 +343,20 @@ function SettingsPage({ active, onChanged }: { active: Controller | null; onChan
   const [revealed, setRevealed] = useState<string[]>([])
   const [list, setList] = useState(listControllers())
   const reload = () => { setList(listControllers()); onChanged() }
-  // 系统滑动删除：回调触发时该行已被移除，只同步数据源；其余刷新延后，避免与删除动画冲突
-  function onDelete(indices: number[]) {
-    const ids = indices.map(i => list[i]?.id).filter(Boolean) as string[]
-    for (const id of ids) removeController(id)
+  // 左滑“删除”按钮（同 ScriptGit 的 trailingSwipeActions）；先同步数据源，其余刷新延后避免与动画冲突
+  function remove(id: string) {
+    removeController(id)
     setList(listControllers())
     setTimeout(onChanged, 500)
   }
   return <Form navigationTitle="设置" navigationBarTitleDisplayMode="inline">
-    <Section header={<Text>OpenWrt</Text>}>
-      <ForEach count={list.length}
-        itemBuilder={i => <NavigationLink key={list[i].id} destination={<EditController initial={list[i]} onDone={reload} />}>
-          <VStack alignment="leading" onLongPressGesture={() => setRevealed([...revealed, list[i].id])}><Text>{list[i].name}</Text>{prefs.foldOffline && controllerHealth[list[i].id] === false && !revealed.includes(list[i].id)
+    <Section header={<HStack><Text>OpenWrt</Text><Spacer /><Text font={12} foregroundStyle="secondaryLabel">{`v${VERSION}`}</Text></HStack>} footer={<Text>密码和密钥保存在 Keychain，不会上传或写入脚本文件。</Text>}>
+      {list.map(c => <NavigationLink key={c.id} destination={<EditController initial={c} onDone={reload} />}
+          trailingSwipeActions={{ allowsFullSwipe: false, actions: [<Button title="删除" systemImage="trash" tint="systemRed" action={() => remove(c.id)} />] }}>
+          <VStack alignment="leading" onLongPressGesture={() => setRevealed([...revealed, c.id])}><Text>{c.name}</Text>{prefs.foldOffline && controllerHealth[c.id] === false && !revealed.includes(c.id)
             ? <Text font={12} foregroundStyle="secondaryLabel">连接失败 · 长按展开地址</Text>
-            : <Text font={12} foregroundStyle="secondaryLabel">{list[i].url}</Text>}</VStack>
-        </NavigationLink>}
-        onDelete={onDelete} />
+            : <Text font={12} foregroundStyle="secondaryLabel">{c.url}</Text>}</VStack>
+        </NavigationLink>)}
       <NavigationLink destination={<EditController onDone={reload} />}><Label title="添加 OpenWrt" systemImage="plus" /></NavigationLink>
     </Section>
     {active ? <Section header={<Text>路由器详情</Text>}>
@@ -366,9 +364,6 @@ function SettingsPage({ active, onChanged }: { active: Controller | null; onChan
       <NavigationLink destination={<WrtLeasesPage active={active} version={0} />}><Label title="在线设备" systemImage="laptopcomputer.and.iphone" /></NavigationLink>
       <NavigationLink destination={<KernelConfigPage c={active} />}><Label title="代理内核配置" systemImage="gearshape.2" /></NavigationLink>
     </Section> : null}
-    <Section footer={<Text>密码和密钥保存在 Keychain，不会上传或写入脚本文件。</Text>}>
-      <Text foregroundStyle="secondaryLabel">{`dashboard v${VERSION}（非官方实现）`}</Text>
-    </Section>
   </Form>
 }
 
