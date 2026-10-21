@@ -196,7 +196,7 @@ function OverviewPage({ active, version, onSwitch, onClose }: { active: Controll
   }
   if (!active) return <Form navigationTitle="dashboard" navigationBarTitleDisplayMode="inline" toolbar={toolbar} navigationDestination={destination}><NoController /></Form>
   return <ScrollView onAppear={() => setVisible(true)} onDisappear={() => setVisible(false)} navigationTitle="OpenWrt 状态" navigationBarTitleDisplayMode="inline" toolbar={toolbar} navigationDestination={destination}>
-    <VStack spacing={12} padding={{ horizontal: 14, vertical: 8 }}>
+    <VStack spacing={12} padding={{ horizontal: 14, top: 2, bottom: 8 }}>
       <HStack spacing={4} frame={{ maxWidth: "infinity" }}>
         <Spacer />
         <Circle fill={err ? "systemRed" : "systemGreen"} frame={{ width: 5, height: 5 }} />
