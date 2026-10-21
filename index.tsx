@@ -456,16 +456,17 @@ function FrpPage({ active }: { active: Controller }) {
   </Form>
 }
 
+// 仅用于显示：IPv4 地址的最后一段以 *** 代替（域名不变）。
+const maskUrl = (u: string) => u.replace(/(\d{1,3}\.\d{1,3}\.\d{1,3}\.)\d{1,3}(?=[:/]|$)/, "$1***")
 function FrpCommonPage({ active, info, onDone }: { active: Controller; info: FrpInfo; onDone: () => void }) {
   const dismiss = Navigation.useDismiss()
-  const [addr, setAddr] = useState(info.common.addr), [port, setPort] = useState(info.common.port), [tls, setTls] = useState(info.common.tls), [token, setToken] = useState(info.common.token), [busy, setBusy] = useState(false)
-  const save = () => guarded(setBusy, async () => { if (await confirmed(`${active.name} · frpc`, "保存服务端参数并重启 frpc；穿透会短暂中断，参数错误会导致断连。", () => saveFrpCommon(active, { addr: addr.trim(), port: port.trim(), tls, token: token.trim() }))) { onDone(); dismiss() } })
+  const [addr, setAddr] = useState(info.common.addr), [port, setPort] = useState(info.common.port), [tls, setTls] = useState(info.common.tls), [busy, setBusy] = useState(false)
+  const save = () => guarded(setBusy, async () => { if (await confirmed(`${active.name} · frpc`, "保存服务端参数并重启 frpc；穿透会短暂中断，参数错误会导致断连。", () => saveFrpCommon(active, { addr: addr.trim(), port: port.trim(), tls }))) { onDone(); dismiss() } })
   return <Form navigationTitle="服务端参数" navigationBarTitleDisplayMode="inline">
     <Section>
       <Field title="服务器地址" value={addr} onChanged={setAddr} />
       <Field title="服务器端口" value={port} onChanged={setPort} />
       <Toggle title="启用 TLS" value={tls} onChanged={setTls} />
-      <Field title="Token" value={token} onChanged={setToken} />
 
     </Section>
     <Section><Button title="保存" disabled={busy} action={save} /></Section>
@@ -635,7 +636,7 @@ function SettingsPage({ active, onChanged }: { active: Controller | null; onChan
           trailingSwipeActions={{ allowsFullSwipe: false, actions: [<Button title="删除" tint="systemRed" action={() => remove(c.id)} />] }}>
           <VStack alignment="leading" onLongPressGesture={() => setRevealed([...revealed, c.id])}><Text>{c.name}</Text>{prefs.foldOffline && controllerHealth[c.id] === false && !revealed.includes(c.id)
             ? <Text font={12} foregroundStyle="secondaryLabel">连接失败 · 长按展开地址</Text>
-            : <Text font={12} foregroundStyle="secondaryLabel">{c.url}</Text>}</VStack>
+            : <Text font={12} foregroundStyle="secondaryLabel">{maskUrl(c.url)}</Text>}</VStack>
         </NavigationLink>)}
       <NavigationLink destination={<EditController onDone={reload} />}><Label title="添加 OpenWrt" systemImage="plus" /></NavigationLink>
     </Section>
