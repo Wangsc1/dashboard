@@ -154,7 +154,7 @@ export function GlobalConfigPage({ active }: { active: Controller | null }) {
       <Range title="连接超时时间" min={1} max={30} value={p.requestTimeout} suffix=" s" onChanged={n => update({ requestTimeout: n })} />
     </Section>
     <Section header={<Text>测速设置</Text>}><TextField title="测速链接" value={url} onChanged={setURL} /><Button title="保存测速链接" action={saveURL} /><Range title="超时时间" min={1000} max={10000} step={100} value={p.testTimeout} suffix=" ms" onChanged={n => update({ testTimeout: n })} /></Section>
-    <Section header={<Text>运行日志</Text>}><Range title="最大记录条数" min={100} max={2000} step={100} value={p.logLimit} onChanged={n => update({ logLimit: n })} />{toggle("detailedAPI", "记录详细 API 请求（安全摘要）")}</Section>
+    <Section header={<Text>运行日志</Text>}><Range title="最大记录条数" min={100} max={2000} step={100} value={p.logLimit} onChanged={n => update({ logLimit: n })} />{toggle("detailedAPI", "记录详细 API 请求")}</Section>
   </Form>
 }
 function CloudSettingsPage() {
