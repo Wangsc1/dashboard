@@ -5,7 +5,7 @@ export interface Preferences {
   showHidden: boolean; customIcons: boolean; groupIcons: Record<string, string>
   showWrt: boolean; droplets: boolean; connectionBackground: boolean; ripple: boolean
   foldOffline: boolean; disconnectOnSwitch: boolean; haptics: boolean
-  defaultPage: "overview" | "proxies" | "connections" | "rules"
+  defaultPage: "overview" | "proxies" | "rules" | "connections" | "more"
   nestedDelay: boolean; nodeSort: "default" | "delay" | "name"; showGlobal: boolean
   requestTimeout: number; testURL: string; testTimeout: number; logLimit: number; detailedAPI: boolean
 }
@@ -27,7 +27,7 @@ export function normalizePreferences(raw: Partial<Preferences>): Preferences {
     const v = raw[k]
     if (typeof v === typeof DEFAULTS[k] && v !== null) (p as any)[k] = v
   }
-  for (const [k, choices] of Object.entries({ theme: ["system", "light", "dark"], connectionStyle: ["standard", "compact"], proxyStyle: ["list", "compact"], defaultPage: ["overview", "proxies", "connections", "rules"], nodeSort: ["default", "delay", "name"] })) {
+  for (const [k, choices] of Object.entries({ theme: ["system", "light", "dark"], connectionStyle: ["standard", "compact"], proxyStyle: ["list", "compact"], defaultPage: ["overview", "proxies", "rules", "connections", "more"], nodeSort: ["default", "delay", "name"] })) {
     if (!choices.includes((p as any)[k])) (p as any)[k] = (DEFAULTS as any)[k]
   }
   for (const [k, min, max] of [["requestTimeout", 1, 30], ["testTimeout", 1000, 10000], ["logLimit", 100, 2000], ["delayGreen", 1, 9999], ["delayRed", 1, 10000]] as [keyof Preferences, number, number][]) {

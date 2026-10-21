@@ -111,7 +111,7 @@ export function GlobalConfigPage({ active }: { active: Controller | null }) {
     <Section header={<Text>控制器管理</Text>}>{toggle("foldOffline", "自动折叠离线控制器")}</Section>
     <Section header={<Text>切换代理设置</Text>}>{toggle("disconnectOnSwitch", "自动断开旧连接")}</Section>
     <Section header={<Text>交互体验</Text>}>{toggle("haptics", "触感反馈")}</Section>
-    <Section header={<Text>启动设置</Text>}><Choice title="默认打开界面" value={p.defaultPage} values={[["overview", "概览"], ["proxies", "策略组"], ["connections", "连接"], ["rules", "规则"]]} onChanged={v => update({ defaultPage: v as any })} /></Section>
+    <Section header={<Text>启动设置</Text>}><Choice title="默认打开界面" value={p.defaultPage} values={[["overview", "主页"], ["proxies", "代理"], ["rules", "规则"], ["connections", "连接"], ["more", "更多"]]} onChanged={v => update({ defaultPage: v as any })} /></Section>
     <Section header={<Text>网络请求</Text>}>
       <NavigationLink destination={<HeadersPage />}><Label title="自定义请求头" systemImage="network" /></NavigationLink>
       {toggle("nestedDelay", "嵌套代理组延迟显示")}
