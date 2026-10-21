@@ -638,7 +638,6 @@ function SettingsPage({ active, onChanged }: { active: Controller | null; onChan
             : <Text font={12} foregroundStyle="secondaryLabel">{maskUrl(c.url)}</Text>}</VStack>
         </NavigationLink>)}
       <NavigationLink destination={<EditController onDone={reload} />}><Label title="添加 OpenWrt" systemImage="plus" /></NavigationLink>
-      <NavigationLink destination={<LogsPage />}><Label title="运行日志" systemImage="doc.text" /></NavigationLink>
     </Section>
     {active ? <Section header={<Text>路由器详情</Text>}>
       <NavigationLink destination={<WrtInterfacesPage active={active} version={0} />}><Label title="网络接口" systemImage="network" /></NavigationLink>
@@ -647,6 +646,9 @@ function SettingsPage({ active, onChanged }: { active: Controller | null; onChan
       <NavigationLink destination={<FrpPage active={active} />}><Label title="FRP 管理" systemImage="arrow.left.arrow.right" /></NavigationLink>
       <NavigationLink destination={<SoftwarePage active={active} />}><Label title="软件管理" systemImage="shippingbox" /></NavigationLink>
     </Section> : null}
+    <Section>
+      <NavigationLink destination={<LogsPage />}><Label title="运行日志" systemImage="doc.text" /></NavigationLink>
+    </Section>
   </Form>
 }
 
