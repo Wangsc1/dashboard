@@ -25,7 +25,7 @@ const scripting = new Proxy({
   Safari: { async openURL(url) { openedURLs.push(url); return true } },
   Navigation: { useDismiss: () => () => {} },
   Animation: { easeOut: () => ({}) }, withAnimation: (_a, body) => { (body || _a)(); return Promise.resolve() }, Transition: { opacity: () => ({ combined: () => ({}) }), scale: () => ({}), move: () => ({}) },
-  modifiers: () => new Proxy({}, { get: () => () => scripting.modifiers() }),
+  modifiers: () => { const steps=[];const chain=new Proxy({steps},{get:(o,k)=>k==='steps'?steps:(...args)=>{steps.push([k,...args]);return chain}});return chain },
 }, { get: (o, k) => k in o ? o[k] : k })
 const context = {
   h, React: { Fragment: 'Fragment' }, console, Date: class extends Date { static now() { return now } },
@@ -55,7 +55,7 @@ function load(name) {
   if (cache.has(name)) return cache.get(name)
   const file = path.join(root, name + (name === 'index' || name === 'settings-ui' || name === 'dashboard-pages' || name === 'root-toolbar' ? '.tsx' : '.ts'))
   let source = fs.readFileSync(file, 'utf8')
-  if (name === 'index') source = source.replace(/\nrun\(\)\s*$/, '') + '\nexport { OverviewPage, InfoItem, SettingsPage, ConnectionsPage, ProxiesPage, RulesPage, Spark, RateChart, StatCard, GroupSection, MorePage, Root, AppearanceRoot };'
+  if (name === 'index') source = source.replace(/\nrun\(\)\s*$/, '') + '\nexport { EditController, OverviewPage, InfoItem, SettingsPage, ConnectionsPage, ProxiesPage, RulesPage, Spark, RateChart, StatCard, GroupSection, MorePage, Root, AppearanceRoot };'
   if (name === 'settings-ui') source += '\nexport { Choice, Range, TestURLField };'
   const code = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020, jsx: ts.JsxEmit.React, jsxFactory: 'h' } }).outputText
   const module = { exports: {} }; cache.set(name, module.exports)
@@ -570,7 +570,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) { const lazy = ['proxies','rules','connections'].includes(ids[i]) && ids[i] !== id; assert.equal(nodes(tree, types[i]).length, lazy ? 0 : 1); if (!lazy) assert.equal(nodes(tree, types[i])[0].props.selected, ids[i] === id) }
     }
-    assert.equal(api.VERSION, '1.5.132'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.5.133'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('独立导航栈保留业务owner和身份，只有选中页提供可见工具栏', () => {
     pref.savePreferences({ defaultPage: 'overview' })
@@ -941,6 +941,19 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     pref.clearLogs();responder=()=>({throw:'https://secret.invalid/?token=private-token body=session-private'});await assert.rejects(()=>api.loadProviders(c,'proxies'));const logs=pref.exportLogs();assert.ok(!logs.includes('private-token'));assert.ok(!logs.includes('session-private'));assert.ok(!logs.includes('secret.invalid'));assert.ok(!pages.safeError().includes('http'))
     context.confirmResult=false;calls.length=0;for(const a of ['restart','reload','geo','dns','fakeip'])await model.confirmed(c.name,a,()=>api.coreAction(c,a));assert.equal(calls.length,0);context.confirmResult=true
   })
+  await test('编辑OpenWrt返回先保存最新本地草稿、凭证仍入Keychain且无连接测试', async () => {
+    const initial=api.saveController({name:'Local edit',host:'old-edit.invalid',port:80,https:false,username:'root',plugin:'openclash',auto:false,cport:9090},'old-edit-password','old-edit-secret');let completed=0,dismissed=0;const originalDismiss=scripting.Navigation.useDismiss;scripting.Navigation.useDismiss=()=>()=>{dismissed++}
+    try{const props={initial,onDone(){completed++;assert.equal(api.listControllers().find(c=>c.id===initial.id).host,'new-edit.invalid')}};let tree=render(app.EditController,props,true);assert.equal(tree.props.navigationBarBackButtonHidden,true);assert.equal(tree.props.toolbar.confirmationAction,undefined);assert.equal(tree.props.toolbar.topBarTrailing,undefined);assert.equal(tree.props.onDisappear,undefined);const fields=nodes(tree,'TextField'),secure=nodes(tree,'SecureField');const field=title=>fields.find(f=>f.props.title===title);field('名称').props.onChanged('Edited without rerender');field('地址').props.onChanged('new-edit.invalid');field('用户名').props.onChanged('admin');field('控制器端口').props.onChanged('9191');nodes(tree,'Toggle').find(t=>t.props.title==='启用 SSL (HTTPS)').props.onChanged(true);nodes(tree,'Picker')[0].props.onChanged('nikki');secure[0].props.onChanged('return-password-only-keychain');secure[1].props.onChanged('return-secret-only-keychain');calls.length=0
+      const back=button(tree.props.toolbar.topBarLeading,'返回');await back.props.action();await back.props.action();const saved=api.listControllers().find(c=>c.id===initial.id);assert.equal(saved.name,'Edited without rerender');assert.equal(saved.url,'https://new-edit.invalid');assert.equal(saved.username,'admin');assert.equal(saved.plugin,'nikki');assert.equal(saved.cport,9191);assert.equal(api.getSecret(initial.id),'return-password-only-keychain');assert.equal(api.getClashSecret(initial.id),'return-secret-only-keychain');assert.ok(!JSON.stringify([...store]).includes('return-password-only-keychain'));assert.ok(!JSON.stringify([...store]).includes('return-secret-only-keychain'));assert.equal(completed,1);assert.equal(dismissed,1);assert.equal(calls.length,0)
+    }finally{scripting.Navigation.useDismiss=originalDismiss;unmount();api.removeController(initial.id)}
+  })
+  await test('编辑OpenWrt校验失败留在页面不覆盖旧设置；帮助/卸载/后台不触发保存', async () => {
+    const initial=api.saveController({name:'Validation edit',host:'validation-edit.invalid',port:80,https:false,username:'root',plugin:'nikki',auto:true,cport:9090},'validation-old-password','validation-old-secret');let completed=0;const props={initial,onDone(){completed++}};let tree=render(app.EditController,props,true);const before=JSON.stringify([...store]),credentials=JSON.stringify([...secrets]);nodes(tree,'TextField').find(f=>f.props.title==='地址').props.onChanged('');calls.length=0;await button(tree.props.toolbar.topBarLeading,'返回').props.action();tree=render(app.EditController,props);assert.ok(text(tree).includes('请填写路由器地址'));assert.equal(completed,0);assert.equal(JSON.stringify([...store]),before);assert.equal(JSON.stringify([...secrets]),credentials);nodes(tree,'TextField').find(f=>f.props.title==='地址').props.onChanged('repaired-edit.invalid');nodes(tree,'TextField').find(f=>f.props.title==='端口').props.onChanged('99999');await button(tree.props.toolbar.topBarLeading,'返回').props.action();tree=render(app.EditController,props);assert.ok(text(tree).includes('端口无效'));assert.equal(JSON.stringify([...store]),before);nodes(tree,'TextField').find(f=>f.props.title==='端口').props.onChanged('8080');await button(tree.props.toolbar.topBarLeading,'返回').props.action();assert.equal(completed,1);assert.equal(api.listControllers().find(c=>c.id===initial.id).url,'http://repaired-edit.invalid:8080');assert.equal(calls.length,0)
+    tree=render(app.EditController,props,true);nodes(tree,'TextField')[0].props.onChanged('Unsaved draft');const stable=JSON.stringify([...store]);assert.equal(tree.props.onDisappear,undefined);assert.equal(tree.props.onAppear,undefined);assert.ok(nodes(tree,'NavigationLink').some(l=>l.props.destination.type.name==='HelpPage'));unmount();assert.equal(JSON.stringify([...store]),stable);api.removeController(initial.id)
+  })
+  await test('添加OpenWrt保留显式保存和默认返回，未改Nikki正文保存入口', () => {
+    const tree=render(app.EditController,{onDone(){}},true);assert.equal(tree.props.navigationTitle,'添加 OpenWrt');assert.equal(tree.props.navigationBarBackButtonHidden,false);assert.ok(button(tree.props.toolbar.confirmationAction,'保存'));assert.equal(tree.props.toolbar.topBarLeading,undefined);unmount()
+  })
   await test('非主页四页标题使用基本信息名称，更多分组与图示入口完整', () => {
     for(const name of ['P320','另一个设备']) for(const Page of [pages.ProxiesPage,pages.RulesPage,pages.ConnectionsPage,pages.MorePage]) {
       const tree=render(Page,{active:{...c,name},version:0,selected:false,onChanged(){}},true)
@@ -949,8 +962,15 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     const tree=render(pages.MorePage,{active:{...c,name:'P320'},selected:false,onChanged(){}},true)
     assert.equal(tree.props.background,'systemBackground')
     for(const title of ['运行信息','内核版本','插件版本','核心配置','代理配置','快捷管理','配置管理','订阅管理','附加规则','服务管理','核心操作','DNS 工具','域名查询'])assert.ok(text(tree).includes(title),title)
-    const tiles=nodes(tree,'VStack').filter(n=>n.props.background?.props?.cornerRadius===9)
-    assert.equal(tiles.length,3);assert.ok(tiles.every(n=>n.props.frame.maxWidth==='infinity'))
+    const tiles=nodes(tree,'VStack').filter(n=>n.props.modifiers?.steps?.some(s=>s[0]==='background'&&s[1]?.props?.cornerRadius===9))
+    assert.equal(tiles.length,3);assert.ok(tiles.every(n=>n.props.modifiers.steps[0][1].maxWidth==='infinity'))
+    // The gray shell fills the row; only its background-free child owns the inset.
+    const panels=nodes(tree,'VStack').filter(n=>n.props.background?.props?.cornerRadius===14&&n.props.background.props.fill==='secondarySystemBackground')
+    assert.equal(panels.length,6);for(const panel of panels){assert.equal(panel.props.padding,undefined);assert.deepEqual(clone(panel.props.frame),{maxWidth:'infinity',alignment:'leading'})}
+    for(const panel of [panels[2],panels[3]]){assert.equal(panel.props.children.length,1);const inset=panel.props.children[0];assert.equal(inset.type,'VStack');assert.equal(inset.props.padding,12);assert.equal(inset.props.background,undefined);assert.equal(inset.props.frame.maxWidth,'infinity')}
+    const quickLinks=nodes(panels[2],'NavigationLink');assert.equal(quickLinks.length,3);assert.ok(quickLinks.every(l=>l.props.frame.minWidth===0&&l.props.frame.maxWidth==='infinity'));assert.deepEqual(clone(tiles.map(t=>t.props.modifiers.steps[0][1])),Array(3).fill({minWidth:0,maxWidth:'infinity',minHeight:88,maxHeight:88,alignment:'center'}))
+    for(const tile of tiles){assert.deepEqual(tile.props.modifiers.steps.map(s=>s[0]),['frame','background']);assert.equal(tile.props.modifiers.steps[1][1].props.fill,'tertiarySystemGroupedBackground');assert.equal(tile.props.padding,undefined);assert.equal(tile.props.alignment,'center');const image=nodes(tile,'Image')[0],label=nodes(tile,'Text')[0];assert.deepEqual(clone(image.props.frame),{width:28,height:28,alignment:'center'});assert.deepEqual(clone(label.props.frame),{height:18,alignment:'center'});assert.equal(label.props.lineLimit,1)}
+    assert.deepEqual(tiles.map(t=>nodes(t,'Image')[0].props.systemName),['gearshape','icloud.and.arrow.down','list.bullet']);assert.deepEqual(tiles.map(t=>nodes(t,'Image')[0].props.foregroundStyle),['systemOrange','systemIndigo','systemPurple'])
     assert.deepEqual(tiles.map(t=>text(t).trim()),['配置管理','订阅管理','附加规则'])
     assert.ok(!text(tree).includes('网页访问'));assert.ok(!tiles.some(t=>text(t).includes('运行日志')))
     assert.ok(!nodes(tree,'NavigationLink').some(l=>l.props.destination?.type===pages.ManagementPage&&l.props.destination?.props.kind==='log'))
@@ -1512,7 +1532,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       const diagnostic = logs.filter(x => x.startsWith('[preferences-icon]'))
       for (const stage of ['change','accepted','proxies-render','group-render']) assert.ok(diagnostic.some(x => x.includes('stage=' + stage) && x.includes('enabled=false')))
       assert.ok(diagnostic.every(x => !x.includes('private.invalid') && !x.includes('private-group-name') && !x.includes('secret-')))
-      assert.ok(diagnostic.every(x => x.includes('build=1.5.132') && /instance=[a-z0-9]+/.test(x)))
+      assert.ok(diagnostic.every(x => x.includes('build=1.5.133') && /instance=[a-z0-9]+/.test(x)))
       assert.equal(new Set(diagnostic.map(x => x.match(/instance=([^ ]+)/)[1])).size, 1)
     } finally { context.console = originalConsole; unmount(); pref.savePreferences({ customIcons: true, testURL: 'https://www.gstatic.com/generate_204' }) }
   })
