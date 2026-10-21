@@ -24,7 +24,7 @@
 
 编辑已有 OpenWrt 连接时不显示右上保存；左上返回会先校验并保存最新本地草稿，再退出。无效地址/端口会留在当前页显示错误，旧设置和凭证不变；打开使用说明、切换 App 或卸载页面不会触发保存。使用官方 `navigationBarBackButtonHidden` 隐藏默认返回，明确走自定义返回动作，不依赖消失/卸载事件；原生边缘返回手势及工具栏承载仍需真机确认。继续调用原有本地 `saveController`，密码与密钥仍在 Keychain，编辑返回不执行连接测试或远程配置写入；添加 OpenWrt 页仍为显式保存并测试连接。Nikki 正文编辑的保存确认不变。
 
-原生 Tab API 面向 iOS 18+；外观与手势由系统及 Scripting 版本决定。仓库配置了 `remoteResource`，实际导入和更新以 Scripting 的处理结果为准。运行实现仍在原有源文件中，没有新增必须单独下载的运行模块。
+原生 Tab API 面向 iOS 18+；外观与手势由系统及 Scripting 版本决定。仓库配置了 `remoteResource`，实际导入和更新以 Scripting 的处理结果为准。配置编辑器的 CodeMirror/Lezer/YAML 静态 bundle 已嵌入现有 `dashboard-pages.tsx`；在线更新仍只需原有运行文件，不需 CDN、额外资源下载或在手机安装 npm 包。`editor/` 为构建源码、锁定依赖及许可证，非运行依赖。
 
 ## 代理页模式
 
@@ -56,11 +56,15 @@
 
 ### 配置文件
 
-纵向卡片列表展示本地/订阅来源、两行名称、实际 mtime、大小和 UCI 当前选用勾选标记；与订阅复用相同的全宽 Panel、18pt 内边距与圆角，不设固定或最小卡片高度，不再横向分页或显示滑动提示。右上刷新为纯图标，保留原生工具栏承载，不叠加自绘圆底。列表保留来源顺序：本地目录返回顺序在前，订阅按 UCI index 排在后；新增订阅位于订阅列表末尾，本地上传文件的位置由目录接口决定，不保证全局末尾。不再显示卡片“当前选用”文字或底部说明注释；编辑页的选用提示保留。点击卡片确认选用，提交 `config.profile = file:<name> / subscription:<id>`。勾选标记不是已核验的内核运行状态。
+纵向卡片列表展示本地/订阅来源、两行名称、实际 mtime、大小和 UCI 当前选用勾选标记；与订阅复用相同的全宽 Panel、18pt 内边距与圆角，不设固定或最小卡片高度，不再横向分页或显示滑动提示。右上刷新为纯图标，保留原生工具栏承载，不叠加自绘圆底。列表保留来源顺序：本地目录返回顺序在前，订阅按 UCI index 排在后；新增订阅位于订阅列表末尾，本地上传文件的位置由目录接口决定，不保证全局末尾。不再显示卡片“当前选用”文字或底部说明注释；配置编辑页不显示选用状态等额外信息行。点击卡片确认选用，提交 `config.profile = file:<name> / subscription:<id>`。勾选标记不是已核验的内核运行状态。
 
-列表不读取配置正文。打开编辑页后才完整加载，使用等宽正文及左侧真实行号栏；增删行实时更新，随正文纵向滚动同步，长行横向滚动而不折行，避免行号错位。原生多行 TextField 文档未提供可用的共享滚动接口，因此按 Scripting 官方 `WebViewController` / `WebView` 接口内嵌本地 HTML/CSS/脚本；不加载网络编辑器、无工具栏或语法高亮。使用官方当前文档列出的临时隔离容器，以 CSP 禁止外部资源，不再按 `about:blank` 限制宿主的本地加载 URL；编辑器不写网页存储、不包含外发逻辑，退出调用 `dispose()`。这些是实现策略，不是对未验证 App 版本的安全保证。
+列表不读取配置正文。配置编辑采用官方 `fullScreenCover` 独立呈现全屏 `NavigationStack`，不再依赖 Tab 内页面隐藏标签栏来冒充全屏。栈初始化路径为 `["file"]`，编辑器是原生 destination，系统返回按钮与右滑弹出同一目标页，沿用 `onDisappear → work.leave(save)` 的一次性返回保存路径；根页面仅在保存/确认结束前短暂承接返回，之后关闭全屏。没有保存/取消按钮，也不替换原生返回。保留系统状态栏、Home 指示器和默认安全区/键盘避让，不使用 `ignoresSafeArea`。其他管理页面保持原有导航。
 
-从首帧（包括 native onAppear 前）即显示随主题的原生中性加载面板；WebView 始终挂载但完全透明且禁用交互，只有收到完整正文的页面握手后才显露，不通过条件卸载或等待可见来装载页面。编辑页实际出现后才读取正文；正文经完整性核验后独立保留，由页面消息握手接收全文并确认行号构建完成，不把 `loadHTML()` Promise 结束当作脚本就绪。正文读取 20 秒、编辑器初始化 10 秒未完成会明确报错并允许重试；已完整读取的正文在编辑器失败时提供原生只读恢复显示，不允许保存未初始化的正文。未修改时保存禁用；保留 UTF-8、缩进及原有 CRLF/LF/CR，新增换行采用正文第一个换行的形式，未触及部分保持原样。保存读取编辑器最新完整快照，手动确认后分块写入并完整回读核对，不自动应用/重载；取消保存确认或保存失败时保留当前草稿。行号脚本及导航复用模型已做定向测试，iPhone 的 WKWebView 键盘、实际字体对齐和长文滚动性能仍需真机确认。
+正文为无卡片框的本地 CodeMirror 6 编辑区（与 [Sub-Store cmView](https://github.com/sub-store-org/Sub-Store-Front-End/blob/master/src/views/editCode/cmView.vue) 同系）：等宽字体、固定行号、活动行底色、缩进线与层级折叠箭头，长行横向滚动不折行；紧凑工具栏提供撤销、重做、查找/替换、全部折叠/展开。Lezer YAML 提供结构化解析/高亮/折叠；普通标量另由 `yaml` 的 YAML 1.2 解析器识别类型，仅用于可视区着色（键蓝、数字橙、布尔/空值红、字符串绿、注释灰），不序列化、不格式化正文。浅色/深色/系统外观均适配。没有上传、清空或云端操作。采用 Scripting 官方 `WebViewController` / `WebView` 的临时隔离容器和本地 HTML，以 CSP 禁止外部资源；无网络编辑器、网页存储或外发逻辑，离开保存结束后调用 `dispose()`。版本及 MIT 许可见 `editor/package-lock.json`、`editor/THIRD_PARTY_NOTICES.txt`。
+
+从首帧（包括 native onAppear 前）显示随主题的中性加载面板；WebView 始终挂载但完全透明且禁用交互，只有完整正文的页面握手完成后显露。实际出现后才读取正文；正文经完整性核验后独立保留，不把 `loadHTML()` Promise 结束当作脚本就绪。正文读取 20 秒、编辑器初始化 10 秒未完成会明确报错并允许重试；已完整读取的正文在编辑器失败时提供原生只读恢复显示，不允许保存未初始化的正文。保持 UTF-8、缩进、原有 CRLF/LF/CR 及尾部空行；逐个编辑变更保留未触及的原始换行，新增换行采用正文第一个换行的形式，撤销/重做通过历史反向 effect 恢复原字节。保存读取完整文档快照而非可视区/折叠 DOM；中文输入法组合期间先请求结束输入，未结束则拒绝快照，宿主超时不写入，过期请求不会锁住新编辑。
+
+返回时仅在内容变化后确认远端覆盖，分块写入并完整回读，不自动应用/重载。取消确认、保存失败时按来源/文件在本次脚本内存保留完整草稿，重进恢复且保留原始远端基线，远端并发改动仍会拒绝覆盖；退出脚本不会持久保存草稿。输入、导航复用、失败恢复和完整快照有定向回归，移动尺寸 Chromium 亦验证高亮、折叠、搜索、横滚、中文/emoji、组合输入屏障和 4 万行完整缓冲。**不等于 WKWebView/真机验收**；iPhone 原生全屏返回/右滑、状态栏/键盘安全区、中文候选词提交和长文滚动性能仍需真机确认。
 
 接口依据：[官方当前 WebViewController](https://scriptingapp.github.io/guide/Device%20Capabilities/WebViewController.md) 列出 `ephemeral`、支持 Promise 回执的消息处理器，并要求取返回值时使用 `return`；[WebView 示例](https://scriptingapp.github.io/guide/Views/WebView.md) 则使用表达式。保存快照通过消息桥回传，不依赖两种求值方式的返回值差异，并设超时拒绝写入。当前没有目标 App 同步的官方 `.d.ts` 或宿主实现；测试 stub 只作本地检查，不证明用户安装版本支持这些 API。
 
@@ -84,15 +88,19 @@
 
 使用 Scripting 官方组件与全局 API，不依赖 Scriptable。管理界面核对了官方 `navigationDestination`、多行 `TextField`、`frame`、链式 `modifiers`、自定义标签 `Menu` 和等宽字体文档。
 
-本地模拟测试：
+本地测试（首次在 `editor/` 执行 `npm ci`，安装仅供构建/测试的 jsdom、Playwright；浏览器测试另需可用的 Chromium 或 `CHROMIUM_PATH`）：
 
 ```sh
 node tests/run.cjs
 node tests/nikki-management.cjs
+node tests/nikki-editors.cjs
+node tests/nikki-editor-browser.cjs
 node tests/proxy-mode.cjs
 node tests/chart-download.cjs
 git diff --check
 ```
+
+编辑器重建：`cd editor && npm ci && npm run build`，将静态 bundle 更新到 `dashboard-pages.tsx` 的生成标记内，不新增手机运行文件。测试可用 `JSDOM_PATH` / `PLAYWRIGHT_PATH` 指定已安装的包。
 
 测试默认使用 `/tmp/chk/node_modules/typescript`，可通过 `TYPESCRIPT_PATH` 指定已有 TypeScript 包。业务类型检查使用 `tests/business-stub.d.ts`、`--lib es2020 --jsx preserve --noEmit`；桩缺少的官方 `Divider` 仅需在临时声明中补充，不修改产品 API 迁就桩。
 
