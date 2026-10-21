@@ -32,17 +32,45 @@ function Choice({ title, value, values, onChanged, disabled = false }: { title: 
 }
 function Range({ title, value, min, max, step = 1, suffix = "", onChanged }: { title: string; value: number; min: number; max: number; step?: number; suffix?: string; onChanged: (n: number) => void }) {
   const [draft, setDraft] = useState(value)
-  const [editing] = useState({ active: false, value })
-  useEffect(() => { if (!editing.active) { editing.value = value; setDraft(value) } }, [value])
   const snap = (n: number) => Math.max(min, Math.min(max, min + Math.round((n - min) / step) * step))
-  return <VStack alignment="leading" listRowSeparator="hidden"><Text>{`${title}：${snap(draft)}${suffix}`}</Text><Slider min={min} max={max} value={draft} onChanged={(n: number) => { editing.value = n; setDraft(n) }} onEditingChanged={(active: boolean) => {
-    editing.active = active
-    if (!active && editing.value !== value) {
-      // Parent supplies the accepted value; a failed save must not leave a false draft.
-      setDraft(value)
-      onChanged(snap(editing.value))
+  const [drag] = useState(() => {
+    type Event = { translation: { width: number; height: number } }
+    const state = { width: 1, active: false, base: value, latest: value, lastPaint: -Infinity, value, onChanged,
+      gesture: {} as { minDistance: number; onChanged: (e: Event) => void; onEnded: (e: Event) => void } }
+    function move(e: Event, final = false) {
+      if (!state.active) { state.active = true; state.base = state.latest = state.value }
+      state.latest = snap(state.base + e.translation.width / state.width * (max - min))
+      const now = Date.now()
+      if (final || now - state.lastPaint >= 32) { state.lastPaint = now; setDraft(state.latest) }
     }
-  }} label={<Text>{title}</Text>} minValueLabel={<Text>{min}</Text>} maxValueLabel={<Text>{max}</Text>} /></VStack>
+    state.gesture = { minDistance: 2, onChanged: e => move(e), onEnded: e => {
+      move(e, true)
+      const next = state.latest
+      state.active = false; state.lastPaint = -Infinity
+      if (next !== state.value) state.onChanged(next)
+    } }
+    return state
+  })
+  drag.value = value; drag.onChanged = onChanged
+  useEffect(() => { if (!drag.active) setDraft(snap(value)) }, [value])
+  const shown = snap(draft)
+  return <VStack alignment="leading" spacing={10} padding={{ vertical: 6 }} listRowSeparator="hidden">
+    <Text>{`${title}：${shown}${suffix}`}</Text>
+    <HStack spacing={10}>
+      <Text font={14} foregroundStyle="secondaryLabel">{String(min)}</Text>
+      <GeometryReader frame={{ height: 28 }}>{(proxy: { size: { width: number } }) => {
+        const width = Math.max(1, proxy.size.width - 28)
+        drag.width = width
+        const x = 14 + (shown - min) / (max - min) * width
+        return <ZStack alignment="leading" frame={{ width: proxy.size.width, height: 28 }} background="clear" onDragGesture={drag.gesture}>
+          <RoundedRectangle cornerRadius={2} fill="tertiarySystemFill" frame={{ width, height: 4 }} offset={{ x: 14, y: 0 }} />
+          <RoundedRectangle cornerRadius={2} fill="systemBlue" frame={{ width: Math.max(0, x - 14), height: 4 }} offset={{ x: 14, y: 0 }} />
+          <Circle fill="white" stroke={{ shapeStyle: "#DDDDDD", strokeStyle: { lineWidth: 0.5 } }} frame={{ width: 26, height: 26 }} offset={{ x: x - 13, y: 0 }} />
+        </ZStack>
+      }}</GeometryReader>
+      <Text font={14} foregroundStyle="secondaryLabel">{String(max)}</Text>
+    </HStack>
+  </VStack>
 }
 
 export function thresholdPair(green: number, red: number, handle: "green" | "red", value: number) {

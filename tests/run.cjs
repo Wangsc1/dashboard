@@ -197,24 +197,16 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       tree = render(ui.ThresholdRange, {}); await flush(); assert.ok(text(tree).includes('340–500 ms'))
     } finally { unmount(); scripting.useState = original; pref.savePreferences({ delayGreen: 240, delayRed: 500 }) }
   })
-  await test('设置普通滑块只更新局部草稿，结束拖动才通知保存', async () => {
-    const saved = [], props = { title: '测试', value: 8, min: 1, max: 30, onChanged: n => saved.push(n) }
-    let tree = render(ui.Range, props, true); await flush()
-    let slider = nodes(tree, 'Slider')[0]; slider.props.onEditingChanged(true)
-    for (const n of [9,10,11,12]) slider.props.onChanged(n)
-    tree = render(ui.Range, props); await flush(); assert.ok(text(tree).includes('12')); assert.equal(saved.length, 0)
-    nodes(tree, 'Slider')[0].props.onEditingChanged(false); assert.equal(saved.join(','), '12'); unmount()
-  })
-  await test('三个普通滑块不传离散step且隐藏行分隔线，保持原步长保存', async () => {
-    for (const [title,min,max,step,value,raw,want] of [['连接超时时间',1,30,1,8,12.2,12],['超时时间',1000,10000,100,5000,5678,5700],['最大记录条数',100,2000,100,500,876,900]]) {
+  await test('普通滑块自绘：无原生Slider刻度，拖动只更新局部草稿，结束才按原步长保存', async () => {
+    const track = tree => nodes(tree, 'GeometryReader')[0].props.children[0]({ size: { width: 328 } })
+    for (const [title,min,max,step,value,dx,want] of [['连接超时时间',1,30,1,8,87,16],['超时时间',1000,10000,100,5000,150,9500],['最大记录条数',100,2000,100,500,100,1100]]) {
       const saved = [], props = { title, min, max, step, value, onChanged: n => saved.push(n) }
       let tree = render(ui.Range, props, true); await flush()
-      assert.equal(tree.props.listRowSeparator, 'hidden')
-      let slider = nodes(tree, 'Slider')[0]; assert.equal(slider.props.step, undefined)
-      slider.props.onEditingChanged(true); slider.props.onChanged(raw)
-      tree = render(ui.Range, props); await flush(); assert.equal(nodes(tree, 'Slider')[0].props.value, raw)
+      assert.equal(tree.props.listRowSeparator, 'hidden'); assert.equal(nodes(tree, 'Slider').length, 0)
+      const gesture = track(tree).props.onDragGesture, ev = { translation: { width: dx, height: 0 } }
+      gesture.onChanged(ev); tree = render(ui.Range, props); await flush()
       assert.ok(text(tree).includes(String(want))); assert.equal(saved.length, 0)
-      nodes(tree, 'Slider')[0].props.onEditingChanged(false); assert.equal(saved.join(','), String(want)); unmount()
+      gesture.onEnded(ev); assert.equal(saved.join(','), String(want)); unmount()
     }
   })
   await test('全局配置分组顺序：启动紧随主题，阈值紧邻网络请求之前', () => {
@@ -426,7 +418,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) { const lazy = ['proxies','rules','connections'].includes(ids[i]) && ids[i] !== id; assert.equal(nodes(tree, types[i]).length, lazy ? 0 : 1); if (!lazy) assert.equal(nodes(tree, types[i])[0].props.selected, ids[i] === id) }
     }
-    assert.equal(api.VERSION, '1.5.65'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.5.66'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('独立导航栈保留业务owner和身份，只有选中页提供可见工具栏', () => {
     pref.savePreferences({ defaultPage: 'overview' })
@@ -942,7 +934,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       const diagnostic = logs.filter(x => x.startsWith('[preferences-icon]'))
       for (const stage of ['change','accepted','proxies-render','group-render']) assert.ok(diagnostic.some(x => x.includes('stage=' + stage) && x.includes('enabled=false')))
       assert.ok(diagnostic.every(x => !x.includes('private.invalid') && !x.includes('private-group-name') && !x.includes('secret-')))
-      assert.ok(diagnostic.every(x => x.includes('build=1.5.65') && /instance=[a-z0-9]+/.test(x)))
+      assert.ok(diagnostic.every(x => x.includes('build=1.5.66') && /instance=[a-z0-9]+/.test(x)))
       assert.equal(new Set(diagnostic.map(x => x.match(/instance=([^ ]+)/)[1])).size, 1)
     } finally { context.console = originalConsole; unmount(); pref.savePreferences({ customIcons: true, testURL: 'https://www.gstatic.com/generate_204' }) }
   })
