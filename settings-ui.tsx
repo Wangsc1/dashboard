@@ -129,11 +129,6 @@ export function GlobalConfigPage({ active }: { active: Controller | null }) {
   }
   return <Form navigationTitle="全局配置" navigationBarTitleDisplayMode="inline">
     <Section header={<Text>主题</Text>}><Choice title="外观模式" value={p.theme} values={[["system", "跟随系统"], ["light", "浅色"], ["dark", "深色"]]} onChanged={v => update({ theme: v as any })} /></Section>
-    <Section header={<Text>列表与动画</Text>}>
-      <Choice title="连接列表样式" value={p.connectionStyle} values={[["standard", "标准"], ["compact", "简约"]]} onChanged={v => update({ connectionStyle: v as any })} />
-      <Choice title="代理卡片样式" value={p.proxyStyle} values={[["list", "列表"], ["compact", "简约"]]} onChanged={v => update({ proxyStyle: v as any })} />
-      {toggle("collapseGesture", "卡片折叠菜单手势")}
-    </Section>
     <Section header={<Text>延迟阈值设置</Text>}><NavigationLink destination={<ThresholdPage />}><Text>{`延迟阈值范围　${p.delayGreen}–${p.delayRed} ms`}</Text></NavigationLink></Section>
     <Section header={<Text>代理组</Text>}>{toggle("showHidden", "显示隐藏代理组")}{toggle("customIcons", "自定义代理组图标")}</Section>
     <Section header={<Text>缓存管理</Text>}><Button title="清除图片缓存" action={clear} /></Section>
@@ -148,7 +143,6 @@ export function GlobalConfigPage({ active }: { active: Controller | null }) {
         const i = await Dialog.actionSheet({ title: "代理组节点排序", actions: NODE_SORT_OPTIONS.map(([key, label]) => ({ label: (key === p.nodeSort ? "✓ " : "") + label })) })
         if (i != null && NODE_SORT_OPTIONS[i]) update({ nodeSort: NODE_SORT_OPTIONS[i][0] })
       }}><HStack><Text foregroundStyle="label">代理组节点排序</Text><Spacer /><Text foregroundStyle="secondaryLabel">{NODE_SORT_OPTIONS.find(([key]) => key === p.nodeSort)?.[1]}</Text></HStack></Button>
-      {toggle("showGlobal", "显示 Global 代理组")}
       <Range title="连接超时时间" min={1} max={30} value={p.requestTimeout} suffix=" s" onChanged={n => update({ requestTimeout: n })} />
     </Section>
     <Section header={<Text>测速设置</Text>}><TextField title="测速链接" value={url} onChanged={setURL} /><Button title="保存测速链接" action={saveURL} /><Range title="超时时间" min={1000} max={10000} step={100} value={p.testTimeout} suffix=" ms" onChanged={n => update({ testTimeout: n })} /></Section>

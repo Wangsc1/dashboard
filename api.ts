@@ -1,6 +1,6 @@
 
 import { getPreferences, customHeaders, recordEvent, controllerHealth, feedback } from "./preferences"
-export const VERSION = "1.5.50"
+export const VERSION = "1.5.51"
 
 export type Kind = "clash" | "openwrt"
 export type Plugin = "openclash" | "nikki" | "mihomo"
