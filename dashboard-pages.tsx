@@ -1,6 +1,7 @@
+import { NikkiManagement, NikkiSubscription, NikkiRule, NikkiFile, NikkiManagementError, NIKKI_RULE_TYPES, loadNikkiManagement, saveNikkiSubscription, deleteNikkiSubscription, updateNikkiSubscription, saveNikkiRule, deleteNikkiRule, setNikkiRulesEnabled, reorderNikkiRules, selectNikkiProfile, readNikkiFile, saveNikkiFile } from "./api"
 import { rootToolbar } from "./root-toolbar"
-import { AppEvents, Button, Divider, HStack, VStack, Text, Image, Circle, RoundedRectangle, Spacer, ScrollView, LazyVStack, NavigationLink, Menu, Picker, TextField, Toggle, Form, Section, Label, ProgressView, modifiers, Safari, useState, useEffect } from "scripting"
-import { Controller, Group, Conn, Rule, Provider, loadGroups, testGroup, testNodes, selectProxy, loadProviders, updateProvider, loadRules, loadConnections, closeConnection, closeAllConnections, fmtBytes, fmtSpeed, fmtUptime, delayColor, loadRuntimeVersions, loadNikkiRuntime, NikkiRuntime, verifyCoreRestart, lastControllerMode, loadConfig, nikkiService, nikkiServiceStatus, coreAction, CoreAction, queryDNS, loadNikkiManagement, NikkiManagement, updateNikkiSubscription, webpage } from "./api"
+import { AppEvents, Button, Divider, HStack, VStack, Text, Image, Circle, RoundedRectangle, Spacer, ScrollView, LazyVStack, NavigationLink, Menu, Picker, TextField, Toggle, Form, Section, Label, ProgressView, TabView, modifiers, Safari, useState, useEffect } from "scripting"
+import { Controller, Group, Conn, Rule, Provider, loadGroups, testGroup, testNodes, selectProxy, loadProviders, updateProvider, loadRules, loadConnections, closeConnection, closeAllConnections, fmtBytes, fmtSpeed, fmtUptime, delayColor, loadRuntimeVersions, loadNikkiRuntime, NikkiRuntime, verifyCoreRestart, lastControllerMode, loadConfig, nikkiService, nikkiServiceStatus, coreAction, CoreAction, queryDNS, webpage } from "./api"
 import { usePreferences, KernelConfigPage } from "./settings-ui"
 import { NODE_SORT_OPTIONS, savePreferences, cachedIcon, traceIconPreference, feedback } from "./preferences"
 import { selectable, sortedNodes, historyFor, filterConnections, clientLabels, saveClientLabel, sourceKey, confirmed } from "./dashboard-model"
@@ -137,10 +138,12 @@ export function DNSPage({c}:{c:Controller}) {
 }
 async function openPage(c:Controller,page:"home"|"profile"|"mixin"|"editor"|"log") { await attempt(async()=>{const url=await webpage(c,page);await confirmed(c.name,"打开当前设备的真实网页。不会传递控制器密钥或LuCI会话；浏览器需独立登录。后续网页中的保存/应用由Nikki官方页面处理。",async()=>{if(!await Safari.openURL(url))throw new Error("打开失败")})}) }
 export function ManagementPage({c,kind}:{c:Controller;kind:"profile"|"subscription"|"rule"|"log"}) {
-  const [data,setData]=useState<NikkiManagement|null>(null),[err,setErr]=useState(""),[tick,setTick]=useState(0),[limit,setLimit]=useState(60),[visible,setVisible]=useState(true)
-  const nikki=c.kind==="openwrt"&&c.plugin==="nikki", title={profile:"配置管理",subscription:"订阅管理",rule:"附加规则",log:"运行日志"}[kind]
-  useEffect(()=>{if(!nikki||kind==="log"||!visible)return;let alive=true;setData(null);setErr("");loadNikkiManagement(c).then(d=>{if(alive)setData(d)}).catch(()=>{if(alive)setErr(safeError())});return()=>{alive=false}},[sourceKey(c),kind,tick,visible])
-  return Shell({title:title,background:"systemBackground",onAppear:()=>setVisible(true),onDisappear:()=>setVisible(false),children:<>{!nikki?<Hint>不可用：此入口需要当前来源为OpenWrt上的Nikki，不能将其他插件当作Nikki调用。</Hint>:<><Card><Hint>{kind==="profile"?"Nikki配置文件位于 /etc/nikki/profiles；选用配置是UCI nikki.config.profile。文件编辑/上传/保存与应用由真实LuCI编辑器执行，本脚本不读取含密钥的配置正文。":kind==="subscription"?"以下来自UCI nikki subscription。更新调用luci.nikki.update_subscription，将下载并写入订阅文件；新增、编辑、删除需在官方LuCI完成。":kind==="rule"?"以下是UCI nikki rule附加规则，不是已展开的内核运行规则。增删/排序/启用及应用由官方LuCI完成；保存UCI与重载运行配置是不同操作。":"此处为Nikki远程运行日志，可能包含访问域名与敏感信息，仅在设备自己的LuCI中查看，不复制至脚本日志。"}</Hint><Button title="打开Nikki官方管理页面" systemImage="safari" action={()=>openPage(c,kind==="rule"?"mixin":kind==="log"?"log":"profile")}/>{kind==="profile"?<Button title="打开配置文件编辑器" action={()=>openPage(c,"editor")}/>:null}<Button title="刷新" action={()=>setTick(tick+1)}/></Card>{err?<Hint>{err}</Hint>:null}{data&&kind==="profile"?<><Card><Text>{`当前选用：${data.profile}`}</Text></Card>{data.files.slice(0,limit).map(f=><Card key={f.name}><Text>{f.name}</Text><Hint>{fmtBytes(f.size)}</Hint></Card>)}<Pages limit={limit} total={data.files.length} more={()=>setLimit(limit+60)}/></>:null}{data&&kind==="subscription"?<>{data.subscriptions.slice(0,limit).map(s=><Card key={s.id}><Text>{s.name}</Text><Hint>{`更新：${s.updated} · 用量 ${s.used} / ${s.total} · 到期 ${s.expire}`}</Hint><Button title="更新订阅" action={()=>attempt(async()=>{if(await confirmed(`${c.name} · ${s.name}`,"Nikki将访问订阅服务器并写入该订阅文件，可能影响后续配置。此操作不是代理提供者更新，也不自动假定已应用。",()=>updateNikkiSubscription(c,s.id)))setTick(t=>t+1)})}/></Card>)}<Pages limit={limit} total={data.subscriptions.length} more={()=>setLimit(limit+60)}/></>:null}{data&&kind==="rule"?<><Hint>{`附加规则开关：${data.appendRules?"开启":"关闭"} · ${data.rules.length} 条`}</Hint>{data.rules.slice(0,limit).map(r=><Card key={r.id}><Text>{`${r.enabled?"启用":"禁用"} · ${r.type} · ${r.matcher}`}</Text><Hint>{r.node}</Hint></Card>)}<Pages limit={limit} total={data.rules.length} more={()=>setLimit(limit+60)}/></>:null}</>}</>})
+  if(kind!=="log")return NikkiManagementPage({c,kind})
+  return NikkiLogPage({c})
+}
+function NikkiLogPage({c}:{c:Controller}) {
+  const [tick,setTick]=useState(0),[,setVisible]=useState(true),nikki=c.kind==="openwrt"&&c.plugin==="nikki"
+  return Shell({title:"运行日志",background:"systemBackground",onAppear:()=>setVisible(true),onDisappear:()=>setVisible(false),children:!nikki?<Hint>不可用：此入口需要当前来源为OpenWrt上的Nikki，不能将其他插件当作Nikki调用。</Hint>:<Card><Hint>此处为Nikki远程运行日志，可能包含访问域名与敏感信息，仅在设备自己的LuCI中查看，不复制至脚本日志。</Hint><Button title="打开Nikki官方管理页面" systemImage="safari" action={()=>openPage(c,"log")}/><Button title="刷新" action={()=>setTick(tick+1)}/></Card>})
 }
 // More-page styling stays local; other cards and native navigation are unchanged.
 function MorePanel({children,padding=0,spacing=0}:any) { return <VStack alignment="leading" spacing={spacing} padding={padding} frame={{maxWidth:"infinity",alignment:"leading"}} background={<RoundedRectangle cornerRadius={14} fill="secondarySystemBackground"/>}>{children}</VStack> }
@@ -227,4 +230,96 @@ export function MorePage({active,onChanged,onClose,selected=true}:{active:Contro
     <MoreHeading>核心操作</MoreHeading><MorePanel>{actions.map(([a,title,icon,impact],i)=><VStack key={a} spacing={0}>{i?<MoreSeparator/>:null}<Button buttonStyle="plain" disabled={busy} action={()=>act(a,title,impact)}><MoreLine title={title} icon={icon}/></Button></VStack>)}</MorePanel>
     <MoreHeading>DNS 工具</MoreHeading><MorePanel><Button buttonStyle="plain" disabled={busy} action={()=>act("dns","刷新DNS缓存","清空Mihomo内存DNS缓存，后续域名需重新解析，不是路由器dnsmasq缓存。")}><MoreLine title="刷新 DNS 缓存" icon="arrow.clockwise.circle" color="systemTeal"/></Button><MoreSeparator/><Button buttonStyle="plain" disabled={busy} action={()=>act("fakeip","刷新FakeIP缓存","清空Mihomo FakeIP映射，可能导致已有连接或旧DNS结果失效。") }><MoreLine title="刷新 FakeIP 缓存" icon="shield" color="systemTeal"/></Button><MoreSeparator/><NavigationLink destination={<DNSPage c={active}/>}><MoreLine title="域名查询" icon="magnifyingglass" color="systemTeal" arrow/></NavigationLink></MorePanel>
     </>}</>})
+}
+
+// Native Nikki management: kept in this shipped module so existing download lists remain complete.
+const source = (c:Controller) => [c.id,c.kind,c.plugin,c.url,c.username].join("|")
+const COMMIT_WARNING = "提交 UCI 后，OpenWrt 可能自动触发 Nikki 重载并短暂断流；远程优先订阅可能重新下载。此操作无法保证仅保存不生效，不会再额外发送重载请求。"
+const errorText = (e:unknown) => e instanceof NikkiManagementError ? e.message : "请求未完成，请检查连接、认证与 Nikki/LuCI 权限。草稿仍保留；详情不会写入日志。"
+function Note({children,error=false}:{children?:any;error?:boolean}) { return <Text font={12} foregroundStyle={error?"systemRed":"secondaryLabel"}>{children}</Text> }
+function Panel({children}:{children?:any}) { return <VStack alignment="leading" spacing={14} padding={18} frame={{maxWidth:"infinity",alignment:"leading"}} background={<RoundedRectangle cornerRadius={18} fill="secondarySystemBackground"/>}>{children}</VStack> }
+function Badge({children}:{children?:any}) { return <Text font={12} padding={{horizontal:8,vertical:4}} background={<RoundedRectangle cornerRadius={6} fill="tertiarySystemBackground"/>}>{children}</Text> }
+function Status({work}:{work:ReturnType<typeof useWork>}) { return <>{work.error?<Note error>{work.error}</Note>:null}{work.notice?<Note>{work.notice}</Note>:null}{work.busy?<Note>处理中…</Note>:null}</> }
+// Busy is also synchronous, so double taps cannot race before the next native render.
+function useWork(c:Controller) {
+  const [owner]=useState(()=>({...c})),[guard]=useState({alive:true,visible:true,busy:false,source:source(c)}),[busy,setBusy]=useState(false),[error,setError]=useState(""),[notice,setNotice]=useState("")
+  guard.source=source(c)
+  const current=()=>guard.alive&&guard.visible&&guard.source===source(owner)
+  useEffect(()=>{guard.alive=true;return()=>{guard.alive=false;guard.visible=false}},[])
+  async function run(fn:()=>Promise<void>) {if(guard.busy||!current())return;guard.busy=true;setBusy(true);setError("");setNotice("");try{await fn()}catch(e){if(current())setError(errorText(e))}finally{guard.busy=false;if(current())setBusy(false)}}
+  async function confirm(effect:string,fn:()=>Promise<void>) {if(await Dialog.confirm({title:"确认操作",message:`目标：${owner.name}\n${effect}`,confirmLabel:"继续",cancelLabel:"取消"})&&current())await fn()}
+  const commitConfirm=(effect:string,fn:()=>Promise<void>)=>confirm(effect+"\n"+COMMIT_WARNING,fn)
+  return {owner,guard,busy,error,notice,setNotice,current,run,confirm,commitConfirm,changed:source(c)!==source(owner),onAppear:()=>{guard.visible=true;setBusy(guard.busy)},onDisappear:()=>{guard.visible=false}}
+}
+type EditTarget = {kind:"subscription"; value:NikkiSubscription|null}|{kind:"rule";value:NikkiRule|null}|{kind:"sort"}|{kind:"file";value:NikkiFile}
+export function NikkiManagementPage({c,kind}:{c:Controller;kind:"profile"|"subscription"|"rule"}) {
+  const work=useWork(c),[data,setData]=useState<NikkiManagement|null>(null),[error,setError]=useState(""),[tick,setTick]=useState(0),[visible,setVisible]=useState(true),[edit,setEdit]=useState<EditTarget|null>(null)
+  const supported=c.kind==="openwrt"&&c.plugin==="nikki",title={profile:"配置文件",subscription:"订阅管理",rule:"附加规则"}[kind]
+  const refresh=()=>setTick(t=>t+1)
+  useEffect(()=>{if(!supported||work.changed||!visible)return;let alive=true;setError("");loadNikkiManagement(work.owner).then(d=>{if(alive)setData(d)}).catch(e=>{if(alive)setError(errorText(e))});return()=>{alive=false}},[source(c),kind,tick,visible])
+  const done=(saved=false)=>{setEdit(null);if(saved)refresh()}
+  const content=edit&&data ? edit.kind==="subscription"?<NikkiSubscriptionEditor c={c} base={data} value={edit.value} done={done}/>:edit.kind==="rule"?<NikkiRuleEditor c={c} base={data} value={edit.value} done={done}/>:edit.kind==="sort"?<NikkiRuleSort c={c} base={data} done={done}/>:<NikkiFileEditor c={c} base={data} file={edit.value} done={done}/> : <Text/>
+  async function removeSubscription(s:NikkiSubscription) {await work.run(()=>work.commitConfirm(`删除订阅「${s.name}」？仅删除此订阅设置，保留已下载文件；当前选用订阅不可删除。`,async()=>{await deleteNikkiSubscription(work.owner,data!,s.id);if(work.current()){refresh();work.setNotice("订阅设置已删除；系统可能已自动重载")}}))}
+  async function update(s:NikkiSubscription) {await work.run(()=>work.confirm(`更新订阅「${s.name}」？Nikki 将访问订阅地址并覆盖下载文件（包括对此文件的本地编辑），可能是当前选用配置。不会主动发送重载请求。`,async()=>{await updateNikkiSubscription(work.owner,s.id,data!);if(work.current()){refresh();work.setNotice("订阅已更新，未主动重载服务")}}))}
+  async function enable(f:NikkiFile) {if(data?.profile===f.key)return;await work.run(()=>work.commitConfirm(`启用「${f.name}」？将提交为 Nikki 选用配置，由系统触发重载；配置选择成功不代表内核已成功加载。`,async()=>{
+    await selectNikkiProfile(work.owner,data!,f.key)
+    if(work.current())refresh()
+    if(work.current())work.setNotice("配置选择已提交；系统可能已自动重载。请核实运行效果，未生效时可在服务管理单独重载")
+  }))}
+  const toolbar=!supported||work.changed?undefined:kind==="rule"?{topBarTrailing:<Menu label={<Text>操作</Text>}><Button title="排序列表" systemImage="arrow.up.arrow.down" disabled={!data||work.busy||data.rules.length<2} action={()=>setEdit({kind:"sort"})}/><Button title={data?.appendRules?"禁用规则":"启用规则"} systemImage={data?.appendRules?"pause.circle":"play.circle"} disabled={!data||work.busy} action={()=>work.run(()=>work.commitConfirm(`将${data!.appendRules?"禁用":"启用"} Nikki 附加规则总开关。`,async()=>{await setNikkiRulesEnabled(work.owner,data!,!data!.appendRules);if(work.current()){refresh();work.setNotice("规则总开关已提交；系统可能已自动重载")}}))}/><Button title="添加规则" systemImage="plus.circle" disabled={!data||work.busy} action={()=>setEdit({kind:"rule",value:null})}/><Button title="刷新" disabled={work.busy} action={refresh}/></Menu>}:kind==="subscription"?{topBarTrailing:<Button title="添加订阅" systemImage="plus" labelStyle="iconOnly" disabled={!data||work.busy} action={()=>setEdit({kind:"subscription",value:null})}/>}:{topBarTrailing:<Button title="刷新" disabled={work.busy} action={refresh}/>}
+  return <ScrollView background="systemBackground" navigationTitle={title} navigationBarTitleDisplayMode="inline" toolbar={toolbar} onAppear={()=>{work.onAppear();setVisible(true)}} onDisappear={()=>{work.onDisappear();setVisible(false)}} navigationDestination={{isPresented:edit!==null&&!work.changed,onChanged:(v:boolean)=>{if(!v)done()},content}}>
+    <VStack spacing={16} padding={16} frame={{maxWidth:"infinity"}}>
+      {!supported?<Note>不可用：当前来源不是 OpenWrt 上的 Nikki，不会向其他插件发送管理请求。</Note>:work.changed?<Note error>来源已改变，请返回后重新进入；不会沿用上一来源的草稿。</Note>:<>
+        {error?<><Note error>{error}</Note><Button title="重试" action={refresh}/></>:null}<Status work={work}/>
+        {!data&&!error?<Note>正在读取…</Note>:null}
+        {data&&kind==="rule"?<>
+          {data.rules.length===0?<VStack spacing={14} frame={{maxWidth:"infinity",minHeight:360}}><Image systemName="text.badge.plus" font={56} foregroundStyle="secondaryLabel"/><Text font="title2" fontWeight="bold">没有规则</Text><Note>点击右上角菜单添加规则</Note></VStack>:<><Note>{`总开关：${data.appendRules?"启用":"禁用"} · 提交可能自动重载 Nikki 服务`}</Note>{data.rules.map(r=><Panel key={r.id}><HStack><Text fontWeight="semibold">{r.type}</Text><Spacer/><Badge>{r.enabled?"启用":"禁用"}</Badge></HStack><Text>{r.matcher||"所有请求"}</Text><Note>{`${r.node}${r.noResolve?" · no-resolve":""}`}</Note><HStack><Button title="编辑" disabled={work.busy} action={()=>setEdit({kind:"rule",value:r})}/><Spacer/><Button title="删除规则" systemImage="trash" role="destructive" disabled={work.busy} action={()=>work.run(()=>work.commitConfirm(`删除规则「${r.type} · ${r.matcher}」？`,async()=>{await deleteNikkiRule(work.owner,data,r.id);if(work.current())refresh()}))}/></HStack></Panel>)}</>}
+        </>:null}
+        {data&&kind==="subscription"?<>{data.subscriptions.length===0?<Note>暂无订阅，请点击右上角 + 添加</Note>:data.subscriptions.map(s=><Panel key={s.id}><HStack><Badge>订阅</Badge><Text font="headline">{s.name}</Text></HStack><Text font={13} foregroundStyle="secondaryLabel" lineLimit={1}>{s.url||"未设置URL"}</Text><Note>{`更新于 ${s.updated}`}</Note><HStack spacing={18}><Button title="编辑" frame={{maxWidth:"infinity"}} disabled={work.busy} action={()=>setEdit({kind:"subscription",value:s})}/><Button title="更新订阅" systemImage="arrow.clockwise" labelStyle="iconOnly" disabled={work.busy} action={()=>update(s)}/><Button title="删除订阅" systemImage="trash" labelStyle="iconOnly" role="destructive" disabled={work.busy} action={()=>removeSubscription(s)}/></HStack></Panel>)}<Button title="刷新" disabled={work.busy} action={refresh}/><Note>新增后可更新订阅。设置提交可能自动重载 Nikki，远程优先订阅可能在重载时下载；提交前会再次确认。</Note></>:null}
+        {data&&kind==="profile"?<>
+          <Note>左右滑动切换，点击卡片启用</Note>
+          {data.filesError?<Note error>部分目录无读取权限，文件列表或元信息可能不完整。</Note>:null}
+          {data.files.length===0?<Note>没有配置文件，请先在订阅管理添加并更新订阅，或通过原有设备文件管理上传本地配置。</Note>:<TabView tabViewStyle="page" frame={{height:370}}>{data.files.map(f=><VStack key={f.key} padding={{horizontal:6,vertical:12}}><Panel><Button buttonStyle="plain" disabled={work.busy} action={()=>enable(f)}><VStack alignment="leading" spacing={18} frame={{maxWidth:"infinity",minHeight:200,alignment:"leading"}}><HStack><Badge>{f.origin==="subscription"?"订阅":"本地"}</Badge><Spacer/>{data.profile===f.key?<Image systemName="checkmark.circle.fill" foregroundStyle="systemGreen"/>:null}</HStack><Text font="title2" fontWeight="bold" lineLimit={2}>{f.name}</Text><Note>{data.profile===f.key?"当前选用":"点击启用"}</Note><Note>{`更新于 ${f.mtime&&f.mtime>0?new Date(f.mtime*1000).toLocaleString():"未提供"}`}</Note><Note>{f.size===null?"文件大小未提供（可能尚未下载）":fmtBytes(f.size)}</Note></VStack></Button><Button title="编辑" systemImage="square.and.pencil" disabled={work.busy||f.size===null} action={()=>setEdit({kind:"file",value:f})}/></Panel></VStack>)}</TabView>}
+          <Note>勾选来自 Nikki 已保存的配置选择，不代表已核验内核运行配置。列表不读取配置正文。</Note>
+        </>:null}
+      </>}
+    </VStack>
+  </ScrollView>
+}
+function EditorActions({work,done,save,disabled}:{work:ReturnType<typeof useWork>;done:(saved?:boolean)=>void;save:()=>void;disabled:boolean}) {return {topBarLeading:<Button title="取消" disabled={work.busy} action={()=>done()}/>,topBarTrailing:<Button title={work.busy?"保存中…":"保存"} disabled={work.busy||disabled||work.changed} action={save}/>}}
+export function NikkiSubscriptionEditor({c,base,value,done}:{c:Controller;base:NikkiManagement;value:NikkiSubscription|null;done:(saved?:boolean)=>void}) {
+  const work=useWork(c),[name,setName]=useState(value?.name??""),[url,setUrl]=useState(value?.url??""),[ua,setUA]=useState(value?.userAgent??"clash"),[prefer,setPrefer]=useState(value?.prefer??"remote")
+  const dirty=!value||name!==value.name||url!==value.url||ua!==value.userAgent||prefer!==value.prefer
+  async function save(){await work.run(()=>work.commitConfirm("保存此订阅设置？",async()=>{await saveNikkiSubscription(work.owner,base,value?.id??null,{name,url,userAgent:ua,prefer});if(work.current())done(true)}))}
+  return <Form background="systemBackground" scrollContentBackground="hidden" navigationTitle="订阅设置" navigationBarTitleDisplayMode="inline" toolbar={EditorActions({work,done,save,disabled:!dirty})} onAppear={work.onAppear} onDisappear={work.onDisappear}>
+    <Section header={<Text>基本信息</Text>}><TextField title="名称" value={name} onChanged={setName}/><TextField title="URL" value={url} onChanged={setUrl}/></Section>
+    <Section header={<Text>User Agent</Text>}><Picker title="User Agent" pickerStyle="segmented" value={ua} onChanged={setUA}><Text tag="clash">Clash</Text><Text tag="clash.meta">Clash Meta</Text><Text tag="mihomo">Mihomo</Text></Picker>{!["clash","clash.meta","mihomo"].includes(ua)?<Note error>当前是自定义值，请明确选择后再保存</Note>:null}</Section>
+    <Section header={<Text>配置优先级</Text>}><Picker title="配置优先级" pickerStyle="segmented" value={prefer} onChanged={setPrefer}><Text tag="remote">远程优先</Text><Text tag="local">本地优先</Text></Picker></Section>
+    <Section><Note>仅修改此订阅的指定字段，其他未知字段保持不变。提交设置可能自动重载 Nikki；保存前会说明影响并确认。</Note><Status work={work}/>{work.changed?<Note error>来源已改变，请取消后重新进入</Note>:null}</Section>
+  </Form>
+}
+export function NikkiRuleEditor({c,base,value,done}:{c:Controller;base:NikkiManagement;value:NikkiRule|null;done:(saved?:boolean)=>void}) {
+  const work=useWork(c),[type,setType]=useState(value?.type??"DOMAIN-SUFFIX"),[matcher,setMatcher]=useState(value?.matcher??""),[node,setNode]=useState(value?.node??"GLOBAL"),[enabled,setEnabled]=useState(value?.enabled??true),[noResolve,setNoResolve]=useState(value?.noResolve??false)
+  const dirty=!value||type!==value.type||matcher!==value.matcher||node!==value.node||enabled!==value.enabled||noResolve!==value.noResolve
+  async function save(){await work.run(()=>work.commitConfirm("保存此附加规则？",async()=>{await saveNikkiRule(work.owner,base,value?.id??null,{type,matcher,node,enabled,noResolve});if(work.current())done(true)}))}
+  return <Form background="systemBackground" scrollContentBackground="hidden" navigationTitle={value?"编辑规则":"添加规则"} navigationBarTitleDisplayMode="inline" toolbar={EditorActions({work,done,save,disabled:!dirty})} onAppear={work.onAppear} onDisappear={work.onDisappear}>
+    <Section><Toggle title="启用" value={enabled} onChanged={setEnabled}/><Picker title="规则类型" pickerStyle="menu" value={type} onChanged={setType}>{Array.from(new Set([...NIKKI_RULE_TYPES,type])).map(t=><Text key={t} tag={t}>{t}</Text>)}</Picker><TextField title="类型（支持自定义）" value={type} onChanged={setType}/>{type!=="MATCH"?<TextField title="匹配内容" value={matcher} onChanged={setMatcher}/>:null}<TextField title="策略/节点" value={node} onChanged={setNode}/>{/IP-CIDR6?|IP-ASN|GEOIP/.test(type)?<Toggle title="不解析域名（no-resolve）" value={noResolve} onChanged={setNoResolve}/>:null}</Section>
+    <Section><Note>提交 Nikki 附加规则可能自动触发服务重载。MATCH 不需要匹配内容；复杂类型的最终合法性由 Mihomo 校验。</Note><Status work={work}/>{work.changed?<Note error>来源已改变，请取消后重新进入</Note>:null}</Section>
+  </Form>
+}
+export function NikkiRuleSort({c,base,done}:{c:Controller;base:NikkiManagement;done:(saved?:boolean)=>void}) {
+  const work=useWork(c),[ids,setIDs]=useState(()=>base.rules.map(r=>r.id)),dirty=ids.some((id,i)=>id!==base.rules[i].id)
+  function move(i:number,d:number) {const next=[...ids];[next[i],next[i+d]]=[next[i+d],next[i]];setIDs(next)}
+  async function save(){await work.run(()=>work.commitConfirm("提交此规则顺序？",async()=>{await reorderNikkiRules(work.owner,base,ids);if(work.current())done(true)}))}
+  return <ScrollView background="systemBackground" navigationTitle="排序列表" navigationBarTitleDisplayMode="inline" toolbar={EditorActions({work,done,save,disabled:!dirty})} onAppear={work.onAppear} onDisappear={work.onDisappear}><VStack spacing={12} padding={16}><Note>调整顺序后保存；取消不会修改设备。非规则配置的位置保持不变。</Note>{ids.map((id,i)=>{const r=base.rules.find(r=>r.id===id)!;return <Panel key={id}><Text>{`${i+1}. ${r.type} · ${r.matcher||r.node}`}</Text><HStack><Button title="上移" systemImage="arrow.up" disabled={work.busy||i===0} action={()=>move(i,-1)}/><Spacer/><Button title="下移" systemImage="arrow.down" disabled={work.busy||i===ids.length-1} action={()=>move(i,1)}/></HStack></Panel>})}<Status work={work}/></VStack></ScrollView>
+}
+export function NikkiFileEditor({c,base,file,done}:{c:Controller;base:NikkiManagement;file:NikkiFile;done:(saved?:boolean)=>void}) {
+  const work=useWork(c),[original,setOriginal]=useState<string|null>(null),[text,setText]=useState(""),[loadError,setLoadError]=useState(""),[tick,setTick]=useState(0)
+  useEffect(()=>{let alive=true;readNikkiFile(work.owner,file.key).then(t=>{if(alive&&work.current()){setOriginal(t);setText(t)}}).catch(e=>{if(alive&&work.current())setLoadError(errorText(e))});return()=>{alive=false}},[file.key,tick])
+  async function save(){if(original===null)return;await work.run(()=>work.confirm(`覆盖文件「${file.filename}」？可能是当前选用的配置。仅保存文件，不重载服务；大文件分块写入，失败可能留下部分内容，请勿在失败后重载。`,async()=>{await saveNikkiFile(work.owner,file.key,original,text);if(work.current()){setOriginal(text);work.setNotice("完整文件已保存并回读核验；未重载 Nikki 服务")}}))}
+  return <VStack alignment="leading" spacing={12} padding={16} background="systemBackground" frame={{maxWidth:"infinity",maxHeight:"infinity"}} navigationTitle={file.name} navigationBarTitleDisplayMode="inline" toolbar={EditorActions({work,done,save,disabled:original===null||original===text})} onAppear={work.onAppear} onDisappear={work.onDisappear}>
+    <Note>{base.profile===file.key?"当前选用 · 保存不会自动应用":"未选用"}</Note><HStack><Image systemName="doc.text"/><Text>{file.filename}</Text></HStack>
+    {loadError?<><Note error>{loadError}</Note><Button title="重试读取" action={()=>{setLoadError("");setTick(t=>t+1)}}/></>:original===null?<Note>正在完整读取配置…</Note>:<TextField title="配置内容" value={text} onChanged={setText} axis="vertical" lineLimit={{min:20,max:1000}} font={13} fontDesign="monospaced" frame={{maxWidth:"infinity",maxHeight:"infinity",alignment:"topLeading"}}/>}
+    <Status work={work}/>{work.changed?<Note error>来源已改变，请取消后重新进入</Note>:null}
+  </VStack>
 }

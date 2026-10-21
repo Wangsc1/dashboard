@@ -1,6 +1,6 @@
 
 import { getPreferences, customHeaders, recordEvent, controllerHealth, feedback } from "./preferences"
-export const VERSION = "1.5.128"
+export const VERSION = "1.5.129"
 
 export type Kind = "clash" | "openwrt"
 export type Plugin = "openclash" | "nikki" | "mihomo"
@@ -108,7 +108,7 @@ const enc = encodeURIComponent
 const num = (v: any) => typeof v === "number" && Number.isFinite(v) ? v : 0
 
 const NULL_SID = "00000000000000000000000000000000"
-const sessions: Record<string, { sid: string; at: number }> = {}
+const sessions: Record<string, { sid: string; at: number; source:string }> = {}
 async function ubusRaw(c: Controller, sid: string, obj: string, method: string, params: any): Promise<any> {
   try { return await ubusRequest(c, sid, obj, method, params) }
   catch (e) { recordEvent("ubus", false); throw e }
@@ -144,7 +144,7 @@ async function wrtLoginOnce(c: Controller): Promise<string> {
     const sid = r.ubus_rpc_session
     if (!sid) throw new Error("登录失败")
     recordEvent("login", true)
-    sessions[c.id] = { sid, at: Date.now() }
+    sessions[c.id] = { sid, at: Date.now(), source:[c.url,c.username].join("|") }
     return sid
   } catch (e: any) {
     recordEvent("login", false)
@@ -694,18 +694,175 @@ export async function queryDNS(c: Controller, name: string, type: string) {
   const j = await http(await cc(c),`/dns/query?name=${enc(name)}&type=${enc(type)}`)
   return { status: num(j.Status), answers: (j.Answer ?? []).map((x:any) => ({ data:String(x.data ?? ""), type:num(x.type), ttl:num(x.TTL) })) }
 }
-export interface NikkiSubscription { id: string; name: string; updated: string; used: string; total: string; expire: string }
-export interface NikkiManagement { profile: string; files: {name:string; size:number}[]; subscriptions: NikkiSubscription[]; rules: {id:string; type:string; matcher:string; node:string; enabled:boolean}[]; appendRules: boolean }
-export async function loadNikkiManagement(c: Controller): Promise<NikkiManagement> {
-  requireNikki(c)
-  const [j,files] = await Promise.all([ubus(c,"uci","get",{config:"nikki"}),ubus(c,"file","list",{path:"/etc/nikki/profiles"})])
-  const vs: any[] = Object.values(j.values ?? {})
-  return { profile:String(j.values?.config?.profile ?? "未提供"), appendRules: j.values?.mixin?.rule === "1",
-    files:(files.entries ?? []).filter((x:any)=>x.type === "file" && /^[^/]+\.ya?ml$/i.test(x.name)).map((x:any)=>({name:String(x.name),size:num(x.size)})),
-    subscriptions:vs.filter(x=>x[".type"] === "subscription").map(x=>({id:String(x[".name"]),name:String(x.name || x[".name"]),updated:String(x.update || "未提供"),used:String(x.used || "未提供"),total:String(x.total || "未提供"),expire:String(x.expire || "未提供")})),
-    rules:vs.filter(x=>x[".type"] === "rule").map(x=>({id:String(x[".name"]),type:String(x.type??""),matcher:String(x.matcher??""),node:String(x.node??""),enabled:x.enabled === "1"})) }
+// Nikki semantics: OpenWrt-nikki 78e1a751, tools/nikki.js + view/nikki/{app,profile,mixin,editor}.js.
+// All bodies, UCI snapshots and drafts stay in memory; never send them to recordEvent/Storage.
+export interface NikkiSubscription { id:string; name:string; url:string; userAgent:string; prefer:string; updated:string; used:string; total:string; expire:string }
+export interface NikkiRule { id:string; type:string; matcher:string; node:string; enabled:boolean; noResolve:boolean }
+export interface NikkiFile { key:string; name:string; filename:string; origin:"file"|"subscription"; size:number|null; mtime:number|null }
+export interface NikkiManagement { profile:string; files:NikkiFile[]; subscriptions:NikkiSubscription[]; rules:NikkiRule[]; appendRules:boolean; filesError:boolean }
+export class NikkiManagementError extends Error {}
+const nikkiFail = (message:string):never => { throw new NikkiManagementError(message) }
+const nikkiSnapshots = new WeakMap<NikkiManagement,{source:string; values:any}>()
+const nikkiBusy = new Set<string>()
+const nikkiSource = (c:Controller) => [c.id,c.kind,c.plugin,c.url,c.username].join("|")
+function nikkiID(id:string) { if (!/^[a-zA-Z0-9_]+$/.test(id)) nikkiFail("标识无效") }
+function nikkiFilename(name:string) { if (!name || name.length>255 || /[:\/\\\x00-\x1f\x7f]/.test(name) || name==="." || name===".." || !/\.ya?ml$/i.test(name)) nikkiFail("配置文件名无效") }
+export function nikkiFilePath(key:string) {
+  if(key.startsWith("file:")){const name=key.slice(5);nikkiFilename(name);return "/etc/nikki/profiles/"+name}
+  if(key.startsWith("subscription:")){const id=key.slice(13);nikkiID(id);return "/etc/nikki/subscriptions/"+id+".yaml"}
+  return nikkiFail("配置来源无效")
 }
-export async function updateNikkiSubscription(c: Controller, id: string) { requireNikki(c); if (!/^[a-zA-Z0-9_]+$/.test(id)) throw new Error("订阅标识无效"); const j = await ubus(c,"luci.nikki","update_subscription",{section_id:id}); if (j.success !== true) throw new Error("Nikki报告订阅更新失败") }
+function canonical(v:any):string { if(Array.isArray(v))return "["+v.map(canonical).join(",")+"]";if(v&&typeof v==="object")return "{"+Object.keys(v).sort().map(k=>JSON.stringify(k)+":"+canonical(v[k])).join(",")+"}";return JSON.stringify(v) }
+async function nikkiSession(c:Controller) { requireNikki(c); if(!sessions[c.id]||sessions[c.id].source!==[c.url,c.username].join("|")||Date.now()-sessions[c.id].at>50*60*1000)await wrtLogin(c);if(sessions[c.id]?.source!==[c.url,c.username].join("|"))return nikkiFail("认证来源已改变，请重试");return sessions[c.id].sid }
+// Read-only requests may refresh an expired shared login; writes below never replay.
+async function nikkiRead(c:Controller,obj:string,method:string,args:any) {await nikkiSession(c);return ubus(c,obj,method,args)}
+async function nikkiExclusive<T>(c:Controller,fn:()=>Promise<T>):Promise<T> {
+  requireNikki(c);const key=nikkiSource(c);if(nikkiBusy.has(key))return nikkiFail("该来源正在执行管理操作，请稍后重试")
+  nikkiBusy.add(key);try{return await fn()}finally{nikkiBusy.delete(key)}
+}
+export async function loadNikkiManagement(c:Controller):Promise<NikkiManagement> {
+  requireNikki(c)
+  const call=(obj:string,method:string,args:any)=>nikkiRead(c,obj,method,args)
+  const [j,local,remote]=await Promise.all([call("uci","get",{config:"nikki"}),call("file","list",{path:"/etc/nikki/profiles"}).catch(()=>null),call("file","list",{path:"/etc/nikki/subscriptions"}).catch(()=>null)])
+  if(!j.values||typeof j.values!=="object")return nikkiFail("未能读取 Nikki 配置")
+  const vs:any[]=Object.entries(j.values).map(([id,v]:[string,any])=>({...v,".name":id})).sort((a,b)=>(a[".index"]??0)-(b[".index"]??0))
+  const subscriptions:NikkiSubscription[]=vs.filter(x=>x[".type"]==="subscription").map(x=>({id:x[".name"],name:String(x.name||x[".name"]),url:String(x.url??""),userAgent:String(x.user_agent??"clash"),prefer:String(x.prefer??"remote"),updated:String(x.update||"未提供"),used:String(x.used||"未提供"),total:String(x.total||"未提供"),expire:String(x.expire||"未提供")}))
+  const safeEntries=(j:any)=>(j?.entries??[]).filter((x:any)=>{try{nikkiFilename(x.name);return x.type==="file"}catch{return false}})
+  const localFiles:NikkiFile[]=safeEntries(local).map((x:any)=>({key:"file:"+x.name,name:String(x.name),filename:String(x.name),origin:"file",size:typeof x.size==="number"?x.size:null,mtime:typeof x.mtime==="number"?x.mtime:null}))
+  const remoteEntries=safeEntries(remote)
+  const files=[...localFiles,...subscriptions.map(s=>{const x=remoteEntries.find((f:any)=>f.name===s.id+".yaml");return {key:"subscription:"+s.id,name:s.name,filename:s.id+".yaml",origin:"subscription" as const,size:x?.size??null,mtime:x?.mtime??null}})]
+  const result:NikkiManagement={profile:String(j.values.config?.profile??""),appendRules:j.values.mixin?.rule==="1",files,subscriptions,rules:vs.filter(x=>x[".type"]==="rule").map(x=>({id:x[".name"],type:String(x.type??""),matcher:String(x.matcher??""),node:String(x.node??""),enabled:x.enabled==="1",noResolve:x.no_resolve==="1"})),filesError:!local||!remote}
+  nikkiSnapshots.set(result,{source:nikkiSource(c),values:j.values});return result
+}
+// Mutations pin one authenticated session: never replay add/append/commit after an ambiguous response.
+// Refuse dirty sessions rather than committing/reverting somebody else's staged UCI changes.
+async function nikkiTransaction(c:Controller,base:NikkiManagement,mutate:(call:(method:string,args?:any)=>Promise<any>,values:any)=>Promise<void>) {
+  return nikkiExclusive(c,async()=>{
+    const snap=nikkiSnapshots.get(base);if(!snap||snap.source!==nikkiSource(c))return nikkiFail("来源已改变，请返回并刷新")
+    const changes=await nikkiRead(c,"uci","changes",{config:"nikki"})
+    if(!Array.isArray(changes.changes)||changes.changes.length>0)return nikkiFail("会话存在未提交改动或无法核验，请先在原管理端处理后刷新")
+    let staged=false,committing=false
+    const sid=await nikkiSession(c),call=(method:string,args:any={})=>{if(["set","add","delete","order"].includes(method))staged=true;return ubusRaw(c,sid,"uci",method,{config:"nikki",...args})}
+    const current=(await call("get")).values
+    if(canonical(current)!==canonical(snap.values))return nikkiFail("设备配置已改变，请刷新后重新编辑；当前草稿未丢弃")
+    // rpcd commit emits config.change; Nikki registers procd_add_reload_trigger("nikki").
+    // UI must warn/confirm this upstream side effect even without an explicit rc.init.
+    try { await mutate(call,current);committing=true;await call("commit") }
+    catch(e) {
+      if(!committing&&staged){try{await call("revert")}catch{return nikkiFail("保存未完成且清理暂存失败，请检查设备；草稿仍保留")}}
+      if(e instanceof NikkiManagementError)throw e
+      return nikkiFail(committing?"提交结果未确认，系统可能已触发重载。请刷新核实；不会自动重试":"保存未完成；草稿仍保留，请检查权限与连接")
+    }
+  })
+}
+export function validateNikkiSubscription(s:Pick<NikkiSubscription,"name"|"url"|"userAgent"|"prefer">) {
+  if(!s.name.trim()||s.name.length>200)return nikkiFail("请填写订阅名称（最多200字）")
+  if(!/^https?:\/\/[^/?#\s]+(?:[/?#][^\s]*)?$/i.test(s.url)||/[\x00-\x20\x7f]/.test(s.url))return nikkiFail("订阅URL须为完整的HTTP或HTTPS地址")
+  if(!["clash","clash.meta","mihomo"].includes(s.userAgent)||!["remote","local"].includes(s.prefer))return nikkiFail("不支持的 User Agent 或配置优先级，请明确选择")
+}
+export async function saveNikkiSubscription(c:Controller,base:NikkiManagement,id:string|null,s:Pick<NikkiSubscription,"name"|"url"|"userAgent"|"prefer">) {
+  requireNikki(c);validateNikkiSubscription(s);if(id)nikkiID(id)
+  await nikkiTransaction(c,base,async(call,vs)=>{const values={name:s.name,url:s.url,user_agent:s.userAgent,prefer:s.prefer};if(id){if(vs[id]?.[".type"]!=="subscription")return nikkiFail("订阅已不存在");await call("set",{section:id,values})}else await call("add",{type:"subscription",values})})
+}
+export async function deleteNikkiSubscription(c:Controller,base:NikkiManagement,id:string) {
+  nikkiID(id);await nikkiTransaction(c,base,async(call,vs)=>{if(vs[id]?.[".type"]!=="subscription")return nikkiFail("订阅已不存在");if(vs.config?.profile==="subscription:"+id)return nikkiFail("不能删除当前选用订阅，请先切换配置")
+    // Match LuCI: remove only this UCI section, not the downloaded file or unrelated sections.
+    await call("delete",{section:id})})
+}
+export const NIKKI_RULE_TYPES=["DOMAIN","DOMAIN-SUFFIX","DOMAIN-WILDCARD","DOMAIN-KEYWORD","DOMAIN-REGEX","IP-CIDR","IP-CIDR6","DST-PORT","SRC-PORT","PROCESS-NAME","RULE-SET","GEOSITE","GEOIP","IP-ASN","MATCH"]
+export function validateNikkiRule(r:Omit<NikkiRule,"id">) {
+  if(!/^[A-Z][A-Z0-9-]*$/.test(r.type)||!r.node.trim()||/[\r\n,\x00]/.test(r.node))return nikkiFail("请填写有效规则类型和策略名称")
+  if(r.type!=="MATCH"&&(!r.matcher.trim()||/[\r\n\x00]/.test(r.matcher)))return nikkiFail("请填写匹配内容")
+  if(/^(DST|SRC)-PORT$/.test(r.type)&&!r.matcher.split("/").every(v=>{const m=v.match(/^(\d+)(?:-(\d+))?$/);return !!m&&+m[1]>=1&&+m[1]<=65535&&(!m[2]||(+m[2]>=+m[1]&&+m[2]<=65535))}))return nikkiFail("端口须为1–65535或有效范围，可用 / 分隔")
+  if(r.type==="DOMAIN"||r.type==="DOMAIN-SUFFIX")if(!/^(?:[a-z0-9_](?:[a-z0-9_-]*[a-z0-9_])?\.)*[a-z0-9_](?:[a-z0-9_-]*[a-z0-9_])?\.?$/i.test(r.matcher))return nikkiFail("域名匹配内容无效")
+  if(r.type==="IP-CIDR"){const m=r.matcher.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})\/(\d{1,2})$/);if(!m||m.slice(1,5).some(v=>+v>255)||+m[5]>32)return nikkiFail("请填写有效IPv4 CIDR")}
+  if(r.type==="IP-CIDR6"){
+    const [raw,prefix,...rest]=r.matcher.split("/");let ip=raw
+    if(ip.includes(".")){const pos=ip.lastIndexOf(":"),tail=ip.slice(pos+1).split(".");if(tail.length!==4||tail.some(v=>!/^\d{1,3}$/.test(v)||+v>255))return nikkiFail("请填写有效IPv6 CIDR");ip=ip.slice(0,pos+1)+"0:0"}
+    const halves=ip.split("::"),valid=(s:string)=>s.split(":").every(v=>/^[0-9a-f]{1,4}$/i.test(v))
+    const validIP=halves.length===1?valid(ip)&&ip.split(":").length===8:halves.length===2&&halves.every(s=>!s||valid(s))&&halves.reduce((n,s)=>n+(s?s.split(":").length:0),0)<8
+    if(rest.length||!/^\d{1,3}$/.test(prefix??"")||+prefix>128||!validIP)return nikkiFail("请填写有效IPv6 CIDR")
+  }
+  // DOMAIN-REGEX is a Mihomo/Go expression, not JavaScript RegExp; do not reject valid Go syntax here.
+}
+export async function saveNikkiRule(c:Controller,base:NikkiManagement,id:string|null,r:Omit<NikkiRule,"id">) {
+  requireNikki(c);validateNikkiRule(r);if(id)nikkiID(id)
+  await nikkiTransaction(c,base,async(call,vs)=>{const values={type:r.type,matcher:r.type==="MATCH"?"":r.matcher,node:r.node,enabled:r.enabled?"1":"0",no_resolve:r.noResolve?"1":"0"};if(id){if(vs[id]?.[".type"]!=="rule")return nikkiFail("规则已不存在");await call("set",{section:id,values})}else await call("add",{type:"rule",values})})
+}
+export async function deleteNikkiRule(c:Controller,base:NikkiManagement,id:string) {nikkiID(id);await nikkiTransaction(c,base,async(call,vs)=>{if(vs[id]?.[".type"]!=="rule")return nikkiFail("规则已不存在");await call("delete",{section:id})})}
+export async function setNikkiRulesEnabled(c:Controller,base:NikkiManagement,enabled:boolean) {await nikkiTransaction(c,base,async(call,vs)=>{if(!vs.mixin)return nikkiFail("mixin配置不存在");await call("set",{section:"mixin",values:{rule:enabled?"1":"0"}})})}
+export async function reorderNikkiRules(c:Controller,base:NikkiManagement,ids:string[]) {
+  ids.forEach(nikkiID)
+  if(ids.length!==base.rules.length||new Set(ids).size!==ids.length||ids.some(id=>!base.rules.some(r=>r.id===id)))return nikkiFail("规则排序列表无效")
+  await nikkiTransaction(c,base,async(call,vs)=>{let i=0;const all=Object.keys(vs).sort((a,b)=>(vs[a][".index"]??0)-(vs[b][".index"]??0));await call("order",{sections:all.map(id=>vs[id][".type"]==="rule"?ids[i++]:id)})})
+}
+export async function selectNikkiProfile(c:Controller,base:NikkiManagement,key:string) {
+  nikkiFilePath(key);if(!base.files.some(f=>f.key===key))return nikkiFail("配置不在当前文件列表")
+  await nikkiRegularFile(c,key)
+  await nikkiTransaction(c,base,async(call,vs)=>{if(!vs.config)return nikkiFail("config配置不存在");await call("set",{section:"config",values:{profile:key}})})
+  // No extra rc.init: rpcd commit may already trigger Nikki reload. Never reload twice implicitly.
+}
+async function nikkiRegularFile(c:Controller,key:string) {
+  requireNikki(c);const path=nikkiFilePath(key),slash=path.lastIndexOf("/")
+  // file.list on older rpcd follows links. lstat every non-root ancestor and the leaf,
+  // concurrently with the metadata listing: no exec permission and no serial path RTTs.
+  const parts=path.split("/").filter(Boolean),paths=parts.map((_,i)=>"/"+parts.slice(0,i+1).join("/"))
+  const [list,checks]=await Promise.all([
+    nikkiRead(c,"file","list",{path:path.slice(0,slash)}),
+    Promise.all(paths.map(async p=>{try{return {value:await nikkiRead(c,"file","lstat",{path:p}),error:""}}catch(e:any){return {value:null,error:String(e?.message??"")}}}))
+  ])
+  const entry=list.entries?.find((x:any)=>x.name===path.slice(slash+1))
+  if(!entry||entry.type!=="file"||typeof entry.size!=="number")return nikkiFail("配置文件不存在、不是普通文件或无读取权限；订阅请先更新")
+  for(let i=0;i<checks.length;i++)if(!checks[i].error&&checks[i].value?.type!==(i===checks.length-1?"file":"directory"))return nikkiFail("文件或祖先路径不是普通文件/目录（可能含符号链接），已拒绝操作")
+  if(checks.every(x=>!x.error))return entry
+  // Only METHOD_NOT_FOUND for every path proves an old rpcd without lstat. Permission
+  // errors, missing paths, malformed metadata, and mixed results never authorize fallback.
+  if(!checks.every(x=>x.error==="ubus 调用失败，代码 3"))return nikkiFail("file.lstat 路径核验未完成，请检查读取权限或文件状态；已拒绝文件操作")
+  let resolved:any
+  try{resolved=await nikkiRead(c,"file","exec",{command:"/bin/busybox",params:["readlink","-f",path]})}
+  catch{return nikkiFail("旧设备不支持 file.lstat 且缺少只读路径核验权限（BusyBox readlink），已拒绝文件操作")}
+  if(resolved.code!==0||String(resolved.stdout??"").replace(/\n$/,"")!==path)return nikkiFail("文件路径含符号链接、不能核验或已越出 Nikki 配置目录，已拒绝操作")
+  return entry
+}
+// LuCI fs.read_direct -> cgi-io download streams to EOF. file.read is NOT a full-file API:
+// rpcd file.c uses a single read(st_size), 4096 for size=0, and rejects >=256KiB.
+export async function readNikkiFile(c:Controller,key:string):Promise<string> {
+  requireNikki(c);const path=nikkiFilePath(key),before=await nikkiRegularFile(c,key),sid=await nikkiSession(c)
+  const r=await fetch(c.url+"/cgi-bin/cgi-download",{method:"POST",headers:{...customHeaders(),"Content-Type":"application/x-www-form-urlencoded"},body:"sessionid="+enc(sid)+"&path="+enc(path),allowInsecureRequest:true,timeout:getPreferences().requestTimeout} as any)
+  if(!r.ok)return nikkiFail("完整文件读取失败：需要 LuCI cgi-download 及该路径的读取权限；不回退到截断读取")
+  const text=await r.text(),after=await nikkiRegularFile(c,key)
+  if(utf8Length(text)!==before.size||before.size!==after.size||before.mtime!==after.mtime)return nikkiFail("文件未完整读取、编码不是UTF-8或读取期间已改变，请重试")
+  if(text.includes("\u0000"))return nikkiFail("文件不是可编辑的UTF-8文本")
+  return text
+}
+function utf8Length(s:string) {let n=0;for(const ch of s){const cp=ch.codePointAt(0)!;n+=cp<0x80?1:cp<0x800?2:cp<0x10000?3:4}return n}
+export async function saveNikkiFile(c:Controller,key:string,original:string,text:string) {
+  requireNikki(c);const path=nikkiFilePath(key);if(text.includes("\u0000"))return nikkiFail("配置不能包含NUL字符")
+  await nikkiExclusive(c,async()=>{
+    if(await readNikkiFile(c,key)!==original)return nikkiFail("设备文件已改变，未覆盖；请保留草稿并重新打开文件核对")
+    const stat=await nikkiRegularFile(c,key),sid=await nikkiSession(c)
+    if(!Number.isInteger(stat.mode))return nikkiFail("文件权限元信息缺失，未写入；请检查设备文件接口")
+    // Same chunked protocol as Nikki.writefile, but split by Unicode code point to preserve UTF-8.
+    let chunk="",bytes=0,append=false
+    const write=async()=>{await ubusRaw(c,sid,"file","write",{path,data:chunk,append,mode:stat.mode&0o777});append=true;chunk="";bytes=0}
+    try{for(const ch of text){const n=utf8Length(ch);if(bytes+n>8192)await write();chunk+=ch;bytes+=n}if(chunk||!append)await write();if(await readNikkiFile(c,key)!==text)throw new Error("verify")}
+    catch{return nikkiFail("文件保存或完整性核验失败，设备可能只写入部分内容。草稿仍保留，请勿重载服务；核对设备文件后恢复/重试")}
+  })
+}
+export async function updateNikkiSubscription(c:Controller,id:string,base?:NikkiManagement) {
+  requireNikki(c);nikkiID(id);await nikkiExclusive(c,async()=>{
+    const snap=base?nikkiSnapshots.get(base):undefined
+    if(base&&(!snap||snap.source!==nikkiSource(c)))return nikkiFail("来源已改变，请刷新后更新")
+    const changes=await nikkiRead(c,"uci","changes",{config:"nikki"})
+    if(!Array.isArray(changes.changes)||changes.changes.length)return nikkiFail("存在未提交的 Nikki 改动或无法核验，请先处理后再更新订阅")
+    const current=await nikkiRead(c,"uci","get",{config:"nikki",section:id})
+    if(current.values?.[".type"]!=="subscription")return nikkiFail("订阅已不存在或类型不符")
+    const options=(v:any)=>Object.fromEntries(Object.entries(v??{}).filter(([k])=>!k.startsWith(".")))
+    if(snap&&canonical(options(snap.values[id]))!==canonical(options(current.values)))return nikkiFail("订阅设置已改变，请刷新后更新")
+    const sid=await nikkiSession(c),j=await ubusRaw(c,sid,"luci.nikki","update_subscription",{section_id:id})
+    if(j.success!==true)return nikkiFail("Nikki报告订阅更新失败，请核对下载文件；不会自动重试")
+  })
+}
 export async function webpage(c: Controller, page: "home"|"profile"|"mixin"|"log"|"editor" = "home") {
   if (page !== "home") requireNikki(c)
 
