@@ -153,7 +153,7 @@ function OverviewPage({ active, version, onSwitch, onClose }: { active: Controll
   const [upH, setUpH] = useState<number[]>([])
   const [visible, setVisible] = useState(true)
   const all = listControllers()
-  const [page, setPage] = useState<"" | "settings" | "appearance" | "global">("")
+  const [page, setPage] = useState<"" | "settings">("")
   const showCharts = visible && page === ""
   useEffect(() => { setDn([]); setUpH([]); setOv(null) }, [active?.id, active?.url])
   useEffect(() => {
@@ -187,17 +187,11 @@ function OverviewPage({ active, version, onSwitch, onClose }: { active: Controll
   }, [active?.id, prefs.connectionBackground, showCharts])
   const w = ov?.wrt
   const memUsed = w ? Math.max(0, w.memTotal - w.memFree) : 0
-  const toolbar = rootToolbar("home", onClose, <Menu label={<Image systemName="ellipsis.circle" />}>
-      <Button title="面板管理" systemImage="gearshape" action={() => setPage("settings")} />
-      <Button title="外观设置" systemImage="paintpalette" action={() => setPage("appearance")} />
-      <Button title="全局配置" systemImage="slider.horizontal.3" action={() => setPage("global")} />
-    </Menu>)
+  const toolbar = rootToolbar("home", onClose, <Button title="" systemImage="ellipsis.circle" action={() => setPage("settings")} />)
   const destination = {
     isPresented: page !== "",
     onChanged: (v: boolean) => { if (!v) setPage("") },
     content: page === "settings" ? <SettingsPage active={active} onChanged={onSwitch} />
-      : page === "appearance" ? <AppearancePage />
-      : page === "global" ? <GlobalConfigPage active={active} />
       : <Text>-</Text>,
   }
   if (!active) return <Form navigationTitle="dashboard" navigationBarTitleDisplayMode="inline" toolbar={toolbar} navigationDestination={destination}><NoController /></Form>
@@ -638,17 +632,21 @@ function SettingsPage({ active, onChanged }: { active: Controller | null; onChan
             : <Text font={12} foregroundStyle="secondaryLabel">{maskUrl(c.url)}</Text>}</VStack>
         </NavigationLink>)}
       <NavigationLink destination={<EditController onDone={reload} />}><Label title="添加 OpenWrt" systemImage="plus" /></NavigationLink>
+      <NavigationLink destination={<AppearancePage />}><Label title="外观设置" systemImage="paintpalette" /></NavigationLink>
     </Section>
+    {!active ? <Section header={<Text>路由器详情</Text>}>
+      <NavigationLink destination={<GlobalConfigPage active={null} />}><Label title="全局配置" systemImage="slider.horizontal.3" /></NavigationLink>
+      <NavigationLink destination={<LogsPage />}><Label title="运行日志" systemImage="doc.text" /></NavigationLink>
+    </Section> : null}
     {active ? <Section header={<Text>路由器详情</Text>}>
+      <NavigationLink destination={<GlobalConfigPage active={active} />}><Label title="全局配置" systemImage="slider.horizontal.3" /></NavigationLink>
       <NavigationLink destination={<WrtInterfacesPage active={active} version={0} />}><Label title="网络接口" systemImage="network" /></NavigationLink>
       <NavigationLink destination={<WrtLeasesPage active={active} version={0} />}><Label title="在线设备" systemImage="laptopcomputer.and.iphone" /></NavigationLink>
       <NavigationLink destination={<DockerPage active={active} />}><HStack spacing={10}><DockerLogo size={22} mono /><Text>Docker 管理</Text></HStack></NavigationLink>
       <NavigationLink destination={<FrpPage active={active} />}><Label title="FRP 管理" systemImage="arrow.left.arrow.right" /></NavigationLink>
       <NavigationLink destination={<SoftwarePage active={active} />}><Label title="软件管理" systemImage="shippingbox" /></NavigationLink>
-    </Section> : null}
-    <Section>
       <NavigationLink destination={<LogsPage />}><Label title="运行日志" systemImage="doc.text" /></NavigationLink>
-    </Section>
+    </Section> : null}
   </Form>
 }
 
