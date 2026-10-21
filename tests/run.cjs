@@ -418,7 +418,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) { const lazy = ['proxies','rules','connections'].includes(ids[i]) && ids[i] !== id; assert.equal(nodes(tree, types[i]).length, lazy ? 0 : 1); if (!lazy) assert.equal(nodes(tree, types[i])[0].props.selected, ids[i] === id) }
     }
-    assert.equal(api.VERSION, '1.5.89'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.5.90'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('独立导航栈保留业务owner和身份，只有选中页提供可见工具栏', () => {
     pref.savePreferences({ defaultPage: 'overview' })
@@ -1016,6 +1016,21 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     const probes = calls.filter(x => x.url.includes('/delay')); assert.equal(probes.length, 1); assert.ok(probes[0].url.includes('/proxies/NOPE/delay'))
     t = render(pages.GroupSection, { c, g, onChanged() {} }); assert.ok(text(t).includes('123ms')); assert.ok(!text(t).includes('未测速')); unmount(); responder = () => ({ status: 204 })
   })
+  await test('自动补测：单节点测速失败时用整组测速兜底；超时不写入共享缓存', async () => {
+    const g = { name: 'FallbackGroup', type: 'Selector', all: ['OK', 'ONLYGROUP', 'DEAD'], now: 'OK', delays: { OK: 20 } }
+    responder = url => url.includes('/group/') ? { body: { ONLYGROUP: 196, DEAD: 0 } } : { body: { delay: 0 }, status: 504 }
+    calls.length = 0
+    let t = render(pages.GroupSection, { c, g, onChanged() {} }, true); await flush()
+    nodes(t, 'Button').find(n => n.props.frame?.alignment === 'leading').props.action(); t = render(pages.GroupSection, { c, g, onChanged() {} }); await flush(); await flush(); await flush()
+    t = render(pages.GroupSection, { c, g, onChanged() {} })
+    assert.ok(calls.some(x => x.url.includes('/group/FallbackGroup/delay'))); assert.ok(text(t).includes('196ms'))
+    const dead = nodes(t, 'Button').find(n => text(n).includes('DEAD')); assert.ok(text(dead).includes('超时')); assert.ok(!text(dead).includes('未测速'))
+    unmount()
+    calls.length = 0; responder = url => url.includes('/group/') ? { body: { DEAD: 0 } } : { status: 504 }
+    let t2 = render(pages.GroupSection, { c, g, onChanged() {} }, true); await flush()
+    nodes(t2, 'Button').find(n => n.props.frame?.alignment === 'leading').props.action(); render(pages.GroupSection, { c, g, onChanged() {} }); await flush(); await flush(); await flush()
+    assert.ok(calls.some(x => x.url.includes('/proxies/DEAD/delay'))); unmount(); responder = () => ({ status: 204 })
+  })
   await test('节点history为空时回退读取extra中各测速地址的最近延迟', async () => {
     responder = () => ({ body: { proxies: {
       GLOBAL: { type: 'Selector', all: ['AIG'], now: 'AIG' },
@@ -1048,7 +1063,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       const diagnostic = logs.filter(x => x.startsWith('[preferences-icon]'))
       for (const stage of ['change','accepted','proxies-render','group-render']) assert.ok(diagnostic.some(x => x.includes('stage=' + stage) && x.includes('enabled=false')))
       assert.ok(diagnostic.every(x => !x.includes('private.invalid') && !x.includes('private-group-name') && !x.includes('secret-')))
-      assert.ok(diagnostic.every(x => x.includes('build=1.5.89') && /instance=[a-z0-9]+/.test(x)))
+      assert.ok(diagnostic.every(x => x.includes('build=1.5.90') && /instance=[a-z0-9]+/.test(x)))
       assert.equal(new Set(diagnostic.map(x => x.match(/instance=([^ ]+)/)[1])).size, 1)
     } finally { context.console = originalConsole; unmount(); pref.savePreferences({ customIcons: true, testURL: 'https://www.gstatic.com/generate_204' }) }
   })
