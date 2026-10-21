@@ -439,7 +439,7 @@ function FrpPage({ active }: { active: Controller }) {
     {info ? <Section header={<Text>服务</Text>}>
       <HStack><Text>状态</Text><Spacer /><HStack spacing={6}><Circle fill={info.running ? "systemGreen" : "systemRed"} frame={{ width: 7, height: 7 }} /><Text foregroundStyle="secondaryLabel">{info.running ? "运行中" : "已停止"}</Text></HStack></HStack>
       <HStack><Text>开机启动</Text><Spacer /><Text foregroundStyle="secondaryLabel">{info.enabled ? "已启用" : "未启用"}</Text></HStack>
-      <NavigationLink destination={<FrpCommonPage active={active} info={info} onDone={reload} />}><HStack><Text>服务端参数</Text><Spacer /><Text foregroundStyle="secondaryLabel">{info.server}</Text></HStack></NavigationLink>
+      <NavigationLink destination={<FrpCommonPage active={active} info={info} onDone={reload} />}><HStack><Text>服务端参数</Text><Spacer /><Text foregroundStyle="secondaryLabel">{maskUrl(info.server)}</Text></HStack></NavigationLink>
       <Button title={info.running ? "停止" : "启动"} systemImage={info.running ? "stop.fill" : "play.fill"} disabled={busy} action={() => act(info.running ? "stop" : "start", info.running ? "停止" : "启动")} />
       <Button title="重启" systemImage="arrow.clockwise" disabled={busy} action={() => act("restart", "重启")} />
     </Section> : null}
