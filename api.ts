@@ -1,6 +1,6 @@
 // dashboard 数据层：Clash 外部控制 API 与 OpenWrt（LuCI ubus JSON-RPC）
 import { getPreferences, customHeaders, recordEvent, controllerHealth, feedback } from "./preferences"
-export const VERSION = "1.5.19"
+export const VERSION = "1.5.20"
 
 export type Kind = "clash" | "openwrt"
 export type Plugin = "openclash" | "nikki" | "mihomo"
@@ -20,6 +20,7 @@ export interface WrtIface { name: string; proto: string; up: boolean; ip: string
 export interface DockerContainer { id: string; name: string; image: string; state: string; status: string }
 export interface FrpProxy { id: string; name: string; type: string; local: string; remote: string }
 export interface FrpInfo { running: boolean; enabled: boolean; server: string; proxies: FrpProxy[]; common: { addr: string; port: string; tls: boolean; hasToken: boolean } }
+export interface DockerOverview { version: string; api: string; threads: number; memTotal: number; root: string; index: string; mirrors: string[]; containers: number; running: number; images: number }
 export interface DockerSettings { logLevel: string; httpProxy: string; httpsProxy: string; noProxy: string; dataRoot: string }
 export interface WrtLease { host: string; ip: string; mac: string; expires: number }
 
@@ -666,4 +667,15 @@ export async function saveContainerPolicy(c: Controller, id: string, name: strin
   if (!/^[0-9a-f]{12,64}$/.test(id)) throw new Error("容器标识无效")
   if (!["no", "always", "unless-stopped", "on-failure"].includes(name)) throw new Error("重启策略无效")
   dockerBody(await ubus(c, "docker.container", "update", { id, body: { RestartPolicy: { Name: name } } }))
+}
+
+export async function loadDockerOverview(c: Controller): Promise<DockerOverview> {
+  const [info, ver, imgs] = await ubusBatch(c, [["docker", "info"], ["docker", "version"], ["docker.image", "list", { query: {} }]])
+  const i = dockerBody(info), v = dockerBody(ver), im = imgs ? dockerBody(imgs) : []
+  const mirrors = Array.isArray(i?.RegistryConfig?.Mirrors) ? i.RegistryConfig.Mirrors.map(String) : []
+  return {
+    version: String(v?.Version ?? i?.ServerVersion ?? ""), api: String(v?.ApiVersion ?? ""), threads: num(i?.NGoroutines), memTotal: num(i?.MemTotal),
+    root: String(i?.DockerRootDir ?? ""), index: String(i?.IndexServerAddress ?? ""), mirrors, containers: num(i?.Containers), running: num(i?.ContainersRunning),
+    images: Array.isArray(im) ? im.length : num(i?.Images),
+  }
 }

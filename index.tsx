@@ -7,7 +7,7 @@ import {
 import {
   VERSION, Controller, Group, Conn, Rule, Overview, Plugin, PLUGINS, listControllers, saveController, removeController, getActive, setActive, getSecret, getClashSecret,
   loadOverview, loadClashOverview, loadWrtInterfaces, loadWrtLeases, WrtIface, WrtLease, loadGroups, selectProxy, testGroup, loadConnections, loadConnectionHosts, closeConnection,
-  closeAllConnections, loadRules, DockerContainer, FrpInfo, FrpProxy, DockerSettings, loadDockerContainers, dockerAction, loadFrp, frpAction, saveFrpCommon, saveFrpProxy, deleteFrpProxy, loadDockerSettings, saveDockerSettings, loadContainerPolicy, saveContainerPolicy, fmtBytes, fmtSpeed, fmtParts, fmtUptime, fmtDuration, delayColor,
+  closeAllConnections, loadRules, DockerContainer, FrpInfo, FrpProxy, DockerSettings, loadDockerContainers, loadDockerOverview, DockerOverview, dockerAction, loadFrp, frpAction, saveFrpCommon, saveFrpProxy, deleteFrpProxy, loadDockerSettings, saveDockerSettings, loadContainerPolicy, saveContainerPolicy, fmtBytes, fmtSpeed, fmtParts, fmtUptime, fmtDuration, delayColor,
 } from "./api"
 
 import { confirmed } from "./dashboard-model"
@@ -271,7 +271,7 @@ function WrtLeasesPage({ active, version }: { active: Controller; version: numbe
 }
 
 // Docker 官方品牌图标（Simple Icons，CC0），官方蓝 #2496ED。
-const DOCKER_SVG = (size: number) => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="${size}" height="${size}"><path fill="#2496ED" d="M13.983 11.078h2.119a.186.186 0 00.186-.185V9.006a.186.186 0 00-.186-.186h-2.119a.185.185 0 00-.185.185v1.888c0 .102.083.185.185.185m-2.954-5.43h2.118a.186.186 0 00.186-.186V3.574a.186.186 0 00-.186-.185h-2.118a.185.185 0 00-.185.185v1.888c0 .102.082.185.185.185m0 2.716h2.118a.187.187 0 00.186-.186V6.29a.186.186 0 00-.186-.185h-2.118a.185.185 0 00-.185.185v1.887c0 .102.082.185.185.186m-2.93 0h2.12a.186.186 0 00.184-.186V6.29a.185.185 0 00-.185-.185H8.1a.185.185 0 00-.185.185v1.887c0 .102.083.185.185.186m-2.964 0h2.119a.186.186 0 00.185-.186V6.29a.185.185 0 00-.185-.185H5.136a.186.186 0 00-.186.185v1.887c0 .102.084.185.186.186m5.893 2.715h2.118a.186.186 0 00.186-.185V9.006a.186.186 0 00-.186-.186h-2.118a.185.185 0 00-.185.185v1.888c0 .102.082.185.185.185m-2.93 0h2.12a.185.185 0 00.184-.185V9.006a.185.185 0 00-.184-.186h-2.12a.185.185 0 00-.184.185v1.888c0 .102.083.185.185.185m-2.964 0h2.119a.185.185 0 00.185-.185V9.006a.185.185 0 00-.184-.186h-2.12a.186.186 0 00-.186.186v1.887c0 .102.084.185.186.185m-2.92 0h2.12a.185.185 0 00.184-.185V9.006a.185.185 0 00-.184-.186h-2.12a.185.185 0 00-.184.185v1.888c0 .102.082.185.185.185M23.763 9.89c-.065-.051-.672-.51-1.954-.51-.338.001-.676.03-1.01.087-.248-1.7-1.653-2.53-1.716-2.566l-.344-.199-.226.327c-.284.438-.49.922-.612 1.43-.23.97-.09 1.882.403 2.661-.595.332-1.55.413-1.744.42H.751a.751.751 0 00-.75.748 11.376 11.376 0 00.692 4.062c.545 1.428 1.355 2.48 2.41 3.124 1.18.723 3.1 1.137 5.275 1.137.983.003 1.963-.086 2.93-.266a12.248 12.248 0 003.823-1.389c.98-.567 1.86-1.288 2.61-2.136 1.252-1.418 1.998-2.997 2.553-4.4h.221c1.372 0 2.215-.549 2.68-1.009.309-.293.55-.65.707-1.046l.098-.288Z"/></svg>`
+const DOCKER_SVG = (size: number) => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" preserveAspectRatio="xMidYMid meet"><path fill="#2496ED" d="M13.983 11.078h2.119a.186.186 0 00.186-.185V9.006a.186.186 0 00-.186-.186h-2.119a.185.185 0 00-.185.185v1.888c0 .102.083.185.185.185m-2.954-5.43h2.118a.186.186 0 00.186-.186V3.574a.186.186 0 00-.186-.185h-2.118a.185.185 0 00-.185.185v1.888c0 .102.082.185.185.185m0 2.716h2.118a.187.187 0 00.186-.186V6.29a.186.186 0 00-.186-.185h-2.118a.185.185 0 00-.185.185v1.887c0 .102.082.185.185.186m-2.93 0h2.12a.186.186 0 00.184-.186V6.29a.185.185 0 00-.185-.185H8.1a.185.185 0 00-.185.185v1.887c0 .102.083.185.185.186m-2.964 0h2.119a.186.186 0 00.185-.186V6.29a.185.185 0 00-.185-.185H5.136a.186.186 0 00-.186.185v1.887c0 .102.084.185.186.186m5.893 2.715h2.118a.186.186 0 00.186-.185V9.006a.186.186 0 00-.186-.186h-2.118a.185.185 0 00-.185.185v1.888c0 .102.082.185.185.185m-2.93 0h2.12a.185.185 0 00.184-.185V9.006a.185.185 0 00-.184-.186h-2.12a.185.185 0 00-.184.185v1.888c0 .102.083.185.185.185m-2.964 0h2.119a.185.185 0 00.185-.185V9.006a.185.185 0 00-.184-.186h-2.12a.186.186 0 00-.186.186v1.887c0 .102.084.185.186.185m-2.92 0h2.12a.185.185 0 00.184-.185V9.006a.185.185 0 00-.184-.186h-2.12a.185.185 0 00-.184.185v1.888c0 .102.082.185.185.185M23.763 9.89c-.065-.051-.672-.51-1.954-.51-.338.001-.676.03-1.01.087-.248-1.7-1.653-2.53-1.716-2.566l-.344-.199-.226.327c-.284.438-.49.922-.612 1.43-.23.97-.09 1.882.403 2.661-.595.332-1.55.413-1.744.42H.751a.751.751 0 00-.75.748 11.376 11.376 0 00.692 4.062c.545 1.428 1.355 2.48 2.41 3.124 1.18.723 3.1 1.137 5.275 1.137.983.003 1.963-.086 2.93-.266a12.248 12.248 0 003.823-1.389c.98-.567 1.86-1.288 2.61-2.136 1.252-1.418 1.998-2.997 2.553-4.4h.221c1.372 0 2.215-.549 2.68-1.009.309-.293.55-.65.707-1.046l.098-.288Z"/></svg>`
 function DockerLogo({ size = 24 }: { size?: number }) { return <SVG code={DOCKER_SVG(size)} resizable frame={{ width: size, height: size }} /> }
 async function guarded(setBusy: (v: boolean) => void, fn: () => Promise<any>) {
   setBusy(true)
@@ -281,16 +281,35 @@ function Field({ title, value, onChanged, keyboard }: { title: string; value: st
   return <HStack><Text>{title}</Text><Spacer /><TextField title="" value={value} onChanged={onChanged} multilineTextAlignment="trailing" autocorrectionDisabled textInputAutocapitalization="never" /></HStack>
 }
 
+const gi = (n: number) => (n / 1073741824).toFixed(2) + " Gi"
 function DockerPage({ active }: { active: Controller }) {
+  const [ov, setOv] = useState<DockerOverview | null>(null)
   const [list, setList] = useState<DockerContainer[]>([])
   const [err, setErr] = useState(""), [busy, setBusy] = useState(false), [tick, setTick] = useState(0)
   useEffect(() => { let alive = true; loadDockerContainers(active).then(x => { if (alive) { setList(x); setErr("") } }).catch(() => { if (alive) setErr("Docker 读取不可用：路由器未启用 Docker 或账号权限不足。") }); return () => { alive = false } }, [active.id, tick])
+  useEffect(() => { let alive = true; loadDockerOverview(active).then(x => { if (alive) setOv(x) }).catch(() => {}); return () => { alive = false } }, [active.id, tick])
   const act = (x: DockerContainer, action: "start" | "stop" | "restart", label: string) => {
     if (busy) return
     void guarded(setBusy, async () => { await confirmed(`${active.name} · ${x.name}`, `${label}容器；会影响该容器承载的服务。`, () => dockerAction(active, x.id, action)); setTick(t => t + 1) })
   }
-  return <Form navigationTitle="Docker 管理" navigationBarTitleDisplayMode="inline" toolbar={{ topBarTrailing: <Button title="刷新" systemImage="arrow.clockwise" action={() => setTick(t => t + 1)} /> }}>
+  return <Form navigationTitle="Docker 管理" navigationBarTitleDisplayMode="inline">
     {err ? <Section><Text foregroundStyle="systemRed">{err}</Text></Section> : null}
+    {ov ? <Section header={<Text>概览</Text>}>
+      <HStack spacing={14}>
+        <DockerLogo size={52} />
+        <VStack alignment="leading" spacing={4}>
+          <Text>{`容器 总计 ${ov.containers} · 运行中 ${ov.running}`}</Text>
+          <Text foregroundStyle="secondaryLabel">{`镜像 总计 ${ov.images}`}</Text>
+        </VStack>
+      </HStack>
+      <HStack><Text>Docker 版本</Text><Spacer /><Text foregroundStyle="secondaryLabel">{ov.version || "-"}</Text></HStack>
+      <HStack><Text>API 版本</Text><Spacer /><Text foregroundStyle="secondaryLabel">{ov.api || "-"}</Text></HStack>
+      <HStack><Text>线程数量</Text><Spacer /><Text foregroundStyle="secondaryLabel">{String(ov.threads)}</Text></HStack>
+      <HStack><Text>总内存</Text><Spacer /><Text foregroundStyle="secondaryLabel">{gi(ov.memTotal)}</Text></HStack>
+      <HStack><Text>Docker 根目录</Text><Spacer /><Text foregroundStyle="secondaryLabel">{ov.root || "-"}</Text></HStack>
+      <HStack><Text>索引服务器地址</Text><Spacer /><Text font={13} foregroundStyle="secondaryLabel">{ov.index || "-"}</Text></HStack>
+      <HStack><Text>Registry 镜像</Text><Spacer /><Text font={13} foregroundStyle="secondaryLabel">{ov.mirrors.length ? ov.mirrors.join(", ") : "-"}</Text></HStack>
+    </Section> : null}
     <Section><NavigationLink destination={<DockerSettingsPage active={active} />}><HStack spacing={10}><DockerLogo size={22} /><Text>Docker 参数</Text></HStack></NavigationLink></Section>
     <Section header={<Text>{`容器 ${list.length}`}</Text>} footer={<Text>左滑启动、停止或重启；点进容器可改重启策略。</Text>}>
       {list.map(x => <NavigationLink key={x.id} destination={<ContainerPage active={active} x={x} />}
@@ -361,7 +380,7 @@ function FrpPage({ active }: { active: Controller }) {
     void guarded(setBusy, async () => { await confirmed(`${active.name} · frpc`, `${label} frp 客户端；穿透服务会短暂中断。`, () => frpAction(active, action)); setTimeout(() => setTick(t => t + 1), 1500) })
   }
   const reload = () => setTimeout(() => setTick(t => t + 1), 1500)
-  return <Form navigationTitle="FRP 管理" navigationBarTitleDisplayMode="inline" toolbar={{ topBarTrailing: <Button title="刷新" systemImage="arrow.clockwise" action={() => setTick(t => t + 1)} /> }}>
+  return <Form navigationTitle="FRP 管理" navigationBarTitleDisplayMode="inline">
     {err ? <Section><Text foregroundStyle="systemRed">{err}</Text></Section> : null}
     {info ? <Section header={<Text>服务</Text>}>
       <HStack><Text>状态</Text><Spacer /><HStack spacing={6}><Circle fill={info.running ? "systemGreen" : "systemRed"} frame={{ width: 7, height: 7 }} /><Text foregroundStyle="secondaryLabel">{info.running ? "运行中" : "已停止"}</Text></HStack></HStack>
@@ -516,7 +535,7 @@ function SettingsPage({ active, onChanged }: { active: Controller | null; onChan
     {active ? <Section header={<Text>路由器详情</Text>}>
       <NavigationLink destination={<WrtInterfacesPage active={active} version={0} />}><Label title="网络接口" systemImage="network" /></NavigationLink>
       <NavigationLink destination={<WrtLeasesPage active={active} version={0} />}><Label title="在线设备" systemImage="laptopcomputer.and.iphone" /></NavigationLink>
-      <NavigationLink destination={<DockerPage active={active} />}><Label title="Docker 管理" systemImage="shippingbox" /></NavigationLink>
+      <NavigationLink destination={<DockerPage active={active} />}><HStack spacing={10}><DockerLogo size={22} /><Text>Docker 管理</Text></HStack></NavigationLink>
       <NavigationLink destination={<FrpPage active={active} />}><Label title="FRP 管理" systemImage="arrow.left.arrow.right" /></NavigationLink>
     </Section> : null}
   </Form>
