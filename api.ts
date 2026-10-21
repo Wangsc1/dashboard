@@ -1,6 +1,6 @@
 
 import { getPreferences, customHeaders, recordEvent, controllerHealth, feedback } from "./preferences"
-export const VERSION = "1.5.124"
+export const VERSION = "1.5.125"
 
 export type Kind = "clash" | "openwrt"
 export type Plugin = "openclash" | "nikki" | "mihomo"
@@ -584,13 +584,16 @@ export async function nikkiInfo(c: Controller): Promise<{ app: string; core: str
 export async function coreVersion(c: Controller) { return String((await http(await cc(c),"/version")).version || "未提供") }
 // Prefer the live core API, with Nikki's local version as a read-only fallback.
 // Resolve both results together so a slower missing value cannot overwrite a valid version.
-export async function loadRuntimeVersions(c: Controller): Promise<{core:string;app:string;failed:boolean}> {
+export async function loadRuntimeVersions(c: Controller, onUpdate?: (value:{core:string;app:string;failed:boolean})=>void): Promise<{core:string;app:string;failed:boolean}> {
   const nikki=c.kind==="openwrt"&&c.plugin==="nikki"
-  const [direct,local]=await Promise.all([coreVersion(c).catch(()=>null),nikki?nikkiInfo(c).catch(()=>null):Promise.resolve(null)])
   const present=(v:any)=>typeof v==="string"&&v.trim()&&v!=="未提供"?v.trim():null
-  const core=present(direct)??present(local?.core)
-  const app=nikki?present(local?.app):"不适用"
-  return {core:core??"未提供",app:app??"未提供",failed:!core||(nikki&&!app)}
+  let direct:string|null=null,local:{core:string;app:string}|null=null
+  const result=()=>({core:present(direct)??present(local?.core)??"未提供",app:nikki?present(local?.app)??"未提供":"不适用",failed:!(present(direct)??present(local?.core))||(nikki&&!present(local?.app))})
+  await Promise.all([
+    coreVersion(c).then(x=>{direct=x;onUpdate?.(result())}).catch(()=>{}),
+    nikki?nikkiInfo(c).then(x=>{local=x;onUpdate?.(result())}).catch(()=>{}):Promise.resolve()
+  ])
+  return result()
 }
 // AT_CLKTCK is read from rpcd's auxiliary vector, rather than assuming a kernel HZ.
 export function linuxClockTicks(encoded: string): number | null {
@@ -628,19 +631,15 @@ export async function loadNikkiRuntime(c: Controller): Promise<NikkiRuntime> {
   const instance:any=Object.values(services.nikki?.instances??{}).find((x:any)=>x.running===true&&Number.isInteger(x.pid)&&x.pid>0)
   if(!instance)return result
   const pid=instance.pid
-  const uptime=await ubus(c,"file","read",{path:"/proc/uptime"})
-  await Promise.all([
-    (async()=>{try{
-      const [aux,stat,comm]=await Promise.all([
-        ubus(c,"file","read",{path:"/proc/self/auxv",base64:true}),ubus(c,"file","read",{path:`/proc/${pid}/stat`}),ubus(c,"file","read",{path:`/proc/${pid}/comm`})])
-      const ticks=linuxClockTicks(String(aux.data??""))
-      if(ticks!==null&&String(comm.data??"").trim()==="mihomo")result.coreSeconds=linuxProcessSeconds(String(uptime.data??""),String(stat.data??""),ticks,pid)
-    }catch{}})(),
-    (async()=>{try{
-      const [flag,stat]=await Promise.all([ubus(c,"file","stat",{path:"/var/run/nikki/started.flag"}),ubus(c,"file","read",{path:"/proc/stat"})])
-      if(flag.type==="file")result.serviceSeconds=nikkiStartedSeconds(String(stat.data??""),String(uptime.data??""),flag.mtime)
-    }catch{}})()
+  // Batch independent reads into one HTTP round-trip; individual denied fields stay null.
+  const [uptime,aux,stat,comm,flag,systemStat]=await ubusBatch(c,[
+    ["file","read",{path:"/proc/uptime"}], ["file","read",{path:"/proc/self/auxv",base64:true}],
+    ["file","read",{path:`/proc/${pid}/stat`}], ["file","read",{path:`/proc/${pid}/comm`}],
+    ["file","stat",{path:"/var/run/nikki/started.flag"}], ["file","read",{path:"/proc/stat"}]
   ])
+  const ticks=linuxClockTicks(String(aux?.data??""))
+  if(ticks!==null&&String(comm?.data??"").trim()==="mihomo")result.coreSeconds=linuxProcessSeconds(String(uptime?.data??""),String(stat?.data??""),ticks,pid)
+  if(flag?.type==="file")result.serviceSeconds=nikkiStartedSeconds(String(systemStat?.data??""),String(uptime?.data??""),flag.mtime)
   result.measuredAt=Date.now()
   return result
 }
