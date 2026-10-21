@@ -1,6 +1,6 @@
 
 import { getPreferences, customHeaders, recordEvent, controllerHealth, feedback } from "./preferences"
-export const VERSION = "1.5.144"
+export const VERSION = "1.5.145"
 
 export type Kind = "clash" | "openwrt"
 export type Plugin = "openclash" | "nikki" | "mihomo"
@@ -109,13 +109,13 @@ const num = (v: any) => typeof v === "number" && Number.isFinite(v) ? v : 0
 
 const NULL_SID = "00000000000000000000000000000000"
 const sessions: Record<string, { sid: string; at: number; source:string }> = {}
-async function ubusRaw(c: Controller, sid: string, obj: string, method: string, params: any): Promise<any> {
-  try { return await ubusRequest(c, sid, obj, method, params) }
+async function ubusRaw(c: Controller, sid: string, obj: string, method: string, params: any, timeout?: number): Promise<any> {
+  try { return await ubusRequest(c, sid, obj, method, params, timeout) }
   catch (e) { recordEvent("ubus", false); throw e }
 }
-async function ubusRequest(c: Controller, sid: string, obj: string, method: string, params: any): Promise<any> {
+async function ubusRequest(c: Controller, sid: string, obj: string, method: string, params: any, timeout?: number): Promise<any> {
   const r = await fetch(c.url + "/ubus", {
-    method: "POST", headers: { ...customHeaders(), "Content-Type": "application/json" }, allowInsecureRequest: true, timeout: getPreferences().requestTimeout,
+    method: "POST", headers: { ...customHeaders(), "Content-Type": "application/json" }, allowInsecureRequest: true, timeout: timeout ?? getPreferences().requestTimeout,
     body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "call", params: [sid, obj, method, params] }),
   } as any)
   if (r.status === 404) throw new Error("HTTP 404：该地址不是 OpenWrt 的 LuCI 地址，请检查端口")
@@ -863,7 +863,7 @@ export async function updateNikkiSubscription(c:Controller,id:string,base?:Nikki
     if(current.values?.[".type"]!=="subscription")return nikkiFail("订阅已不存在或类型不符")
     const options=(v:any)=>Object.fromEntries(Object.entries(v??{}).filter(([k])=>!k.startsWith(".")))
     if(snap&&canonical(options(snap.values[id]))!==canonical(options(current.values)))return nikkiFail("订阅设置已改变，请刷新后更新")
-    const sid=await nikkiSession(c),j=await ubusRaw(c,sid,"luci.nikki","update_subscription",{section_id:id})
+    const sid=await nikkiSession(c),j=await ubusRaw(c,sid,"luci.nikki","update_subscription",{section_id:id},Math.max(getPreferences().requestTimeout,30))
     if(j.success!==true)return nikkiFail("Nikki报告订阅更新失败，请核对下载文件；不会自动重试")
   })
 }
