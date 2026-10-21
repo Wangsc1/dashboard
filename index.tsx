@@ -209,7 +209,7 @@ function OverviewPage({ active, version, onSwitch, onClose, selected = true }: {
       <Spacer />
     </HStack>
     <ScrollView>
-    <VStack spacing={12} padding={{ horizontal: 14, top: 0, bottom: 8 }}>
+    <VStack spacing={12} padding={{ horizontal: 14, top: 0, bottom: 8 }} offset={{ x: 0, y: -8 }}>
       {all.length > 1 ? <Card>
         <Picker title="当前路由器" pickerStyle="menu" value={active.id} onChanged={(v: string) => { setActive(v); onSwitch() }}>
           {all.map(c => <Text key={c.id} tag={c.id}>{c.name}</Text>)}
