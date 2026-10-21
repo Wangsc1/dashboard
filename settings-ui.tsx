@@ -179,34 +179,84 @@ function HeaderFields() {
 }
 
 export function KernelConfigPage({ c }: { c: Controller }) {
-  const [cfg, setCfg] = useState<ClashConfig | null>(null), [dirty, setDirty] = useState<Record<string, any>>({}), [err, setErr] = useState(""), [busy, setBusy] = useState(false)
-  async function reload() { setBusy(true); try { setCfg(await loadConfig(c)); setDirty({}); setErr("") } catch { setErr("读取内核配置失败，请检查控制器连接与权限后重试") } finally { setBusy(false) } }
-  useEffect(() => { void reload() }, [c.id])
-  const provided = (key: string) => key === "tun" ? typeof cfg?.tun?.enable === "boolean" : (cfg as any)?.[key] !== undefined
-  const change = (key: string, v: any) => { if (!busy && provided(key)) setDirty(d => ({ ...d, [key]: v })) }
-  async function save() {
-    if (!cfg || busy) return
-    const patch: any = {}
-    for (const [k, v] of Object.entries(dirty)) {
-      if (!provided(k)) continue
-      if (k.endsWith("port")) {
-        if (!String(v).trim() || !/^\d+$/.test(String(v)) || Number(v) > 65535) { setErr("端口必须为 0–65535 的整数；空值不会写回"); return }
-        if (Number(v) !== (cfg as any)[k]) patch[k] = Number(v)
-      } else if (k === "tun") {
-        if (v.enable !== cfg.tun?.enable) patch.tun = { enable: v.enable }
-      } else if (v !== (cfg as any)[k]) patch[k] = v
-    }
-    if (!Object.keys(patch).length) { setErr("没有待保存的更改"); return }
-    try { validateConfigPatch(patch) } catch (e: any) { setErr(String(e.message)); return }
-    if (!await Dialog.confirm({ title: `保存到 ${c.name} 的代理内核`, message: `仅 PATCH：${Object.keys(patch).map(k => k === "tun" ? "tun.enable" : k).join("、")}。不会修改 OpenWrt UCI 文件；内核重启后可能被插件配置覆盖。端口、网络或 TUN 修改可能影响连接。`, confirmLabel: "保存" })) return
-    setBusy(true)
-    try { await patchConfig(c, patch); setCfg({ ...cfg, ...patch, ...(patch.tun ? { tun: { ...cfg.tun, enable: patch.tun.enable } } : {}) }); setDirty({}); setErr("已保存到当前代理内核（仅本次运行配置）"); feedback() } catch { setErr("保存失败；未确认的改动保留，请检查控制器后重试。若响应丢失，请重新读取核对。") } finally { setBusy(false) }
+  // One source-scoped session owns drafts and a serial, latest-value queue.
+  // Native callbacks may outlive their render; never read their captured state.
+  type Edit = { value: any; revision: number }
+  type Session = { source: string; controller: Controller; active: boolean; cfg: ClashConfig | null; dirty: Record<string, any>; revisions: Record<string, number>; pending: Map<string, Edit>; errors: Record<string, string>; loading: boolean; saving: boolean }
+  const [holder] = useState<{ current: Session | null }>({ current: null })
+  const [, redraw] = useState(0)
+  const source = JSON.stringify(c)
+  if (holder.current?.source !== source) holder.current = { source, controller: { ...c }, active: true, cfg: null, dirty: {}, revisions: {}, pending: new Map(), errors: {}, loading: true, saving: false }
+  const session = holder.current!
+  const current = () => session.active && holder.current === session
+  const paint = () => { if (current()) redraw(n => n + 1) }
+  useEffect(() => {
+    void (async () => {
+      try { const result = await loadConfig(session.controller); if (current()) session.cfg = result }
+      catch { if (current()) session.errors.load = "读取内核配置失败，请检查控制器连接与权限后重新进入此页" }
+      finally { if (current()) { session.loading = false; paint() } }
+    })()
+    return () => { session.active = false; session.pending.clear() }
+  }, [session])
+  const provided = (key: string) => key === "tun" ? typeof session.cfg?.tun?.enable === "boolean" : (session.cfg as any)?.[key] !== undefined
+  async function drain() {
+    if (!current() || session.loading || session.saving) return
+    session.saving = true; paint()
+    try {
+      while (current() && session.pending.size) {
+        const batch = new Map(session.pending); session.pending.clear()
+        const patch: any = {}
+        for (const [key, edit] of batch) {
+          const previous = key === "tun" ? session.cfg?.tun?.enable : (session.cfg as any)?.[key]
+          const next = key === "tun" ? edit.value.enable : edit.value
+          if (next !== previous) patch[key] = edit.value
+        }
+        try {
+          if (Object.keys(patch).length) await patchConfig(session.controller, patch)
+          if (!current()) return
+          session.cfg = { ...session.cfg, ...patch, ...(patch.tun ? { tun: { ...session.cfg?.tun, enable: patch.tun.enable } } : {}) }
+          for (const [key, edit] of batch) {
+            if (session.revisions[key] === edit.revision) { delete session.dirty[key]; delete session.errors[key] }
+          }
+          if (Object.keys(patch).length) feedback()
+        } catch {
+          if (!current()) return
+          for (const key of batch.keys()) session.errors[key] = "保存失败；改动已保留，请再次选择或结束编辑重试"
+        }
+        paint()
+      }
+    } finally { if (current()) { session.saving = false; paint() } }
   }
+  function commit(key: string) {
+    if (!current() || session.loading || !provided(key) || !(key in session.dirty)) return
+    let value = session.dirty[key]
+    if (key.endsWith("port")) {
+      if (!/^\d+$/.test(String(value)) || Number(value) > 65535) { session.errors[key] = "端口必须为 0–65535 的整数；空值不会写回"; paint(); return }
+      value = Number(value)
+    }
+    try { validateConfigPatch({ [key]: value }) }
+    catch (e: any) { session.errors[key] = String(e.message); paint(); return }
+    delete session.errors[key]
+    session.pending.set(key, { value, revision: session.revisions[key] })
+    void drain(); paint()
+  }
+  function change(key: string, value: any, immediate = true) {
+    if (!current() || session.loading || !provided(key)) return
+    session.dirty[key] = value
+    session.revisions[key] = (session.revisions[key] ?? 0) + 1
+    // A newly edited input supersedes an older queued commit, but stays local
+    // until blur/submit. An already in-flight request cannot be cancelled.
+    session.pending.delete(key)
+    delete session.errors[key]; paint()
+    if (immediate) commit(key)
+  }
+  const cfg = session.cfg, dirty = session.dirty, busy = session.loading
+  const err = Object.values(session.errors).join("\n")
   const icon = (name: string, color: string) => <Image systemName={name} font={21} foregroundStyle={color} frame={{ width: 24 }} />
   const separator = () => <RoundedRectangle cornerRadius={0} fill={{ light: "#E8E8ED", dark: "#38383A" }} frame={{ maxWidth: "infinity", height: 0.5 }} />
-  const card = (children: any) => <VStack spacing={0} padding={{ horizontal: 14 }} background={<RoundedRectangle cornerRadius={16} fill="systemBackground" stroke={{ shapeStyle: { light: "#ECECF1", dark: "#38383A" }, strokeStyle: { lineWidth: 0.5 } }} />}>{children}</VStack>
+  const card = (children: any) => <VStack spacing={0} padding={{ horizontal: 14 }} background={<RoundedRectangle cornerRadius={16} fill={{ light: "#F2F2F7", dark: "#1C1C1E" }} stroke={{ shapeStyle: { light: "#ECECF1", dark: "#38383A" }, strokeStyle: { lineWidth: 0.5 } }} />}>{children}</VStack>
   const heading = (title: string) => <Text font={13} foregroundStyle="secondaryLabel" padding={{ leading: 14 }}>{title}</Text>
-  const field = (key: string, title: string, port = true) => <TextField key={key} title={title} value={String(dirty[key] ?? (cfg as any)?.[key] ?? "")} prompt="未提供" onChanged={(v: string) => change(key, v)} disabled={busy || !provided(key)} keyboardType={port ? "numberPad" : "default"} autocorrectionDisabled textInputAutocapitalization="never" multilineTextAlignment="trailing" frame={{ width: port ? 100 : 142 }} padding={{ horizontal: 10, vertical: 8 }} background={{ style: { light: "#F2F2F7", dark: "#2C2C2E" }, shape: { type: "rect", cornerRadius: 8 } }} />
+  const field = (key: string, title: string, port = true) => <TextField key={key} title={title} value={String(dirty[key] ?? (cfg as any)?.[key] ?? "")} prompt="未提供" onChanged={(v: string) => change(key, v, false)} onBlur={() => commit(key)} onSubmit={() => commit(key)} submitLabel="done" disabled={busy || !provided(key)} keyboardType={port ? "numberPad" : "default"} autocorrectionDisabled textInputAutocapitalization="never" multilineTextAlignment="trailing" frame={{ width: port ? 100 : 142 }} padding={{ horizontal: 10, vertical: 8 }} background={{ style: { light: "#E5E5EA", dark: "#2C2C2E" }, shape: { type: "rect", cornerRadius: 8 } }} />
   const toggle = (key: string, title: string) => provided(key)
     ? <Toggle title={title} value={key === "tun" ? (dirty.tun?.enable ?? cfg?.tun?.enable) : (dirty[key] ?? (cfg as any)?.[key])} onChanged={(v: boolean) => change(key, key === "tun" ? { enable: v } : v)} disabled={busy} />
     : <HStack><Text>{title}</Text><Spacer /><Text font={14} foregroundStyle="secondaryLabel">未提供</Text></HStack>
@@ -242,10 +292,8 @@ export function KernelConfigPage({ c }: { c: Controller }) {
           {LOG_LEVELS.map(value => <Button key={value} title={({silent:"静默",error:"错误",warning:"警告",info:"信息",debug:"调试"} as Record<string,string>)[value]??value} action={() => change("log-level", value)} />)}
         </Menu>
       </HStack>)}
-      <Text font={12} foregroundStyle="secondaryLabel" padding={{ horizontal: 14, vertical: 8 }}>{`${c.name} · 先读取，修改后点击保存。仅影响所选控制器的 Mihomo/Clash 运行配置，不是应用日志设置。`}</Text>
-      {!cfg ? <Text foregroundStyle="secondaryLabel">{busy ? "读取中…" : "尚未读取配置"}</Text> : null}
-      <Button title={busy ? "处理中…" : "保存修改字段"} disabled={busy || !cfg || !Object.keys(dirty).length} action={save} />
-      <Button title="重新读取（丢弃未保存修改）" disabled={busy} action={async () => { if (!Object.keys(dirty).length || await Dialog.confirm({ title: "重新读取", message: "丢弃当前未保存修改？", confirmLabel: "重新读取" })) await reload() }} />
+      {busy ? <Text foregroundStyle="secondaryLabel">读取中…</Text> : null}
+      {session.saving ? <Text font={13} foregroundStyle="secondaryLabel">保存中…</Text> : null}
       {err ? <Text font={13} foregroundStyle="secondaryLabel">{err}</Text> : null}
     </VStack>
   </ScrollView>

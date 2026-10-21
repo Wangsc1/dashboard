@@ -1,6 +1,6 @@
 
 import { getPreferences, customHeaders, recordEvent, controllerHealth, feedback } from "./preferences"
-export const VERSION = "1.5.122"
+export const VERSION = "1.5.123"
 
 export type Kind = "clash" | "openwrt"
 export type Plugin = "openclash" | "nikki" | "mihomo"
@@ -591,6 +591,44 @@ export async function loadRuntimeVersions(c: Controller): Promise<{core:string;a
   const core=present(direct)??present(local?.core)
   const app=nikki?present(local?.app):"不适用"
   return {core:core??"未提供",app:app??"未提供",failed:!core||(nikki&&!app)}
+}
+// AT_CLKTCK is read from rpcd's auxiliary vector, rather than assuming a kernel HZ.
+export function linuxClockTicks(encoded: string): number | null {
+  const alphabet="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/",bytes:number[]=[]
+  let acc=0,bits=0
+  for(const char of encoded.replace(/\s/g,"")) { if(char==="=")break;const n=alphabet.indexOf(char);if(n<0)return null;acc=(acc<<6)|n;bits+=6;if(bits>=8){bits-=8;bytes.push((acc>>bits)&255);acc&=(1<<bits)-1} }
+  const candidates=new Set<number>()
+  for(const size of [4,8])for(const little of [true,false]){
+    if(!bytes.length||bytes.length%(size*2))continue
+    const integer=(at:number)=>{let n=0;for(let i=0;i<size;i++)n=n*256+bytes[at+(little?size-1-i:i)];return n}
+    let tick:number|null=null,valid=true,ended=false
+    for(let at=0;at<bytes.length;at+=size*2){const type=integer(at),value=integer(at+size);if(type===0){ended=true;break}if(!Number.isSafeInteger(type)||type>255){valid=false;break}if(type===17){if(!Number.isSafeInteger(value)||value<1||value>1000000){valid=false;break}tick=value}}
+    if(valid&&ended&&tick!==null)candidates.add(tick)
+  }
+  return candidates.size===1?[...candidates][0]:null
+}
+export function linuxProcessSeconds(uptime: string, stat: string, ticks: number, pid: number): number | null {
+  const end=stat.lastIndexOf(")"),start=Number(stat.slice(end+2).trim().split(/\s+/)[19]),now=Number(uptime.trim().split(/\s+/)[0])
+  if(end<0||!stat.startsWith(pid+" (")||!Number.isFinite(now)||!Number.isSafeInteger(start)||start<0||!Number.isFinite(ticks)||ticks<=0)return null
+  const seconds=now-start/ticks
+  return seconds>=0?Math.floor(seconds):null
+}
+export interface NikkiRuntime { coreSeconds:number|null;serviceSeconds:number|null;measuredAt:number }
+export async function loadNikkiRuntime(c: Controller): Promise<NikkiRuntime> {
+  requireNikki(c)
+  const unknown=()=>({coreSeconds:null,serviceSeconds:null,measuredAt:Date.now()})
+  const services=await ubus(c,"service","list",{name:"nikki"})
+  const instance:any=Object.values(services.nikki?.instances??{}).find((x:any)=>x.running===true&&Number.isInteger(x.pid)&&x.pid>0)
+  if(!instance)return unknown()
+  const pid=instance.pid
+  // Only fixed proc paths and this validated service PID are read; no shell commands.
+  const [aux,stat,uptime,comm]=await Promise.all([
+    ubus(c,"file","read",{path:"/proc/self/auxv",base64:true}),ubus(c,"file","read",{path:`/proc/${pid}/stat`}),
+    ubus(c,"file","read",{path:"/proc/uptime"}),ubus(c,"file","read",{path:`/proc/${pid}/comm`})])
+  const ticks=linuxClockTicks(String(aux.data??""))
+  if(ticks===null)return unknown()
+  const seconds=linuxProcessSeconds(String(uptime.data??""),String(stat.data??""),ticks,pid)
+  return {coreSeconds:String(comm.data??"").trim()==="mihomo"?seconds:null,serviceSeconds:seconds,measuredAt:Date.now()}
 }
 export async function nikkiService(c: Controller, action: "start"|"stop"|"restart"|"reload") { requireNikki(c); if (!["start","stop","restart","reload"].includes(action)) throw new Error("不支持的服务动作"); await ubus(c,"rc","init",{name:"nikki",action}) }
 export type CoreAction = "restart"|"reload"|"geo"|"dns"|"fakeip"
