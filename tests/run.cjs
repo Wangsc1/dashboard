@@ -397,7 +397,8 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     pref.savePreferences({ defaultPage: 'overview', connectionBackground: false })
     let tree = render(app.Root, {}, true)
     assert.equal(tree.type, 'TabView'); assert.equal(nodes(tree,'TabView')[0].props.selection.value, 'home')
-    const tabs = nodes(tree, 'Tab')
+    const ruleStack=nodes(tree,'NavigationStack').find(n=>n.props.tag==='rules');assert.ok(ruleStack);assert.equal(nodes(ruleStack.props.tabItem,'Image')[0].props.symbolVariant,'none');assert.equal(nodes(ruleStack.props.tabItem,'Image')[0].props.systemName,'swatchpalette')
+    const tabs = tree.props.children.map(t=>t.props.tag==='rules'?{type:'Tab',props:{title:'规则',systemImage:'swatchpalette',value:'rules',children:[t]}}:t)
     assert.deepEqual(tabs.map(t => t.props.title), ['主页', '代理', '规则', '连接', '更多'])
     assert.deepEqual(tabs.map(t=>t.props.systemImage),['square.stack.fill','network','swatchpalette','arrow.left.arrow.right','ellipsis'])
     assert.equal(tree.props.symbolVariant,'none')
@@ -431,7 +432,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) { const lazy = ['proxies','rules','connections'].includes(ids[i]) && ids[i] !== id; assert.equal(nodes(tree, types[i]).length, lazy ? 0 : 1); if (!lazy) assert.equal(nodes(tree, types[i])[0].props.selected, ids[i] === id) }
     }
-    assert.equal(api.VERSION, '1.5.116'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.5.117'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('独立导航栈保留业务owner和身份，只有选中页提供可见工具栏', () => {
     pref.savePreferences({ defaultPage: 'overview' })
@@ -448,7 +449,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     for (const selected of ['home','proxies','rules','connections','more','proxies','home','rules','connections','home']) {
       nodes(rootTree,'TabView')[0].props.selection.setValue(selected);rootTree=render(app.Root,{})
       let menus=0
-      for (const tab of nodes(rootTree,'Tab')) {
+      for (const tab of rootTree.props.children.map(t=>t.props.tag==='rules'?{props:{key:'rules',value:'rules',children:[t]}}:t)) {
         const id=tab.props.value, owner=tab.props.children[0]
         assert.equal(owner.type,'NavigationStack')
         const identity=[tab.props.key,owner.props.key].join('/')
@@ -1181,7 +1182,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       const diagnostic = logs.filter(x => x.startsWith('[preferences-icon]'))
       for (const stage of ['change','accepted','proxies-render','group-render']) assert.ok(diagnostic.some(x => x.includes('stage=' + stage) && x.includes('enabled=false')))
       assert.ok(diagnostic.every(x => !x.includes('private.invalid') && !x.includes('private-group-name') && !x.includes('secret-')))
-      assert.ok(diagnostic.every(x => x.includes('build=1.5.116') && /instance=[a-z0-9]+/.test(x)))
+      assert.ok(diagnostic.every(x => x.includes('build=1.5.117') && /instance=[a-z0-9]+/.test(x)))
       assert.equal(new Set(diagnostic.map(x => x.match(/instance=([^ ]+)/)[1])).size, 1)
     } finally { context.console = originalConsole; unmount(); pref.savePreferences({ customIcons: true, testURL: 'https://www.gstatic.com/generate_204' }) }
   })
