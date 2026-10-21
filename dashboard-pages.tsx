@@ -1,7 +1,7 @@
 import { NikkiManagement, NikkiSubscription, NikkiRule, NikkiFile, NikkiManagementError, NIKKI_RULE_TYPES, loadNikkiManagement, saveNikkiSubscription, deleteNikkiSubscription, updateNikkiSubscription, saveNikkiRule, deleteNikkiRule, setNikkiRulesEnabled, reorderNikkiRules, selectNikkiProfile, readNikkiFile, saveNikkiFile } from "./api"
 import { rootToolbar } from "./root-toolbar"
 import { AppEvents, Button, Divider, HStack, VStack, Text, Image, Circle, RoundedRectangle, Spacer, ScrollView, LazyVStack, NavigationLink, Menu, Picker, TextField, Toggle, Form, Section, Label, ProgressView, WebView, ZStack, modifiers, Safari, useState, useEffect } from "scripting"
-import { Controller, Group, Conn, Rule, Provider, loadGroups, testGroup, testNodes, selectProxy, loadProviders, updateProvider, loadRules, loadConnections, closeConnection, closeAllConnections, fmtBytes, fmtSpeed, fmtUptime, delayColor, loadRuntimeVersions, loadNikkiRuntime, NikkiRuntime, verifyCoreRestart, lastControllerMode, loadConfig, setMode as setControllerMode, nikkiService, nikkiServiceStatus, coreAction, CoreAction, queryDNS, webpage } from "./api"
+import { Controller, Group, Conn, Rule, Provider, loadGroups, testGroup, selectProxy, loadProviders, updateProvider, loadRules, loadConnections, closeConnection, closeAllConnections, fmtBytes, fmtSpeed, fmtUptime, delayColor, loadRuntimeVersions, loadNikkiRuntime, NikkiRuntime, verifyCoreRestart, lastControllerMode, loadConfig, setMode as setControllerMode, nikkiService, nikkiServiceStatus, coreAction, CoreAction, queryDNS, webpage } from "./api"
 import { usePreferences, KernelConfigPage } from "./settings-ui"
 import { NODE_SORT_OPTIONS, savePreferences, cachedIcon, traceIconPreference, feedback } from "./preferences"
 import { selectable, sortedNodes, historyFor, filterConnections, clientLabels, saveClientLabel, sourceKey, confirmed } from "./dashboard-model"
@@ -66,9 +66,7 @@ export function GroupSection({c,g,onChanged,expanded=false}:{c:Controller;g:Grou
     for(const n of missing)probing.add(`${storeKey}|${n}`)
     const keep=(d:Record<string,number>)=>{const ok:Record<string,number>={};for(const[k,v]of Object.entries(d))if(v>0){ok[k]=v;testedNodes.set(`${sourceKey(c)}|${k}`,v)}if(Object.keys(ok).length)testedDelays.set(storeKey,{...(testedDelays.get(storeKey)??{}),...ok});return ok}
     ;(async()=>{
-      let ok=keep(await testNodes(c,missing,g.testUrl).catch(()=>({} as Record<string,number>)))
-      const rest=missing.filter(n=>ok[n]===undefined)
-      if(rest.length){const second=keep(await testGroup(c,g).catch(()=>({} as Record<string,number>)));ok={...ok,...second}}
+      const ok=keep(await testGroup(c,{...g,all:missing},(k,v)=>{keep({[k]:v});if(guard.alive)setDelays(merged())}).catch(()=>({} as Record<string,number>)))
       const still=missing.filter(n=>ok[n]===undefined)
       if(guard.alive){setDelays(merged());if(still.length)setFailed(f=>new Set([...f,...still]))}
     })().finally(()=>{for(const n of missing)probing.delete(`${storeKey}|${n}`)})

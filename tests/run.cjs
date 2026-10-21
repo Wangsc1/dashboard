@@ -302,6 +302,32 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     assert.equal(result.A, 23); assert.equal(result.B, 23); assert.equal(result.C, 41); assert.equal(seen.length, 3); assert.equal(calls.filter(x => x.url.includes('/group/')).length, 1)
     assert.ok(calls.every(x => x.url.includes('timeout=3200') && x.url.includes(encodeURIComponent('https://test.invalid/probe')))); 
   })
+  await test('测速优先当前节点，最多16个并发；慢节点未完成时已回报快结果，完成后再次点击会重测', async () => {
+    const all = Array.from({ length: 20 }, (_, i) => 'priority-' + i), current = all[19]
+    const gates = new Map(all.map(n => { let resolve; const promise = new Promise(r => { resolve = r }); return [n, { promise, resolve }] }))
+    calls.length = 0; responder = url => { const n = decodeURIComponent(url.split('/proxies/')[1].split('/')[0]); return { wait: gates.get(n).promise, body: { delay: 38 } } }
+    let done = false; const seen = [], pending = api.testGroup(c, { name: 'PriorityGroup', now: current, all }, (n, d) => seen.push([n, d])).then(r => { done = true; return r })
+    await flush(); assert.equal(calls.length, 16); assert.ok(calls[0].url.includes('/' + current + '/delay'))
+    gates.get(current).resolve(); await flush(); assert.deepEqual(seen, [[current, 38]]); assert.equal(done, false); assert.equal(calls.length, 17)
+    for (const gate of gates.values()) gate.resolve(); const result = await pending; assert.equal(Object.keys(result).length, 20); assert.equal(seen.length, 20)
+    const before = calls.length; await api.testNodes(c, [current]); assert.equal(calls.length, before + 1)
+  })
+  await test('重叠测速共享在途请求但不跨来源、测速URL、超时或认证共享', async () => {
+    let release; const wait = new Promise(r => { release = r }); calls.length = 0
+    responder = () => ({ wait, body: { delay: 54 } })
+    const a = api.testGroup(c, { name: 'ConcurrentGroup', all: ['dedup-node'] }), b = api.testNodes(c, ['dedup-node', 'dedup-node'])
+    await flush(); assert.equal(calls.length, 1)
+    const source = api.testNodes({ ...c, url: 'http://other-delay-source.invalid' }, ['dedup-node'])
+    const url = api.testNodes(c, ['dedup-node'], 'https://other-probe.invalid/204')
+    await flush(); assert.equal(calls.length, 3)
+    const original = pref.getPreferences().testTimeout; pref.savePreferences({ testTimeout: original + 100 })
+    const timeout = api.testNodes(c, ['dedup-node']); await flush(); assert.equal(calls.length, 4)
+    pref.savePreferences({ testTimeout: original })
+    const oldSecret = secrets.get('neko_secret_' + c.id); secrets.set('neko_secret_' + c.id, 'mock-delay-auth-change')
+    const auth = api.testNodes(c, ['dedup-node']); await flush(); assert.equal(calls.length, 5)
+    if (oldSecret === undefined) secrets.delete('neko_secret_' + c.id); else secrets.set('neko_secret_' + c.id, oldSecret)
+    release(); for (const p of [a, b, source, url, timeout, auth]) assert.equal((await p)['dedup-node'], 54)
+  })
   await test('策略组自带testUrl时测速用它而不是偏好里的链接；loadGroups读取testUrl', async () => {
     pref.savePreferences({ testURL: 'https://test.invalid/probe', testTimeout: 3200 }); calls.length = 0
     responder = () => ({ body: { delay: 23 } })
@@ -600,7 +626,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) { const lazy = ['proxies','rules','connections'].includes(ids[i]) && ids[i] !== id; assert.equal(nodes(tree, types[i]).length, lazy ? 0 : 1); if (!lazy) assert.equal(nodes(tree, types[i])[0].props.selected, ids[i] === id) }
     }
-    assert.equal(api.VERSION, '1.5.154'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.5.155'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('独立导航栈保留业务owner和身份，只有选中页提供可见工具栏', () => {
     pref.savePreferences({ defaultPage: 'overview' })
@@ -1441,6 +1467,19 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     const probes = calls.filter(x => x.url.includes('/delay')); assert.equal(probes.length, 1); assert.ok(probes[0].url.includes('/proxies/NOPE/delay'))
     t = render(pages.GroupSection, { c, g, onChanged() {} }); assert.ok(text(t).includes('123ms')); assert.ok(!text(t).includes('未测速')); unmount(); responder = () => ({ status: 204 })
   })
+  await test('展开补测逐个显示快结果，慢节点只测一次，不重测已有延迟的节点', async () => {
+    const g = { name: 'ProgressiveProbeGroup', type: 'Selector', all: ['probe-known', 'probe-fast', 'probe-slow'], now: 'probe-known', delays: { 'probe-known': 19 } }, props = { c, g, onChanged() {} }
+    let release; const wait = new Promise(r => { release = r }); calls.length = 0
+    responder = url => url.includes('/group/') ? { body: { 'probe-slow': 0 } } : url.includes('/probe-slow/') ? { wait, body: { delay: 0 } } : { body: { delay: 47 } }
+    let tree = render(pages.GroupSection, props, true); await flush()
+    nodes(tree, 'Button').find(n => n.props.frame?.alignment === 'leading').props.action(); render(pages.GroupSection, props); await flush()
+    tree = render(pages.GroupSection, props); assert.ok(text(tree).includes('47ms'))
+    assert.equal(calls.filter(x => x.url.includes('/proxies/')).length, 2); assert.ok(!calls.some(x => x.url.includes('/probe-known/')))
+    assert.equal(calls.filter(x => x.url.includes('/group/')).length, 0)
+    release(); await flush(); await flush(); tree = render(pages.GroupSection, props)
+    assert.equal(calls.filter(x => x.url.includes('/proxies/')).length, 2); assert.equal(calls.filter(x => x.url.includes('/group/')).length, 1)
+    assert.ok(text(nodes(tree, 'Button').find(n => text(n).includes('probe-slow'))).includes('超时')); unmount()
+  })
   await test('自动补测：单节点测速失败时用整组测速兜底；超时不写入共享缓存', async () => {
     const g = { name: 'FallbackGroup', type: 'Selector', all: ['OK', 'ONLYGROUP', 'DEAD'], now: 'OK', delays: { OK: 20 } }
     responder = url => url.includes('/group/') ? { body: { ONLYGROUP: 196, DEAD: 0 } } : { body: { delay: 0 }, status: 504 }
@@ -1617,7 +1656,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       const diagnostic = logs.filter(x => x.startsWith('[preferences-icon]'))
       for (const stage of ['change','accepted','proxies-render','group-render']) assert.ok(diagnostic.some(x => x.includes('stage=' + stage) && x.includes('enabled=false')))
       assert.ok(diagnostic.every(x => !x.includes('private.invalid') && !x.includes('private-group-name') && !x.includes('secret-')))
-      assert.ok(diagnostic.every(x => x.includes('build=1.5.154') && /instance=[a-z0-9]+/.test(x)))
+      assert.ok(diagnostic.every(x => x.includes('build=1.5.155') && /instance=[a-z0-9]+/.test(x)))
       assert.equal(new Set(diagnostic.map(x => x.match(/instance=([^ ]+)/)[1])).size, 1)
     } finally { context.console = originalConsole; unmount(); pref.savePreferences({ customIcons: true, testURL: 'https://www.gstatic.com/generate_204' }) }
   })

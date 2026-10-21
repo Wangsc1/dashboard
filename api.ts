@@ -1,6 +1,6 @@
 
 import { getPreferences, customHeaders, recordEvent, controllerHealth, feedback } from "./preferences"
-export const VERSION = "1.5.154"
+export const VERSION = "1.5.155"
 
 export type Kind = "clash" | "openwrt"
 export type Plugin = "openclash" | "nikki" | "mihomo"
@@ -439,39 +439,44 @@ export async function selectProxy(c0: Controller, group: string, name: string) {
   }
 }
 
-export async function testNodes(c0: Controller, names: string[], url?: string): Promise<Record<string, number>> {
-  const c = await cc(c0)
-  const res: Record<string, number> = {}
-  const prefs = getPreferences(), queue = [...names]
-  await Promise.all(Array.from({ length: Math.min(6, queue.length) }, async () => {
-    while (queue.length) {
-      const n = queue.shift()!
-      try { const j = await http(c, `/proxies/${enc(n)}/delay?url=${enc(url || prefs.testURL)}&timeout=${prefs.testTimeout}`, { timeout: Math.ceil(prefs.testTimeout / 1000) + 2 }); res[n] = num(j.delay) } catch { res[n] = 0 }
-    }
-  }))
-  return res
+// Only share requests still in flight. Completed measurements are never reused as a new test.
+const pendingDelayRequests = new Map<string, Promise<any>>()
+async function delayRequest(c: Controller, path: string, timeout: number): Promise<any> {
+  const key = JSON.stringify([c, getSecret(c.id), customHeaders(), path, timeout])
+  const previous = pendingDelayRequests.get(key)
+  if (previous) return previous
+  const request = http(c, path, { timeout: Math.ceil(timeout / 1000) + 2 })
+  pendingDelayRequests.set(key, request)
+  try { return await request } finally { if (pendingDelayRequests.get(key) === request) pendingDelayRequests.delete(key) }
 }
-export async function testGroup(c0: Controller, g: Group, onProgress?: (name: string, delay: number) => void): Promise<Record<string, number>> {
-  const c = await cc(c0)
-  const res: Record<string, number> = {}
-  const prefs = getPreferences(), testURL = g.testUrl || prefs.testURL, timeout = prefs.testTimeout
-  const report = (n: string, d: number) => { try { onProgress?.(n, d) } catch {} }
-  // Phase 1: test nodes concurrently and report each success as soon as it returns, instead of waiting for the slowest node.
-  const names = [...new Set(g.all)], queue = [...names]
+async function probeNodes(c: Controller, names: string[], url: string, timeout: number, onProgress?: (name: string, delay: number) => void): Promise<Record<string, number>> {
+  const res: Record<string, number> = {}, queue = [...new Set(names)]
   await Promise.all(Array.from({ length: Math.min(16, queue.length) }, async () => {
     while (queue.length) {
       const n = queue.shift()!
       let d = 0
-      try { const j = await http(c, `/proxies/${enc(n)}/delay?url=${enc(testURL)}&timeout=${timeout}`, { timeout: Math.ceil(timeout / 1000) + 2 }); d = num(j.delay) } catch { d = 0 }
+      try { const j = await delayRequest(c, `/proxies/${enc(n)}/delay?url=${enc(url)}&timeout=${timeout}`, timeout); d = num(j.delay) } catch { d = 0 }
       res[n] = d
-      if (d > 0) report(n, d)
+      if (d > 0) { try { onProgress?.(n, d) } catch {} }
     }
   }))
+  return res
+}
+export async function testNodes(c0: Controller, names: string[], url?: string): Promise<Record<string, number>> {
+  const c = await cc(c0), prefs = getPreferences()
+  return probeNodes(c, names, url || prefs.testURL, prefs.testTimeout)
+}
+export async function testGroup(c0: Controller, g: Group, onProgress?: (name: string, delay: number) => void): Promise<Record<string, number>> {
+  const c = await cc(c0)
+  const prefs = getPreferences(), testURL = g.testUrl || prefs.testURL, timeout = prefs.testTimeout
+  const report = (n: string, d: number) => { try { onProgress?.(n, d) } catch {} }
+  const names = [...new Set(g.now && g.all.includes(g.now) ? [g.now, ...g.all] : g.all)]
+  const res = await probeNodes(c, names, testURL, timeout, report)
   // Phase 2: some nodes only answer the group delay API; ask it once for the nodes that failed individually.
   const failed = names.filter(n => !(res[n] > 0))
   if (failed.length) {
     try {
-      const j = await http(c, `/group/${enc(g.name)}/delay?url=${enc(testURL)}&timeout=${timeout}`, { timeout: Math.ceil(timeout / 1000) + 2 })
+      const j = await delayRequest(c, `/group/${enc(g.name)}/delay?url=${enc(testURL)}&timeout=${timeout}`, timeout)
       for (const n of failed) { const v = num((j as any)[n]); if (v > 0) { res[n] = v; report(n, v) } }
     } catch { recordEvent("fallback", false, { warning: true }) }
   }
