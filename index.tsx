@@ -188,12 +188,12 @@ function OverviewPage({ active, version, onSwitch, onClose }: { active: Controll
   const toolbar = rootToolbar("home", onClose, <Button title="" systemImage="ellipsis.circle" action={() => setPage("settings")} />)
   const destination = {
     isPresented: page !== "",
-    onChanged: (v: boolean) => { if (!v) { setPage(""); onSwitch() } },
+    onChanged: (v: boolean) => { if (!v) { setVisible(true); setPage(""); onSwitch() } },
     content: page === "settings" ? <SettingsPage active={active} onChanged={onSwitch} />
       : <Text>-</Text>,
   }
   if (!active) return <Form navigationTitle="dashboard" navigationBarTitleDisplayMode="inline" toolbar={toolbar} navigationDestination={destination}><NoController /></Form>
-  return <ScrollView onAppear={() => setVisible(true)} onDisappear={() => setVisible(false)} navigationTitle="OpenWrt 状态" navigationBarTitleDisplayMode="inline" toolbar={toolbar} navigationDestination={destination}>
+  return <ScrollView onAppear={() => { setVisible(true); setPage("") }} onDisappear={() => setVisible(false)} navigationTitle="OpenWrt 状态" navigationBarTitleDisplayMode="inline" toolbar={toolbar} navigationDestination={destination}>
     <VStack spacing={12} padding={{ horizontal: 14, top: 2, bottom: 8 }}>
       <HStack spacing={4} frame={{ maxWidth: "infinity" }} padding={{ top: -14 }}>
         <Spacer />

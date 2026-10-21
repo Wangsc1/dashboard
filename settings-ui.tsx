@@ -65,7 +65,7 @@ export function AppearancePage() {
     <Section header={<Text>列表与动画</Text>}>
       <Choice title="连接列表样式" value={p.connectionStyle} values={[["standard", "标准"], ["compact", "简约"]]} onChanged={v => update({ connectionStyle: v as any })} />
       <Choice title="代理卡片样式" value={p.proxyStyle} values={[["list", "列表"], ["compact", "简约"]]} onChanged={v => update({ proxyStyle: v as any })} />
-      {toggle("collapseGesture", "卡片折叠菜单手势")}{toggle("removalFade", "碎片化移除特效")}
+      {toggle("collapseGesture", "卡片折叠菜单手势")}
     </Section>
     <Section header={<Text>延迟阈值设置</Text>}><NavigationLink destination={<ThresholdPage />}><Text>{`延迟阈值范围　${p.delayGreen}–${p.delayRed} ms`}</Text></NavigationLink></Section>
     <Section header={<Text>代理组</Text>}>{toggle("showHidden", "显示隐藏代理组")}{toggle("customIcons", "自定义代理组图标")}</Section>

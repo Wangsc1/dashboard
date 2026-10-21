@@ -194,7 +194,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     const cards = nodes(tree, app.StatCard); assert.equal(cards.length, 4); assert.equal(cards.filter(n => n.props.spark).length, 0); assert.equal(cards.filter(n => n.props.droplets).length, 2)
     assert.ok(cards.filter(n => ['活动连接', '内存使用'].includes(n.props.title)).every(n => !n.props.spark))
     tree = render(app.Root, {}, true); assert.equal(nodes(tree,'TabView')[0].props.preferredColorScheme, 'dark'); assert.equal(nodes(tree,'TabView')[0].props.selection.value, 'rules'); assert.equal(nodes(tree, app.RulesPage).length, 1)
-    tree = render(ui.AppearancePage, {}, true); assert.ok(!text(tree).includes('应用图标')); assert.equal(nodes(tree, 'Toggle').length, 8)
+    tree = render(ui.AppearancePage, {}, true); assert.ok(!text(tree).includes('应用图标')); assert.equal(nodes(tree, 'Toggle').length, 7)
   })
   await test('曲线几何：真实历史不变、横向连续滚动、末端视觉插值和无过冲路径', () => {
     const chart = load('chart'), previous = [100, 300], current = [100, 300, 900]
@@ -259,7 +259,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) assert.equal(nodes(tree, types[i]).length, ids[i] === id ? 1 : 0)
     }
-    assert.equal(api.VERSION, '1.5.47'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.5.48'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('1.5.46 共享栈/简单ToolBarProps：唯一业务页owner、隐藏Tab无注册', () => {
     pref.savePreferences({ defaultPage: 'overview' })
@@ -331,6 +331,28 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     assert.ok(calls.length > 0); assert.ok(calls.every(x => x.url.endsWith('/ubus')))
     let tree = render(app.OverviewPage, { active: router, version: 0, onSwitch() {} }); tree.props.onDisappear(); render(app.OverviewPage, { active: router, version: 0, onSwitch() {} }); await flush()
     assert.ok(![...intervals.values()].some(x => x.ms === 1000)); unmount(); assert.equal(intervals.size, 0)
+  })
+  await test('主页返回设置后恢复轮询：返回回调与onAppear各自能解除双暂停', async () => {
+    pref.savePreferences({ connectionBackground: false })
+    const router = api.listControllers().find(x => x.kind === 'openwrt')
+    responder = () => ({ body: { result: [0, { uptime: 1, load: [0,0,0], memory: { total: 100, free: 50 }, interface: [], data: '2' }] } })
+    const props = { active: router, version: 0, onSwitch() {} }
+    render(app.OverviewPage, props, true); await flush()
+    const polling = () => [...intervals.values()].filter(x => x.ms === 1000)
+    for (const route of ['callback', 'appear', 'callback']) {
+      let tree = render(app.OverviewPage, props)
+      trailing(tree.props.toolbar).props.action(); tree.props.onDisappear()
+      tree = render(app.OverviewPage, props); await flush(); assert.equal(polling().length, 0)
+      if (route === 'callback') tree.props.navigationDestination.onChanged(false)
+      else tree.props.onAppear()
+      tree = render(app.OverviewPage, props); await flush()
+      assert.equal(tree.props.navigationDestination.isPresented, false); assert.equal(polling().length, 1)
+      const before = calls.length; await polling()[0].fn(); await flush(); assert.ok(calls.length > before)
+    }
+    unmount(); assert.equal(intervals.size, 0)
+    const tree = render(ui.AppearancePage, {}, true)
+    assert.ok(!text(tree).includes('碎片化移除特效'))
+    unmount()
   })
   await test('1.5.46 OpenWrt卡：目标平台、内核版本、CPU两次采样', async () => {
     const router = { ...api.listControllers().find(x => x.kind === 'openwrt'), id: 'cpu-test' }
@@ -619,7 +641,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
   await test('外观设置移除说明及括号注释，开关保留', () => {
     const src = fs.readFileSync(path.join(root, 'settings-ui.tsx'), 'utf8'), body = src.slice(src.indexOf('export function AppearancePage'), src.indexOf('function HeaderFields'))
     assert.ok(!body.includes('footer=')); assert.ok(!body.includes('（本地替代）')); assert.ok(!body.includes('（长按组标题）')); assert.ok(!body.includes('（淡出替代）'))
-    for (const k of ['collapseGesture','removalFade','showWrt','droplets','connectionBackground','ripple','customIcons']) assert.ok(body.includes(k))
+    for (const k of ['collapseGesture','showWrt','droplets','connectionBackground','ripple','customIcons']) assert.ok(body.includes(k))
   })
   await test('设置子页打开时暂停主页偏好刷新，返回补齐；外观去掉编辑组图标', async () => {
     pref.savePreferences({ showWrt: true })
