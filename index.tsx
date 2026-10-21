@@ -683,9 +683,11 @@ function Root() {
         {tab === "proxies" ? <ProxiesPage selected onClose={dismiss} key={`proxies:${active?.id ?? "empty"}`} active={active} version={version} /> : null}
       </NavigationStack>
     </Tab>
-    <NavigationStack key="rules-stack" tag="rules" tabItem={<VStack><Image systemName="swatchpalette" symbolVariant="none"/><Text>规则</Text></VStack>}>
+    <Tab key="rules" title="规则" systemImage="swatchpalette" value="rules">
+      <NavigationStack key="rules-stack">
         {tab === "rules" ? <RulesPage selected onClose={dismiss} key={`rules:${active?.id ?? "empty"}`} active={active} version={version} /> : null}
-    </NavigationStack>
+      </NavigationStack>
+    </Tab>
     <Tab key="connections" title="连接" systemImage="arrow.left.arrow.right" value="connections">
       <NavigationStack key="connections-stack">
         {tab === "connections" ? <ConnectionsPage selected onClose={dismiss} key={`connections:${active?.id ?? "empty"}`} active={active} version={version} /> : null}
