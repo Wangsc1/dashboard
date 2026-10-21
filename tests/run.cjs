@@ -202,12 +202,23 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     for (const [title,min,max,step,value,dx,want] of [['连接超时时间',1,30,1,8,87,16],['超时时间',1000,10000,100,5000,150,9500],['最大记录条数',100,2000,100,500,100,1100]]) {
       const saved = [], props = { title, min, max, step, value, onChanged: n => saved.push(n) }
       let tree = render(ui.Range, props, true); await flush()
-      assert.equal(tree.props.listRowSeparator, 'hidden'); assert.equal(nodes(tree, 'Slider').length, 0)
+      assert.notEqual(tree.props.listRowSeparator, 'hidden'); assert.equal(nodes(tree, 'Slider').length, 0); assert.equal(nodes(tree, 'Image').length, 0)
       const gesture = track(tree).props.onDragGesture, ev = { translation: { width: dx, height: 0 } }
       gesture.onChanged(ev); tree = render(ui.Range, props); await flush()
       assert.ok(text(tree).includes(String(want))); assert.equal(saved.length, 0)
       gesture.onEnded(ev); assert.equal(saved.join(','), String(want)); unmount()
     }
+  })
+  await test('全局配置：仅连接超时标题与滑块之间有分割线；设置行不隐藏系统分隔线；无图标', () => {
+    const tree = render(ui.GlobalConfigPage, { active: null }, true)
+    const ranges = nodes(tree, ui.Range)
+    assert.equal(ranges.length, 3)
+    assert.deepEqual(ranges.map(n => !!n.props.divider), [true, false, false])
+    const rendered = ranges.map(n => render(ui.Range, n.props))
+    assert.equal(nodes(rendered[0], 'RoundedRectangle').filter(x => x.props.frame?.height === 0.5).length, 1)
+    assert.equal(nodes(rendered[1], 'RoundedRectangle').filter(x => x.props.frame?.height === 0.5).length, 0)
+    assert.ok(rendered.every(t => t.props.listRowSeparator !== 'hidden'))
+    unmount()
   })
   await test('全局配置分组顺序：启动紧随主题，阈值紧邻网络请求之前', () => {
     const tree = render(ui.GlobalConfigPage, { active: null }, true)
@@ -418,7 +429,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) { const lazy = ['proxies','rules','connections'].includes(ids[i]) && ids[i] !== id; assert.equal(nodes(tree, types[i]).length, lazy ? 0 : 1); if (!lazy) assert.equal(nodes(tree, types[i])[0].props.selected, ids[i] === id) }
     }
-    assert.equal(api.VERSION, '1.5.97'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.5.98'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('独立导航栈保留业务owner和身份，只有选中页提供可见工具栏', () => {
     pref.savePreferences({ defaultPage: 'overview' })
@@ -1064,7 +1075,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       const diagnostic = logs.filter(x => x.startsWith('[preferences-icon]'))
       for (const stage of ['change','accepted','proxies-render','group-render']) assert.ok(diagnostic.some(x => x.includes('stage=' + stage) && x.includes('enabled=false')))
       assert.ok(diagnostic.every(x => !x.includes('private.invalid') && !x.includes('private-group-name') && !x.includes('secret-')))
-      assert.ok(diagnostic.every(x => x.includes('build=1.5.97') && /instance=[a-z0-9]+/.test(x)))
+      assert.ok(diagnostic.every(x => x.includes('build=1.5.98') && /instance=[a-z0-9]+/.test(x)))
       assert.equal(new Set(diagnostic.map(x => x.match(/instance=([^ ]+)/)[1])).size, 1)
     } finally { context.console = originalConsole; unmount(); pref.savePreferences({ customIcons: true, testURL: 'https://www.gstatic.com/generate_204' }) }
   })

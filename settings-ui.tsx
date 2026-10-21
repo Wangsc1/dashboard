@@ -30,7 +30,7 @@ function update(patch: Partial<Preferences>) { if (typeof patch.customIcons === 
 function Choice({ title, value, values, onChanged, disabled = false }: { title: string; value: string; values: string[][]; onChanged: (v: string) => void; disabled?: boolean }) {
   return <Picker title={title} pickerStyle="menu" value={value} onChanged={onChanged} disabled={disabled}>{values.map(([v, l]) => <Text key={v} tag={v}>{l}</Text>)}</Picker>
 }
-function Range({ title, value, min, max, step = 1, suffix = "", onChanged }: { title: string; value: number; min: number; max: number; step?: number; suffix?: string; onChanged: (n: number) => void }) {
+function Range({ title, value, min, max, step = 1, suffix = "", divider = false, onChanged }: { title: string; value: number; min: number; max: number; step?: number; suffix?: string; divider?: boolean; onChanged: (n: number) => void }) {
   const [draft, setDraft] = useState(value)
   const snap = (n: number) => Math.max(min, Math.min(max, min + Math.round((n - min) / step) * step))
   const [drag] = useState(() => {
@@ -54,8 +54,9 @@ function Range({ title, value, min, max, step = 1, suffix = "", onChanged }: { t
   drag.value = value; drag.onChanged = onChanged
   useEffect(() => { if (!drag.active) setDraft(snap(value)) }, [value])
   const shown = snap(draft)
-  return <VStack alignment="leading" spacing={10} padding={{ vertical: 6 }} listRowSeparator="hidden">
+  return <VStack alignment="leading" spacing={10} padding={{ vertical: 6 }}>
     <Text>{`${title}：${shown}${suffix}`}</Text>
+    {divider ? <RoundedRectangle cornerRadius={0} fill={{ light: "#C6C6C8", dark: "#38383A" }} frame={{ maxWidth: "infinity", height: 0.5 }} /> : null}
     <HStack spacing={10}>
       <Text font={14} foregroundStyle="secondaryLabel">{String(min)}</Text>
       <GeometryReader frame={{ height: 28 }}>{(proxy: { size: { width: number } }) => {
@@ -248,7 +249,7 @@ export function GlobalConfigPage({ active }: { active: Controller | null }) {
       <HeaderFields />
       {toggle("nestedDelay", "嵌套代理组延迟显示")}
     </Section>
-    <Section header={<Text>连接超时</Text>}><Range title="连接超时时间" min={1} max={30} value={p.requestTimeout} suffix=" s" onChanged={n => update({ requestTimeout: n })} /></Section>
+    <Section header={<Text>连接超时</Text>}><Range title="连接超时时间" divider min={1} max={30} value={p.requestTimeout} suffix=" s" onChanged={n => update({ requestTimeout: n })} /></Section>
     <Section header={<Text>测速设置</Text>}><TestURLField /><Range title="超时时间" min={1000} max={10000} step={100} value={p.testTimeout} suffix=" ms" onChanged={n => update({ testTimeout: n })} /></Section>
     <Section header={<Text>运行日志</Text>}><Range title="最大记录条数" min={100} max={2000} step={100} value={p.logLimit} onChanged={n => update({ logLimit: n })} />{toggle("detailedAPI", "记录详细 API 请求")}</Section>
   </Form>
