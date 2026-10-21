@@ -6,7 +6,7 @@ export interface Preferences {
   showWrt: boolean; droplets: boolean; connectionBackground: boolean; ripple: boolean
   foldOffline: boolean; disconnectOnSwitch: boolean; haptics: boolean
   defaultPage: "overview" | "proxies" | "rules" | "connections" | "more"
-  nestedDelay: boolean; nodeSort: "default" | "delay" | "name"; showGlobal: boolean
+  nestedDelay: boolean; nodeSort: "default" | "delay" | "name" | "nameDesc" | "delayDesc"; showGlobal: boolean
   headersEnabled: boolean; requestTimeout: number; testURL: string; testTimeout: number; logLimit: number; detailedAPI: boolean
 }
 export const DEFAULTS: Preferences = {
@@ -27,7 +27,7 @@ export function normalizePreferences(raw: Partial<Preferences>): Preferences {
     const v = raw[k]
     if (typeof v === typeof DEFAULTS[k] && v !== null) (p as any)[k] = v
   }
-  for (const [k, choices] of Object.entries({ theme: ["system", "light", "dark"], connectionStyle: ["standard", "compact"], proxyStyle: ["list", "compact"], defaultPage: ["overview", "proxies", "rules", "connections", "more"], nodeSort: ["default", "delay", "name"] })) {
+  for (const [k, choices] of Object.entries({ theme: ["system", "light", "dark"], connectionStyle: ["standard", "compact"], proxyStyle: ["list", "compact"], defaultPage: ["overview", "proxies", "rules", "connections", "more"], nodeSort: ["default", "name", "nameDesc", "delay", "delayDesc"] })) {
     if (!choices.includes((p as any)[k])) (p as any)[k] = (DEFAULTS as any)[k]
   }
   for (const [k, min, max] of [["requestTimeout", 1, 30], ["testTimeout", 1000, 10000], ["logLimit", 100, 2000], ["delayGreen", 1, 9999], ["delayRed", 1, 10000]] as [keyof Preferences, number, number][]) {
@@ -129,3 +129,5 @@ export function clearImageCache() {
   Storage.remove(IMAGE_INDEX); recordEvent("cache", true)
   return keys.length
 }
+
+export const NODE_SORT_OPTIONS: [Preferences["nodeSort"], string][] = [["default", "默认（按配置排序）"], ["name", "按名称升序"], ["nameDesc", "按名称降序"], ["delay", "按测速延迟升序"], ["delayDesc", "按测速延迟降序"]]

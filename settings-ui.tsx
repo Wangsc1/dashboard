@@ -1,6 +1,6 @@
 import { Button, Circle, Form, HStack, Image, Label, Menu, NavigationLink, Picker, Section, SecureField, Slider, Spacer, Text, TextField, Toggle, VStack, useEffect, useState } from "scripting"
 import { Controller, ClashConfig, CLASH_MODES, LOG_LEVELS, loadConfig, patchConfig } from "./api"
-import { Preferences, AppLog, LogLevel, getPreferences, savePreferences, subscribePreferences, feedback, getLogs, clearLogs, exportLogs, logTime, getHeaderText, saveHeaders, clearImageCache } from "./preferences"
+import { NODE_SORT_OPTIONS, Preferences, AppLog, LogLevel, getPreferences, savePreferences, subscribePreferences, feedback, getLogs, clearLogs, exportLogs, logTime, getHeaderText, saveHeaders, clearImageCache } from "./preferences"
 
 import { makeBackup, restoreBackup, validateBackup } from "./cloud-backup"
 
@@ -146,7 +146,10 @@ export function GlobalConfigPage({ active }: { active: Controller | null }) {
     <Section header={<Text>网络请求</Text>}>
       <HeaderFields />
       {toggle("nestedDelay", "嵌套代理组延迟显示")}
-      <Choice title="代理组节点排序" value={p.nodeSort} values={[["default", "默认（配置顺序）"], ["delay", "延迟（超时最后）"], ["name", "名称"]]} onChanged={v => update({ nodeSort: v as any })} />
+      <Button action={async () => {
+        const i = await Dialog.actionSheet({ title: "代理组节点排序", actions: NODE_SORT_OPTIONS.map(([key, label]) => ({ label: (key === p.nodeSort ? "✓ " : "") + label })) })
+        if (i != null && NODE_SORT_OPTIONS[i]) update({ nodeSort: NODE_SORT_OPTIONS[i][0] })
+      }}><HStack><Text foregroundStyle="label">代理组节点排序</Text><Spacer /><Text foregroundStyle="secondaryLabel">{NODE_SORT_OPTIONS.find(([key]) => key === p.nodeSort)?.[1]}</Text></HStack></Button>
       {toggle("showGlobal", "显示 Global 代理组")}
       <Range title="连接超时时间" min={1} max={30} value={p.requestTimeout} suffix=" s" onChanged={n => update({ requestTimeout: n })} />
     </Section>

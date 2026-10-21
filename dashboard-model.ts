@@ -4,8 +4,12 @@ export function sourceKey(c: Controller) { return [c.id, c.url, c.plugin, c.auto
 export function selectable(g: Group) { return ["Selector","URLTest","Fallback"].includes(g.type) }
 export function sortedNodes(g: Group, delays = g.delays) {
   const xs = [...g.all], sort = getPreferences().nodeSort
-  if (sort === "name") xs.sort((a,b) => a.localeCompare(b))
-  if (sort === "delay") xs.sort((a,b) => (delays[a] > 0 ? delays[a] : Infinity) - (delays[b] > 0 ? delays[b] : Infinity))
+  if (sort === "name" || sort === "nameDesc") xs.sort((a,b) => sort === "name" ? a.localeCompare(b) : b.localeCompare(a))
+  if (sort === "delay" || sort === "delayDesc") xs.sort((a,b) => {
+    const da = delays[a], db = delays[b], va = Number.isFinite(da) && da > 0, vb = Number.isFinite(db) && db > 0
+    if (!va || !vb) return va ? -1 : vb ? 1 : 0
+    return sort === "delay" ? da - db : db - da
+  })
   return xs
 }
 
