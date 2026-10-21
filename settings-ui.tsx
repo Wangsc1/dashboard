@@ -1,6 +1,6 @@
 import { Button, Circle, Form, HStack, Image, Label, Menu, NavigationLink, Picker, Section, SecureField, Slider, Spacer, Text, TextField, Toggle, VStack, useEffect, useState } from "scripting"
 import { Controller, ClashConfig, CLASH_MODES, LOG_LEVELS, loadConfig, patchConfig } from "./api"
-import { NODE_SORT_OPTIONS, Preferences, AppLog, LogLevel, getPreferences, savePreferences, subscribePreferences, preferenceTrace, feedback, getLogs, clearLogs, exportLogs, logTime, getHeaderText, saveHeaders, clearImageCache } from "./preferences"
+import { NODE_SORT_OPTIONS, Preferences, AppLog, LogLevel, getPreferences, savePreferences, subscribePreferences, preferenceTrace, traceIconPreference, feedback, getLogs, clearLogs, exportLogs, logTime, getHeaderText, saveHeaders, clearImageCache } from "./preferences"
 
 import { makeBackup, restoreBackup, validateBackup } from "./cloud-backup"
 
@@ -26,7 +26,7 @@ export function usePreferences(keys?: (keyof Preferences)[], enabled = true, tra
   }, [signature, enabled, trace])
   return p
 }
-function update(patch: Partial<Preferences>) { preferenceTrace("changed"); try { savePreferences(patch); feedback() } catch { void Dialog.alert({ message: "本地设置保存失败，请重试" }) } }
+function update(patch: Partial<Preferences>) { if (typeof patch.customIcons === "boolean") traceIconPreference("change", patch.customIcons); preferenceTrace("changed"); try { savePreferences(patch); feedback() } catch { void Dialog.alert({ message: "本地设置保存失败，请重试" }) } }
 function Choice({ title, value, values, onChanged, disabled = false }: { title: string; value: string; values: string[][]; onChanged: (v: string) => void; disabled?: boolean }) {
   return <Picker title={title} pickerStyle="menu" value={value} onChanged={onChanged} disabled={disabled}>{values.map(([v, l]) => <Text key={v} tag={v}>{l}</Text>)}</Picker>
 }
@@ -123,6 +123,7 @@ export function KernelConfigPage({ c }: { c: Controller }) {
 export function GlobalConfigPage({ active }: { active: Controller | null }) {
   const p = usePreferences(undefined, true, true), [url, setURL] = useState(p.testURL)
   preferenceTrace("global-render")
+  traceIconPreference("global-render", p.customIcons)
   const toggle = (key: keyof Preferences, title: string) => <Toggle key={key} title={title} value={!!p[key]} onChanged={(v: boolean) => update({ [key]: v })} />
   async function clear() {
     if (!await Dialog.confirm({ title: "清除图片缓存", message: "仅删除本脚本缓存的代理组图片；不会删除账号、密码、密钥、设置或日志。", confirmLabel: "清除" })) return

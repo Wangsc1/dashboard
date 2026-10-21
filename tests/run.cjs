@@ -330,7 +330,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) assert.equal(nodes(tree, types[i]).length, ids[i] === id ? 1 : 0)
     }
-    assert.equal(api.VERSION, '1.5.56'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.5.57'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('1.5.46 共享栈/简单ToolBarProps：唯一业务页owner、隐藏Tab无注册', () => {
     pref.savePreferences({ defaultPage: 'overview' })
@@ -827,6 +827,23 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       pref.savePreferences({ customIcons: true }); tree = render(pages.GroupSection, props); assert.equal(nodes(tree, pages.GroupIcon).length, 1)
       unmount()
     }
+  })
+  await test('图标诊断区分事件、保存、页面值及存储，不输出私人内容', async () => {
+    const originalConsole = context.console, logs = []
+    context.console = { ...console, log: message => logs.push(message) }
+    try {
+      pref.savePreferences({ customIcons: true, testURL: 'https://private.invalid/secret-value' })
+      let tree = render(ui.GlobalConfigPage, { active: null }, true); await flush()
+      nodes(tree, 'Toggle').find(n => n.props.key === 'customIcons').props.onChanged(false)
+      tree = render(ui.GlobalConfigPage, { active: null }); await flush(); unmount()
+      render(pages.ProxiesPage, { active: null, version: 0 }, true); await flush(); unmount()
+      render(pages.GroupSection, { c, g: { name: 'private-group-name', type: 'Selector', all: ['A'], now: 'A', delays: {}, icon: 'https://private.invalid/secret-image' }, onChanged() {} }, true); await flush(); unmount()
+      const diagnostic = logs.filter(x => x.startsWith('[preferences-icon]'))
+      for (const stage of ['change','accepted','global-render','proxies-render','group-render']) assert.ok(diagnostic.some(x => x.includes('stage=' + stage) && x.includes('enabled=false')))
+      assert.ok(diagnostic.every(x => !x.includes('private.invalid') && !x.includes('private-group-name') && !x.includes('secret-')))
+      assert.ok(diagnostic.every(x => x.includes('build=1.5.57') && /instance=[a-z0-9]+/.test(x)))
+      assert.equal(new Set(diagnostic.map(x => x.match(/instance=([^ ]+)/)[1])).size, 1)
+    } finally { context.console = originalConsole; unmount(); pref.savePreferences({ customIcons: true, testURL: 'https://www.gstatic.com/generate_204' }) }
   })
   await test('主页内存固定一位小数，流量默认精度不变', () => {
     assert.deepEqual(Array.from(api.fmtParts(128.56 * 1048576, false, 1)), ['128.6', 'MB'])

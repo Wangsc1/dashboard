@@ -2,7 +2,7 @@ import { rootToolbar } from "./root-toolbar"
 import { Animation, Transition, Button, HStack, VStack, Text, Image, Circle, RoundedRectangle, Spacer, ScrollView, LazyVStack, NavigationLink, Menu, Picker, TextField, Toggle, Form, Section, Label, modifiers, Safari, useState, useEffect } from "scripting"
 import { Controller, Group, Conn, Rule, Provider, loadGroups, testGroup, selectProxy, loadProviders, updateProvider, loadRules, loadConnections, closeConnection, closeAllConnections, fmtBytes, fmtSpeed, fmtUptime, delayColor, coreVersion, nikkiInfo, loadConfig, nikkiService, nikkiServiceStatus, coreAction, CoreAction, queryDNS, loadNikkiManagement, NikkiManagement, updateNikkiSubscription, webpage } from "./api"
 import { usePreferences, KernelConfigPage, LogsPage } from "./settings-ui"
-import { NODE_SORT_OPTIONS, savePreferences, cachedIcon, feedback } from "./preferences"
+import { NODE_SORT_OPTIONS, savePreferences, cachedIcon, traceIconPreference, feedback } from "./preferences"
 import { selectable, sortedNodes, historyFor, filterConnections, clientLabels, saveClientLabel, sourceKey, confirmed } from "./dashboard-model"
 const FG = { light: "#41434B", dark: "#CFD0D7" }
 
@@ -17,6 +17,7 @@ function Empty() { return <Hint>尚未添加控制器，请从主页右上角进
 export function GroupIcon({g}:{g:Group}) {
   const p=usePreferences(), [image,setImage]=useState<any>(null), symbol=p.groupIcons[g.name]
   useEffect(()=>{ let alive=true;setImage(null);if(p.customIcons&&!symbol&&g.icon) cachedIcon(g.icon).then(x=>{if(alive)setImage(x)}).catch(()=>{});return()=>{alive=false} },[p.customIcons,symbol,g.icon])
+  traceIconPreference("icon-render", p.customIcons)
   if (!p.customIcons) return null
   return image ? <Image image={image} resizable scaleToFit frame={{width:22,height:22}}/> : <Image systemName={symbol || "point.3.connected.trianglepath.dotted"} foregroundStyle="systemBlue" frame={{width:22,height:22}}/>
 }
@@ -39,6 +40,7 @@ export function ProviderCard({c,p,kind,onChanged}:{c:Controller;p:Provider;kind:
 export function GroupSection({c,g,onChanged,expanded=false}:{c:Controller;g:Group;onChanged:()=>void;expanded?:boolean}) {
   const prefs=usePreferences(),[busy,setBusy]=useState(false),[delays,setDelays]=useState(g.delays),[open,setOpen]=useState(false),[nodeLimit,setNodeLimit]=useState(40),[guard]=useState({alive:true});useEffect(()=>()=>{guard.alive=false},[])
   useEffect(()=>setDelays(g.delays),[g.delays]);const d=delays[g.now]
+  traceIconPreference("group-render", prefs.customIcons)
   return <Card><HStack onLongPressGesture={()=>{if(prefs.collapseGesture){setOpen(!open);feedback()}}}><NavigationLink destination={<GroupNodesPage c={c} g={{...g,delays}} onChanged={onChanged}/>}><HStack spacing={10}>{prefs.customIcons ? <GroupIcon g={g}/> : null}<VStack alignment="leading" spacing={4}><Text fontWeight="semibold">{g.name}</Text><HStack spacing={4}><Text font={12} foregroundStyle="secondaryLabel">{g.now||"内核未提供当前节点"}</Text>{d!==undefined?<><Circle fill={delayColor(d) as any} frame={{width:5,height:5}}/><Text font={11} foregroundStyle={delayColor(d) as any}>{d>0?`${d} ms`:"超时"}</Text></>:null}</HStack></VStack><Spacer/><Image systemName="chevron.right" font={11} foregroundStyle="tertiaryLabel"/></HStack></NavigationLink><Button title="" systemImage="bolt.fill" tint="systemYellow" disabled={busy} action={async()=>{if(busy)return;setBusy(true);await attempt(async()=>{await confirmed(`${c.name} · ${g.name}`,"通过该组节点访问设置的测速URL，将产生外部网络请求。",async()=>{const d=await testGroup(c,g);if(guard.alive)setDelays(d)})});if(guard.alive)setBusy(false)}}/></HStack>
     {prefs.collapseGesture?<Button title={open?"收起预览":"展开预览"} action={()=>{setOpen(!open);feedback()}}/>:null}
     {expanded||open?<><Hint>{`全部 ${g.all.length} 节点 · 完整选择请点击组卡片`}</Hint>{sortedNodes(g,delays).slice(0,nodeLimit).map(n=><Button key={n} disabled={busy || !selectable(g)} action={()=>attempt(async()=>{if(await confirmed(`${c.name} · ${g.name}`,`切换至 ${n}，${prefs.disconnectOnSwitch?"并按偏好断开全部旧连接":"仅改变运行策略，自动组可能触发内核健康检查"}。`,()=>selectProxy(c,g.name,n))&&guard.alive)onChanged()})}><HStack><Text font={prefs.proxyStyle==="compact"?12:14}>{`${g.now===n?"✓ ":""}${n}`}</Text><Spacer/>{delays[n]!==undefined?<Text font={12} foregroundStyle={delayColor(delays[n]) as any}>{delays[n]>0?`${delays[n]} ms`:"超时"}</Text>:null}</HStack></Button>)}<Pages limit={nodeLimit} total={g.all.length} more={()=>setNodeLimit(nodeLimit+40)}/></>:null}
@@ -46,6 +48,7 @@ export function GroupSection({c,g,onChanged,expanded=false}:{c:Controller;g:Grou
 }
 export function ProxiesPage({active,version,onClose}:{active:Controller|null;version:number;onClose?:()=>void}) {
   const p=usePreferences(),[groups,setGroups]=useState<Group[]>([]),[providers,setProviders]=useState<Provider[]>([]),[err,setErr]=useState(""),[tick,setTick]=useState(0),[expanded,setExpanded]=useState(false),[showProviders,setShowProviders]=useState(true),[limit,setLimit]=useState(40),[visible,setVisible]=useState(true)
+  traceIconPreference("proxies-render", p.customIcons)
   useEffect(()=>{if(!active||!visible)return;let alive=true;setGroups([]);setErr("");loadGroups(active).then(x=>{if(alive){setGroups(x);setErr("")}}).catch(()=>{if(alive)setErr(safeError())});return()=>{alive=false}},[active&&sourceKey(active),version,tick,p.showHidden,p.showGlobal,p.nestedDelay,visible])
   useEffect(()=>{if(!active||!showProviders||!visible)return;let alive=true;setProviders([]);loadProviders(active,"proxies").then(x=>{if(alive)setProviders(x)}).catch(()=>{if(alive)setErr("代理提供者读取不可用：当前内核不支持或权限不足；显示的0是已加载数量，不代表远端总数。")});return()=>{alive=false}},[active&&sourceKey(active),tick,showProviders,visible])
   const menu=<Menu label={<Image systemName="ellipsis.circle"/>}><Picker title="节点排序" pickerStyle="menu" value={p.nodeSort} onChanged={(v:string)=>savePreferences({nodeSort:v as any})}>{NODE_SORT_OPTIONS.map(([key, label]) => <Text key={key} tag={key}>{label}</Text>)}</Picker><Toggle title="显示Global代理组" value={p.showGlobal} onChanged={(v:boolean)=>savePreferences({showGlobal:v})}/><Toggle title="展示全部代理组" value={expanded} onChanged={setExpanded}/><Toggle title="显示隐藏组" value={p.showHidden} onChanged={(v:boolean)=>savePreferences({showHidden:v})}/><Toggle title="显示代理提供者" value={showProviders} onChanged={setShowProviders}/><Button title="刷新" action={()=>setTick(tick+1)}/></Menu>
