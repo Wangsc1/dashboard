@@ -11,7 +11,7 @@ export interface Preferences {
 }
 export const DEFAULTS: Preferences = {
   theme: "system", connectionStyle: "standard", proxyStyle: "list", collapseGesture: false, removalFade: false,
-  delayGreen: 240, delayRed: 500, showHidden: false, customIcons: false, groupIcons: {},
+  delayGreen: 240, delayRed: 500, showHidden: false, customIcons: true, groupIcons: {},
   showWrt: true, droplets: false, connectionBackground: false, ripple: false,
   foldOffline: false, disconnectOnSwitch: false, haptics: false, defaultPage: "overview",
   nestedDelay: false, nodeSort: "default", showGlobal: false, requestTimeout: 8,
