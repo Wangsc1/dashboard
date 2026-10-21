@@ -327,7 +327,7 @@ export function NikkiManagementPage({c,kind}:{c:Controller;kind:"profile"|"subsc
   const entryKey=edit?source(c)+":"+edit.entry:"closed"
   const content=edit ? edit.kind==="subscription"?<NikkiSubscriptionEditor key={entryKey} entryKey={entryKey} c={c} base={edit.base} value={edit.value} done={done}/>:edit.kind==="rule"?<NikkiRuleEditor key={entryKey} c={c} base={edit.base} value={edit.value} done={done}/>:edit.kind==="sort"?<NikkiRuleSort key={entryKey} c={c} base={edit.base} done={done}/>:<NikkiFileEditor key={entryKey} entryKey={entryKey} c={c} base={edit.base} file={edit.value} done={done}/> : <Text/>
   async function removeSubscription(s:NikkiSubscription) {await work.run(()=>work.simpleConfirm("删除订阅",`确认要删除订阅「${s.name}」吗？`,"确认删除",async()=>{await deleteNikkiSubscription(work.owner,data!,s.id);if(work.current()){refresh();work.setNotice("订阅设置已删除；系统可能已自动重载")}}))}
-  async function update(s:NikkiSubscription) {await work.run(async()=>{await updateNikkiSubscription(work.owner,s.id,data!);if(work.current()){refresh();work.setNotice("订阅已更新，未主动重载服务")}})}
+  async function update(s:NikkiSubscription) {await work.run(async()=>{await updateNikkiSubscription(work.owner,s.id,data!);if(work.current())refresh()})}
   async function enable(f:NikkiFile) {if(data?.profile===f.key)return;await work.run(()=>work.commitConfirm(`启用「${f.name}」？将提交为 Nikki 选用配置，由系统触发重载；配置选择成功不代表内核已成功加载。`,async()=>{
     await selectNikkiProfile(work.owner,data!,f.key)
     if(work.current())refresh()
