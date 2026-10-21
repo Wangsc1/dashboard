@@ -1,7 +1,7 @@
 import { NikkiManagement, NikkiSubscription, NikkiRule, NikkiFile, NikkiManagementError, NIKKI_RULE_TYPES, loadNikkiManagement, saveNikkiSubscription, deleteNikkiSubscription, updateNikkiSubscription, saveNikkiRule, deleteNikkiRule, setNikkiRulesEnabled, reorderNikkiRules, selectNikkiProfile, readNikkiFile, saveNikkiFile } from "./api"
 import { rootToolbar } from "./root-toolbar"
 import { AppEvents, Button, Divider, HStack, VStack, Text, Image, Circle, RoundedRectangle, Spacer, ScrollView, LazyVStack, NavigationLink, Menu, Picker, TextField, Toggle, Form, Section, Label, ProgressView, WebView, ZStack, modifiers, Safari, useState, useEffect } from "scripting"
-import { Controller, Group, Conn, Rule, Provider, loadGroups, testGroup, testNodes, selectProxy, loadProviders, updateProvider, loadRules, loadConnections, closeConnection, closeAllConnections, fmtBytes, fmtSpeed, fmtUptime, delayColor, loadRuntimeVersions, loadNikkiRuntime, NikkiRuntime, verifyCoreRestart, lastControllerMode, loadConfig, nikkiService, nikkiServiceStatus, coreAction, CoreAction, queryDNS, webpage } from "./api"
+import { Controller, Group, Conn, Rule, Provider, loadGroups, testGroup, testNodes, selectProxy, loadProviders, updateProvider, loadRules, loadConnections, closeConnection, closeAllConnections, fmtBytes, fmtSpeed, fmtUptime, delayColor, loadRuntimeVersions, loadNikkiRuntime, NikkiRuntime, verifyCoreRestart, lastControllerMode, loadConfig, setMode as setControllerMode, nikkiService, nikkiServiceStatus, coreAction, CoreAction, queryDNS, webpage } from "./api"
 import { usePreferences, KernelConfigPage } from "./settings-ui"
 import { NODE_SORT_OPTIONS, savePreferences, cachedIcon, traceIconPreference, feedback } from "./preferences"
 import { selectable, sortedNodes, historyFor, filterConnections, clientLabels, saveClientLabel, sourceKey, confirmed } from "./dashboard-model"
@@ -74,6 +74,51 @@ export function GroupSection({c,g,onChanged,expanded=false}:{c:Controller;g:Grou
     {expanded||open?<>{(()=>{const ns=sortedNodes(g,delays).slice(0,nodeLimit),rows:string[][]=[];for(let i=0;i<ns.length;i+=2)rows.push(ns.slice(i,i+2));return rows.map(r=><HStack key={r[0]} spacing={8}>{r.map(n=>{const on=now===n,dn=delays[n];return <Button key={n} buttonStyle="plain" disabled={!selectable(g)} frame={{maxWidth:"infinity"}} action={()=>{if(n===now)return;const prev=now;setNow(n);void attempt(async()=>{try{await selectProxy(c,g.name,n)}catch(e){if(guard.alive)setNow(prev);throw e}if(guard.alive)onChanged()})}}><VStack alignment="leading" spacing={10} frame={{maxWidth:"infinity",alignment:"leading"}} padding={{horizontal:10,vertical:14}} background={<RoundedRectangle cornerRadius={12} fill={on?"systemBlue":"tertiarySystemBackground"}/>}><HStack><Text font={prefs.proxyStyle==="compact"?12:13} fontWeight="semibold" lineLimit={1} foregroundStyle={on?"white":FG}>{n}</Text><Spacer/>{on?<Image systemName="checkmark.circle.fill" font={13} foregroundStyle="white"/>:null}</HStack><HStack spacing={4} frame={{maxWidth:"infinity"}}><Circle fill={dn!==undefined?delayColor(dn) as any:"tertiarySystemFill"} frame={{width:6,height:6}}/><Text font={11} foregroundStyle={dn!==undefined?delayColor(dn) as any:"secondaryLabel"}>{dn===undefined?(failed.has(n)?"超时":"未测速"):dn>0?`${dn}ms`:"超时"}</Text><Spacer/><Text font={11} lineLimit={1} foregroundStyle={on?"white":"secondaryLabel"}>{g.types?.[n]||"协议未知"}</Text></HStack></VStack></Button>})}{r.length<2?<Spacer frame={{maxWidth:"infinity"}}/>:null}</HStack>)})()}<Pages hideCount limit={nodeLimit} total={g.all.length} more={()=>setNodeLimit(nodeLimit+40)}/></>:null}
   </Card>
 }
+const PROXY_MODE_OPTIONS = [["rule","规则模式"],["direct","直连模式"],["global","全局模式"]] as const
+export function ProxyModeControl({c,enabled,version}:{c:Controller;enabled:boolean;version:number}) {
+  type Session = {source:string;controller:Controller;alive:boolean;visible:boolean;mode:string|null;loading:boolean;busy:boolean;error:string;read:number}
+  const [holder]=useState<{current:Session|null}>({current:null}),[,redraw]=useState(0)
+  const source=JSON.stringify(c)
+  if(holder.current?.source!==source)holder.current={source,controller:{...c},alive:true,visible:enabled,mode:null,loading:enabled,busy:false,error:"",read:0}
+  const session=holder.current!
+  if(session.visible!==enabled){session.visible=enabled;session.read++;session.mode=null;session.loading=enabled}
+  const current=()=>session.alive&&session.visible&&holder.current===session
+  const paint=()=>{if(current())redraw(n=>n+1)}
+  async function readMode(message="",retainMessage=false) {
+    if(!current())return
+    const read=++session.read
+    session.mode=null;session.loading=true;session.error="";paint()
+    try {
+      const cfg=await loadConfig(session.controller)
+      if(!current()||read!==session.read)return
+      if(PROXY_MODE_OPTIONS.some(([value])=>value===cfg.mode)){session.mode=cfg.mode!;session.error=retainMessage?message:""}
+      else session.error=message?`${message}；内核未提供可识别的当前模式。`:"内核未提供可识别的代理模式，暂不能切换。"
+    } catch {
+      if(current()&&read===session.read)session.error=message?`${message}；当前模式读取失败，请重试读取。`:"代理模式读取失败，请检查连接与权限后重试。"
+    } finally {if(current()&&read===session.read){session.loading=false;paint()}}
+  }
+  useEffect(()=>()=>{session.alive=false;session.read++},[session])
+  useEffect(()=>{if(enabled&&!session.busy)void readMode()},[session,enabled,version])
+  async function change(value:string) {
+    if(!current()||session.busy||session.loading||!session.mode||value===session.mode||!PROXY_MODE_OPTIONS.some(([mode])=>mode===value))return
+    // Lock synchronously; stale callbacks cannot queue a second PATCH or use a new source.
+    session.busy=true;session.error="";paint()
+    try {
+      try {await setControllerMode(session.controller,value)}
+      catch {await readMode("代理模式切换失败，已尝试重新读取当前模式",true);return}
+      await readMode("切换请求已发送")
+      if(current()&&session.mode===value)session.error=""
+      else if(current()&&session.mode)session.error="内核当前模式与请求不一致，已显示实际模式。"
+    } finally {session.busy=false;paint()}
+  }
+  return <VStack alignment="leading" spacing={10} frame={{maxWidth:"infinity"}}>
+    <HStack><Text font={20} fontWeight="bold" padding={{top:6}}>代理模式</Text><Spacer/></HStack>
+    {session.mode?<Picker title="代理模式" pickerStyle="segmented" value={session.mode} disabled={!enabled||session.busy||session.loading} onChanged={change}>{PROXY_MODE_OPTIONS.map(([value,title])=><Text key={value} tag={value}>{title}</Text>)}</Picker>:null}
+    {session.loading||session.busy?<HStack><ProgressView/><Hint>{session.busy?"正在切换并核验代理模式…":"正在读取代理模式…"}</Hint></HStack>:null}
+    {session.error?<Text font={12} foregroundStyle="systemRed">{session.error}</Text>:null}
+    {!session.loading&&!session.busy&&!session.mode?<Button title="重试读取代理模式" disabled={!enabled} action={()=>readMode()}/>:null}
+  </VStack>
+}
 const proxyCache=new Map<string,{groups:Group[];providers:Provider[]}>()
 export function ProxiesPage({active,version,onClose,selected=true}:{active:Controller|null;version:number;onClose?:()=>void;selected?:boolean}) {
   const p=usePreferences(),cacheKey=active?sourceKey(active):"",cached=proxyCache.get(cacheKey),[groups,setGroups]=useState<Group[]>(cached?.groups??[]),[providers,setProviders]=useState<Provider[]>(cached?.providers??[]),[loaded,setLoaded]=useState(!!cached),[err,setErr]=useState(""),[tick,setTick]=useState(0),[expanded,setExpanded]=useState(false),[showProviders,setShowProviders]=useState(true),[limit,setLimit]=useState(40),[visible,setVisible]=useState(selected)
@@ -82,8 +127,8 @@ export function ProxiesPage({active,version,onClose,selected=true}:{active:Contr
   useEffect(()=>{if(!active||!visible)return;let alive=true;setErr("");loadGroups(active).then(x=>{if(alive){setGroups(x);setLoaded(true);setErr("");proxyCache.set(cacheKey,{groups:x,providers:proxyCache.get(cacheKey)?.providers??[]})}}).catch(()=>{if(alive)setErr(safeError())});return()=>{alive=false}},[active&&sourceKey(active),version,tick,p.showHidden,p.showGlobal,p.nestedDelay,visible])
   useEffect(()=>{if(!active||!showProviders||!visible)return;let alive=true;loadProviders(active,"proxies").then(x=>{if(alive){setProviders(x);proxyCache.set(cacheKey,{groups:proxyCache.get(cacheKey)?.groups??[],providers:x})}}).catch(()=>{if(alive)setErr("代理提供商读取不可用：当前内核不支持或权限不足；显示的0是已加载数量，不代表远端总数。")});return()=>{alive=false}},[active&&sourceKey(active),tick,showProviders,visible])
   const remote=providers.filter(x=>x.vehicleType.toLowerCase()==="http")
-  const menu=<Menu label={<Image systemName="ellipsis.circle"/>}><Picker title="节点排序" pickerStyle="menu" value={p.nodeSort} onChanged={(v:string)=>savePreferences({nodeSort:v as any})}>{NODE_SORT_OPTIONS.map(([key, label]) => <Text key={key} tag={key}>{label}</Text>)}</Picker><Toggle title="显示Global代理组" value={p.showGlobal} onChanged={(v:boolean)=>savePreferences({showGlobal:v})}/><Toggle title="展示全部代理组" value={expanded} onChanged={setExpanded}/><Toggle title="显示隐藏组" value={p.showHidden} onChanged={(v:boolean)=>savePreferences({showHidden:v})}/><Toggle title="显示代理提供商" value={showProviders} onChanged={setShowProviders}/><Button title="全部更新" action={()=>{if(active)void updateAllProviders(active,"proxies",remote,()=>setTick(t=>t+1))}}/></Menu>
-  return Shell({title:active?.name??"代理",toolbar:rootToolbar("proxies",onClose,menu),onAppear:()=>setVisible(true),onDisappear:()=>setVisible(false),children:<>{!active?<Empty/>:<>{err?<Hint>{err}</Hint>:null}{!err&&loaded&&groups.length===0?<Hint>未读取到策略组</Hint>:null}{groups.slice(0,limit).map(g=><GroupSection key={g.name} c={active} g={g} expanded={expanded} onChanged={()=>setTick(t=>t+1)}/>)}<Pages hideCount limit={limit} total={groups.length} more={()=>setLimit(limit+40)}/>{showProviders?<><HStack><Text font={20} fontWeight="bold" padding={{top:6}}>代理提供商</Text><Spacer/></HStack>{remote.slice(0,limit).map(p=><ProviderCard key={p.name} c={active} p={p} kind="proxies" onChanged={()=>setTick(t=>t+1)}/>)}<Pages hideCount limit={limit} total={remote.length} more={()=>setLimit(limit+40)}/></>:null}</>}</>})
+  const menu=<Menu label={<Image systemName="ellipsis.circle"/>}><Picker title="节点排序" pickerStyle="menu" value={p.nodeSort} onChanged={(v:string)=>savePreferences({nodeSort:v as any})}>{NODE_SORT_OPTIONS.map(([key, label]) => <Text key={key} tag={key}>{label}</Text>)}</Picker><Toggle title="展示全部代理组" value={expanded} onChanged={setExpanded}/><Toggle title="显示隐藏组" value={p.showHidden} onChanged={(v:boolean)=>savePreferences({showHidden:v})}/><Toggle title="显示代理提供商" value={showProviders} onChanged={setShowProviders}/></Menu>
+  return Shell({title:active?.name??"代理",toolbar:rootToolbar("proxies",onClose,menu),onAppear:()=>setVisible(true),onDisappear:()=>setVisible(false),children:<>{!active?<Empty/>:<><ProxyModeControl key={JSON.stringify(active)} c={active} enabled={selected&&visible} version={version}/><HStack><Text font={20} fontWeight="bold" padding={{top:6}}>策略组</Text><Spacer/></HStack>{err?<Hint>{err}</Hint>:null}{!err&&loaded&&groups.length===0?<Hint>未读取到策略组</Hint>:null}{groups.slice(0,limit).map(g=><GroupSection key={g.name} c={active} g={g} expanded={expanded} onChanged={()=>setTick(t=>t+1)}/>)}<Pages hideCount limit={limit} total={groups.length} more={()=>setLimit(limit+40)}/>{showProviders?<><HStack><Text font={20} fontWeight="bold" padding={{top:6}}>代理提供商</Text><Spacer/></HStack>{remote.slice(0,limit).map(p=><ProviderCard key={p.name} c={active} p={p} kind="proxies" onChanged={()=>setTick(t=>t+1)}/>)}<Pages hideCount limit={limit} total={remote.length} more={()=>setLimit(limit+40)}/></>:null}</>}</>})
 }
 function ruleColor(type:string) { return /AND|OR|NOT|MATCH/.test(type)?"systemRed":/PROCESS/i.test(type)?"systemPurple":/IP|GEOIP/i.test(type)?"systemGreen":"systemBlue" }
 export function RulesPage({active,version,onClose,selected=true}:{active:Controller|null;version:number;onClose?:()=>void;selected?:boolean}) {
