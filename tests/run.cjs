@@ -403,12 +403,12 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(tab.props.children[0].props.toolbar, undefined)
       for (const child of tab.props.children[0].props.children) if (child) assert.equal(typeof child.props.onClose, 'function')
     }
-    assert.equal(nodes(tree, app.OverviewPage).length, 1); assert.equal(nodes(tree, app.ProxiesPage).length, 1); assert.equal(nodes(tree, app.ProxiesPage)[0].props.selected, false)
+    assert.equal(nodes(tree, app.OverviewPage).length, 1); assert.equal(nodes(tree, app.ProxiesPage).length, 0)
     // 系统点击/拖动通过同一个 Observable selection 回传；脚本不实现手势。
     nodes(tree,'TabView')[0].props.selection.setValue('proxies'); tree = render(app.Root, {})
     assert.equal(nodes(tree, app.ProxiesPage).length, 1); assert.equal(nodes(tree, app.OverviewPage).length, 1); assert.equal(nodes(tree, app.OverviewPage)[0].props.selected, false)
     nodes(tree,'TabView')[0].props.selection.setValue('more'); tree = render(app.Root, {})
-    assert.equal(nodes(tree, app.MorePage).length, 1); assert.equal(nodes(tree, app.ProxiesPage).length, 1); assert.equal(nodes(tree, app.MorePage)[0].props.selected, true)
+    assert.equal(nodes(tree, app.MorePage).length, 1); assert.equal(nodes(tree, app.ProxiesPage).length, 0); assert.equal(nodes(tree, app.MorePage)[0].props.selected, true)
     const more = render(pages.MorePage, { active: c, onChanged() {} }, true); assert.ok(nodes(more, 'NavigationLink').some(n => n.props.destination.type === ui.KernelConfigPage))
     const source = fs.readFileSync(path.join(root, 'index.tsx'), 'utf8')
     for (const removed of ['FloatingBar', 'safeAreaInset', 'UIGlass', 'GlassEffectContainer']) assert.ok(!source.includes(removed))
@@ -424,9 +424,9 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     for (const id of [...ids, 'home', 'connections', 'home']) {
       nodes(tree,'TabView')[0].props.selection.setValue(id); tree = render(app.Root, {})
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
-      for (let i = 0; i < ids.length; i++) { assert.equal(nodes(tree, types[i]).length, 1); assert.equal(nodes(tree, types[i])[0].props.selected, ids[i] === id) }
+      for (let i = 0; i < ids.length; i++) { const lazy = ['proxies','rules','connections'].includes(ids[i]) && ids[i] !== id; assert.equal(nodes(tree, types[i]).length, lazy ? 0 : 1); if (!lazy) assert.equal(nodes(tree, types[i])[0].props.selected, ids[i] === id) }
     }
-    assert.equal(api.VERSION, '1.5.63'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.5.64'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('独立导航栈保留业务owner和身份，只有选中页提供可见工具栏', () => {
     pref.savePreferences({ defaultPage: 'overview' })
@@ -450,6 +450,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
         if(roots.has(id))assert.equal(identity,roots.get(id));else roots.set(id,identity)
         assert.equal(owner.props.toolbar,undefined)
         const children=owner.props.children.filter(Boolean)
+        const lazy=['proxies','rules','connections'].includes(id); if(lazy&&id!==selected){assert.equal(children.length,0);continue}
         assert.equal(children.length,1); assert.equal(children[0].props.selected, id === selected)
         if(id!==selected) continue
         assert.equal(children.length,1);assert.equal(children[0].type,pagesByTab[id]);assert.ok(children[0].props.key.startsWith(id+':'))
@@ -941,7 +942,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       const diagnostic = logs.filter(x => x.startsWith('[preferences-icon]'))
       for (const stage of ['change','accepted','proxies-render','group-render']) assert.ok(diagnostic.some(x => x.includes('stage=' + stage) && x.includes('enabled=false')))
       assert.ok(diagnostic.every(x => !x.includes('private.invalid') && !x.includes('private-group-name') && !x.includes('secret-')))
-      assert.ok(diagnostic.every(x => x.includes('build=1.5.63') && /instance=[a-z0-9]+/.test(x)))
+      assert.ok(diagnostic.every(x => x.includes('build=1.5.64') && /instance=[a-z0-9]+/.test(x)))
       assert.equal(new Set(diagnostic.map(x => x.match(/instance=([^ ]+)/)[1])).size, 1)
     } finally { context.console = originalConsole; unmount(); pref.savePreferences({ customIcons: true, testURL: 'https://www.gstatic.com/generate_204' }) }
   })

@@ -679,17 +679,17 @@ function Root() {
     </Tab>
     <Tab key="proxies" title="代理" systemImage="point.3.connected.trianglepath.dotted" value="proxies">
       <NavigationStack key="proxies-stack">
-        <ProxiesPage selected={tab === "proxies"} onClose={dismiss} key={`proxies:${active?.id ?? "empty"}`} active={active} version={version} />
+        {tab === "proxies" ? <ProxiesPage selected onClose={dismiss} key={`proxies:${active?.id ?? "empty"}`} active={active} version={version} /> : null}
       </NavigationStack>
     </Tab>
     <Tab key="rules" title="规则" systemImage="list.bullet.rectangle" value="rules">
       <NavigationStack key="rules-stack">
-        <RulesPage selected={tab === "rules"} onClose={dismiss} key={`rules:${active?.id ?? "empty"}`} active={active} version={version} />
+        {tab === "rules" ? <RulesPage selected onClose={dismiss} key={`rules:${active?.id ?? "empty"}`} active={active} version={version} /> : null}
       </NavigationStack>
     </Tab>
     <Tab key="connections" title="连接" systemImage="arrow.up.arrow.down" value="connections">
       <NavigationStack key="connections-stack">
-        <ConnectionsPage selected={tab === "connections"} onClose={dismiss} key={`connections:${active?.id ?? "empty"}`} active={active} version={version} />
+        {tab === "connections" ? <ConnectionsPage selected onClose={dismiss} key={`connections:${active?.id ?? "empty"}`} active={active} version={version} /> : null}
       </NavigationStack>
     </Tab>
     <Tab key="more" title="更多" systemImage="ellipsis.circle" value="more">
