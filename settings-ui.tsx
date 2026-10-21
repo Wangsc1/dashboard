@@ -88,11 +88,11 @@ function HeaderFields() {
     try { saveHeaders(JSON.stringify(obj)); setError("") } catch (e: any) { setError(String(e.message)) }
   }
   return <>
-    <Toggle value={p.headersEnabled} onChanged={(v: boolean) => update({ headersEnabled: v })}><Label title="自定义请求头" systemImage="network" /></Toggle>
-    {p.headersEnabled ? rows.map((r, i) => <VStack key={i} spacing={0}>
-      <HStack><Text>Key</Text><TextField title="例如 X-Is-Me" value={r.key} onChanged={(v: string) => edit(i, "key", v)} autocorrectionDisabled textInputAutocapitalization="never" /></HStack>
-      <HStack><Text>Value</Text><TextField title="例如 YES" value={r.value} onChanged={(v: string) => edit(i, "value", v)} autocorrectionDisabled textInputAutocapitalization="never" /></HStack>
-    </VStack>) : null}
+    <Toggle title="自定义请求头" value={p.headersEnabled} onChanged={(v: boolean) => update({ headersEnabled: v })} />
+    {p.headersEnabled ? rows.flatMap((r, i) => [
+      <HStack key={`header-key-${i}`} spacing={16}><Text frame={{ width: 64, alignment: "leading" }}>Key</Text><TextField title="例如 X-Is-Me" value={r.key} onChanged={(v: string) => edit(i, "key", v)} autocorrectionDisabled textInputAutocapitalization="never" /></HStack>,
+      <HStack key={`header-value-${i}`} spacing={16}><Text frame={{ width: 64, alignment: "leading" }}>Value</Text><TextField title="例如 YES" value={r.value} onChanged={(v: string) => edit(i, "value", v)} autocorrectionDisabled textInputAutocapitalization="never" /></HStack>,
+    ]) : null}
     {error ? <Text font={12} foregroundStyle="systemRed">{error}</Text> : null}
   </>
 }
