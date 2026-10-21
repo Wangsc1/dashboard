@@ -118,7 +118,7 @@ function InfoItem({ icon, color, title, value }: { icon: string; color: string; 
 }
 function RateChart({ down, up, enabled = true }: { down: number[]; up: number[]; enabled?: boolean }) {
   const W = 300, H = 120
-  const plot = useSmoothPlot(down, up, enabled, W, H)
+  const plot = useSmoothPlot(down, up, enabled, W, H, undefined, undefined, true)
   const max = plot.scale
   const line = (i: number, color: string) => plot.paths[i] ? `<path d="${plot.paths[i]}" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round"/>` : ""
   const code = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">${line(0, "#3B82F6")}${line(1, "#34C759")}</svg>`
