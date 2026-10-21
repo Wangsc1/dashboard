@@ -24,7 +24,7 @@ const scripting = new Proxy({
   useEffect(fn, deps) { const i = hookIndex++, old = hooks[i]; if (!old || deps.some((v, j) => v !== old[j])) { hooks[i] = deps; effects.push(() => { cleanups.get(i)?.(); cleanups.delete(i); const c = fn(); if (typeof c === "function") cleanups.set(i, c) }) } },
   Safari: { async openURL(url) { openedURLs.push(url); return true } },
   Navigation: { useDismiss: () => () => {} },
-  Animation: { easeOut: () => ({}) }, Transition: { opacity: () => ({ combined: () => ({}) }), scale: () => ({}) },
+  Animation: { easeOut: () => ({}) }, withAnimation: (_a, body) => { (body || _a)(); return Promise.resolve() }, Transition: { opacity: () => ({ combined: () => ({}) }), scale: () => ({}) },
   modifiers: () => new Proxy({}, { get: () => () => scripting.modifiers() }),
 }, { get: (o, k) => k in o ? o[k] : k })
 const context = {
@@ -418,7 +418,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) { const lazy = ['proxies','rules','connections'].includes(ids[i]) && ids[i] !== id; assert.equal(nodes(tree, types[i]).length, lazy ? 0 : 1); if (!lazy) assert.equal(nodes(tree, types[i])[0].props.selected, ids[i] === id) }
     }
-    assert.equal(api.VERSION, '1.5.78'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.5.79'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('独立导航栈保留业务owner和身份，只有选中页提供可见工具栏', () => {
     pref.savePreferences({ defaultPage: 'overview' })
@@ -915,9 +915,9 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationLink').length, 0)
       const head = nodes(tree, 'Button').find(n => n.props.frame?.alignment === 'leading')
       assert.ok(head); assert.ok(text(head).includes(name)); assert.ok(text(head).includes('A'))
-      assert.ok(nodes(tree, 'Image').some(n => n.props.systemName === 'chevron.right'))
+      assert.equal(nodes(tree, 'Image').find(n => n.props.systemName === 'chevron.right').props.rotationEffect, 0)
       head.props.action(); tree = render(pages.GroupSection, props); await flush()
-      assert.ok(nodes(tree, 'Image').some(n => n.props.systemName === 'chevron.down'))
+      assert.equal(nodes(tree, 'Image').find(n => n.props.systemName === 'chevron.right').props.rotationEffect, 90)
       nodes(tree, 'Button').find(n => n.props.frame?.alignment === 'leading').props.action(); tree = render(pages.GroupSection, props); await flush()
       assert.equal(nodes(tree, 'Button').filter(n => n.props.systemImage === 'bolt.fill').length, 1)
       unmount(); tree = render(pages.GroupSection, props, true); assert.equal(nodes(tree, pages.GroupIcon).length, 0); await flush()
@@ -971,7 +971,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       const diagnostic = logs.filter(x => x.startsWith('[preferences-icon]'))
       for (const stage of ['change','accepted','proxies-render','group-render']) assert.ok(diagnostic.some(x => x.includes('stage=' + stage) && x.includes('enabled=false')))
       assert.ok(diagnostic.every(x => !x.includes('private.invalid') && !x.includes('private-group-name') && !x.includes('secret-')))
-      assert.ok(diagnostic.every(x => x.includes('build=1.5.78') && /instance=[a-z0-9]+/.test(x)))
+      assert.ok(diagnostic.every(x => x.includes('build=1.5.79') && /instance=[a-z0-9]+/.test(x)))
       assert.equal(new Set(diagnostic.map(x => x.match(/instance=([^ ]+)/)[1])).size, 1)
     } finally { context.console = originalConsole; unmount(); pref.savePreferences({ customIcons: true, testURL: 'https://www.gstatic.com/generate_204' }) }
   })
@@ -984,9 +984,9 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     assert.equal(nodes(tree, pages.GroupIcon).length, 1)
     pref.savePreferences({ customIcons: false }); tree = render(pages.GroupSection, props); await flush()
     assert.equal(nodes(tree, pages.GroupIcon).length, 0)
-    assert.ok(nodes(tree, 'Image').some(n => n.props.systemName === 'chevron.down')); assert.ok(text(tree).includes('42ms'))
+    assert.equal(nodes(tree, 'Image').find(n => n.props.systemName === 'chevron.right').props.rotationEffect, 90); assert.ok(text(tree).includes('42ms'))
     pref.savePreferences({ customIcons: true }); tree = render(pages.GroupSection, props); await flush()
-    assert.equal(nodes(tree, pages.GroupIcon).length, 1); assert.ok(nodes(tree, 'Image').some(n => n.props.systemName === 'chevron.down'))
+    assert.equal(nodes(tree, pages.GroupIcon).length, 1); assert.equal(nodes(tree, 'Image').find(n => n.props.systemName === 'chevron.right').props.rotationEffect, 90)
     unmount(); pref.savePreferences({ collapseGesture: false })
   })
   await test('隐藏标签不请求不采样；更多selected透传到业务页', async () => {
