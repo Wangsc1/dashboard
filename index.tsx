@@ -673,7 +673,7 @@ function Root() {
   const active = getActive(), bump = () => { setVersion(v => v + 1) }
 
   return <TabView selection={selection} font={14} foregroundStyle={MAIN_FG}>
-    <Tab key="home" title="主页" systemImage="house.fill" value="home">
+    <Tab key="home" title="主页" systemImage="square.stack.fill" value="home">
       <NavigationStack key="home-stack">
         <OverviewPage selected={tab === "home"} key={`home:${active?.id ?? "empty"}`} active={active} version={version} onSwitch={bump} onClose={dismiss} />
       </NavigationStack>
