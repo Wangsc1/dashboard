@@ -195,7 +195,7 @@ function OverviewPage({ active, version, onSwitch, onClose }: { active: Controll
       : <Text>-</Text>,
   }
   if (!active) return <Form navigationTitle="dashboard" navigationBarTitleDisplayMode="inline" toolbar={toolbar} navigationDestination={destination}><NoController /></Form>
-  return <ScrollView onAppear={() => setVisible(true)} onDisappear={() => setVisible(false)} navigationTitle={active.name} navigationBarTitleDisplayMode="inline" toolbar={toolbar} navigationDestination={destination}>
+  return <ScrollView onAppear={() => setVisible(true)} onDisappear={() => setVisible(false)} navigationTitle="OpenWrt 状态" navigationBarTitleDisplayMode="inline" toolbar={toolbar} navigationDestination={destination}>
     <VStack spacing={12} padding={{ horizontal: 14, vertical: 8 }}>
       {all.length > 1 ? <Card>
         <Picker title="当前路由器" pickerStyle="menu" value={active.id} onChanged={(v: string) => { setActive(v); onSwitch() }}>
@@ -205,12 +205,6 @@ function OverviewPage({ active, version, onSwitch, onClose }: { active: Controll
       {err ? <Text font={13} foregroundStyle="systemRed">{err}</Text> : null}
 
       {prefs.showWrt ? <Card>
-        <HStack>
-          <Badge icon="laptopcomputer" color="#6366F1" />
-          <Text fontWeight="semibold" font={15}>OpenWrt 状态</Text>
-          <Spacer />
-          <HStack spacing={4}><Circle fill={err ? "systemRed" : "systemGreen"} frame={{ width: 5, height: 5 }} /><Text font={12} foregroundStyle={err ? "systemRed" : "systemGreen"}>{err ? "连接失败" : ov ? "运行正常" : "连接中"}</Text></HStack>
-        </HStack>
         <InfoItem icon="cpu" color="#10B981" title="目标平台" value={w?.target || "-"} />
         <InfoItem icon="shippingbox" color="#A855F7" title="内核版本" value={w?.kernel || "-"} />
         <InfoItem icon="gauge.medium" color="#EF4444" title="CPU 使用率" value={w?.cpu !== undefined ? `${w.cpu.toFixed(0)}%` : "-"} />

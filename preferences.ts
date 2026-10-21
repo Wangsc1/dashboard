@@ -105,7 +105,8 @@ export const controllerHealth: Record<string, boolean | undefined> = {}
 const IMAGE_INDEX = "dashboard_image_index_v140"
 let imageGeneration = 0
 export async function cachedIcon(url: string): Promise<any> {
-  if (!/^https:\/\//i.test(url) || /[?#@]/.test(url)) return null
+  // 仅拒绝带查询串/片段或用户信息（host部分含@）的地址；路径中的@（如jsDelivr的@master）允许。
+  if (!/^https:\/\//i.test(url) || /[?#]/.test(url) || /^https:\/\/[^/]*@/i.test(url)) return null
   const key = "dashboard_image_v140_" + encodeURIComponent(url)
   const data = Storage.getData(key)
   if (data) return UIImage.fromData(data)
