@@ -539,6 +539,8 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     render(ui.KernelConfigPage, { c }, true); await flush(); let tree = render(ui.KernelConfigPage, { c })
     assert.equal(tree.type, 'ScrollView'); assert.equal(tree.props.navigationTitle, '代理配置'); assert.equal(tree.props.background, 'systemBackground')
     assert.deepEqual(nodes(tree, 'TextField').map(n => n.props.title), ['混合端口', 'HTTP 端口', 'SOCKS5 端口', '透明代理端口', 'TProxy 端口', '绑定地址'])
+    const widths = nodes(tree, 'TextField').map(n => n.props.frame.width)
+    assert.ok(widths.every(w => w === 100), 'bind-address input width matches port inputs: ' + JSON.stringify(widths))
     assert.deepEqual(nodes(tree, 'TextField').map(n => n.props.value), ['7890', '80', '1080', '0', '65535', '*'])
     assert.deepEqual(nodes(tree, 'Toggle').map(n => n.props.value), [false, true, false])
     for (const [name, color] of [['wifi','systemBlue'], ['number','systemPurple'], ['link','systemGreen'], ['shield','systemPurple'], ['doc.text','systemGray']]) {
@@ -851,7 +853,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) { const lazy = ['proxies','rules','connections'].includes(ids[i]) && ids[i] !== id; assert.equal(nodes(tree, types[i]).length, lazy ? 0 : 1); if (!lazy) assert.equal(nodes(tree, types[i])[0].props.selected, ids[i] === id) }
     }
-    assert.equal(api.VERSION, '1.21'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.22'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('独立导航栈保留业务owner和身份，只有选中页提供可见工具栏', () => {
     pref.savePreferences({ defaultPage: 'overview' })
@@ -1952,7 +1954,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       const diagnostic = logs.filter(x => x.startsWith('[preferences-icon]'))
       for (const stage of ['change','accepted','proxies-render','group-render']) assert.ok(diagnostic.some(x => x.includes('stage=' + stage) && x.includes('enabled=false')))
       assert.ok(diagnostic.every(x => !x.includes('private.invalid') && !x.includes('private-group-name') && !x.includes('secret-')))
-      assert.ok(diagnostic.every(x => x.includes('build=1.21') && /instance=[a-z0-9]+/.test(x)))
+      assert.ok(diagnostic.every(x => x.includes('build=1.22') && /instance=[a-z0-9]+/.test(x)))
       assert.equal(new Set(diagnostic.map(x => x.match(/instance=([^ ]+)/)[1])).size, 1)
     } finally { context.console = originalConsole; unmount(); pref.savePreferences({ customIcons: true, testURL: 'https://www.gstatic.com/generate_204' }) }
   })
