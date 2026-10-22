@@ -1,4 +1,4 @@
-import { HStack, VStack, Text, Image, RoundedRectangle, Spacer, ScrollView, LazyVStack, SVG, ZStack, NavigationStack, modifiers, useState, useEffect, useMemo, GeometryReader, useColorScheme } from "scripting"
+import { HStack, VStack, Text, Image, RoundedRectangle, Spacer, ScrollView, LazyVStack, SVG, ZStack, Animation, Device, NavigationStack, modifiers, useState, useEffect, useMemo, GeometryReader, useColorScheme } from "scripting"
 import { Overview, WrtInfo, fmtBytes, fmtSpeed, fmtUptime } from "./api"
 import { CpuUsage, OverviewHistory } from "./openwrt-metrics"
 import { CHART_HISTORY, scrollPoints, smoothPath } from "./chart"
@@ -17,27 +17,50 @@ export function MetricNumber({value,unit="",pointSize=16,tone="label",digits=0,r
   },[target,unit,running])
   return <Text font={pointSize} fontWeight="semibold" foregroundStyle={tone} lineLimit={1} minimumScaleFactor={0.65}>{`${shown}${unit}`}</Text>
 }
-// Non-Charts plot, same SVG approach that displayed on the device through 1.5.161. One string,
-// rebuilt only when a new sample arrives (no timers, no per-frame setState). The newest sample is
-// always at the right of a fixed 60-point window; short history grows from the right, no fake zeros.
-// Smoothness limit: updates step once per sample (1 s) instead of sliding every frame.
-export function GridPlot({samples,tone,plotHeight=96,area=false,percent=false}:{samples:number[];tone:string;plotHeight?:number;area?:boolean;running?:boolean;percent?:boolean}) {
-  const W=336,H=plotHeight,values=samples.slice(-CHART_HISTORY).filter(Number.isFinite),scale=percent?100:Math.max(1024,...values)
+// Non-Charts plot (SVG, the approach that displayed on the device through 1.5.161/1.5.166).
+// SLIDE_PLOTS: smooth sliding via ONE native `animation={{animation,value}}` on the offset of a
+// pre-rasterised data layer (no timers, no per-frame setState; 2 renders per new sample). If sliding
+// misbehaves on device set it to false to get the plain 1 s step plot of 1.5.166.
+// The newest sample is always at the right of a fixed 60-point window; no fake zeros.
+export const SLIDE_PLOTS=true
+const SCREEN_W:number|undefined=(Device as any)?.screen?.width
+const SLIDE_OK=typeof SCREEN_W==="number"&&SCREEN_W>0&&SCREEN_W<=600
+// Card inner widths: page padding 16 + card padding 16 per side; two columns are separated by 16.
+export const PLOT_FULL_W:number|undefined=SLIDE_OK?SCREEN_W-64:undefined
+export const PLOT_HALF_W:number|undefined=SLIDE_OK?(SCREEN_W-48)/2-32:undefined
+export const PLOT_STROKE=1.5
+export function GridPlot({samples,tone,plotHeight=96,area=false,running=true,percent=false,plotWidth}:{samples:number[];tone:string;plotHeight?:number;area?:boolean;running?:boolean;percent?:boolean;plotWidth?:number}) {
+  const [track]=useState({samples,seq:0}),[armed,setArmed]=useState(0)
+  if(track.samples!==samples){track.samples=samples;track.seq++}
+  useEffect(()=>{setArmed(track.seq)},[samples,running])
+  const slide=SLIDE_PLOTS&&plotWidth!==undefined&&plotWidth>0,W=slide?plotWidth as number:336,H=plotHeight,step=W/(CHART_HISTORY-1)
+  const values=samples.slice(-(slide?CHART_HISTORY+1:CHART_HISTORY)).filter(Number.isFinite),scale=percent?100:Math.max(1024,...values)
   const points=scrollPoints(values,values,0,W),line=values.length<2?"":smoothPath(points,H,scale,2),first=points[0],last=points[points.length-1]
   const grid=[...Array.from({length:8},(_,i)=>`<path d="M ${i*W/7},0 V ${H}"/>`),...Array.from({length:5},(_,i)=>`<path d="M 0,${i*H/4} H ${W}"/>`)].join("")
+  const gridSvg=`<g stroke="#9295a3" stroke-opacity="0.22" stroke-width="0.6" stroke-dasharray="3 3" fill="none">${grid}</g>`
   const fill=area&&line&&first&&last?`<path d="${line} L ${last.x},${H} L ${first.x},${H} Z" fill="${tone}" fill-opacity="0.10"/>`:""
-  const code=`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"><g stroke="#9295a3" stroke-opacity="0.22" stroke-width="0.6" stroke-dasharray="3 3" fill="none">${grid}</g>${fill}${line?`<path d="${line}" fill="none" stroke="${tone}" stroke-width="1.5" stroke-linecap="round"/>`:""}</svg>`
-  return <SVG code={code} resizable frame={{maxWidth:"infinity",height:plotHeight}}/>
+  const stroke=line?`<path d="${line}" fill="none" stroke="${tone}" stroke-width="${PLOT_STROKE}" stroke-linecap="round"/>`:""
+  if(!slide){
+    const code=`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">${gridSvg}${fill}${stroke}</svg>`
+    return <SVG code={code} resizable frame={{maxWidth:"infinity",height:plotHeight}}/>
+  }
+  const gridCode=`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">${gridSvg}</svg>`
+  const dataCode=`<svg xmlns="http://www.w3.org/2000/svg" viewBox="${-step} 0 ${W+step} ${H}" preserveAspectRatio="none">${fill}${stroke}</svg>`
+  const pending=running&&armed!==track.seq
+  return <ZStack alignment="leading" frame={{width:W,height:H}} clipped>
+    <SVG code={gridCode} resizable frame={{width:W,height:H}}/>
+    <SVG code={dataCode} resizable frame={{width:W+step,height:H}} offset={{x:pending?0:-step,y:0}} animation={{animation:Animation.linear(1),value:armed}}/>
+  </ZStack>
 }
 export function CpuBreakdown({cpu,running}:{cpu?:CpuUsage;running:boolean}) {
   return <HStack spacing={0} alignment="bottom"><HStack spacing={22}>{([['SYS',cpu?.system],['USER',cpu?.user],['STEAL',cpu?.steal]] as const).map(([title,value])=><VStack key={title} alignment="leading" spacing={3}><Text font={10} fontWeight="semibold" foregroundStyle="secondaryLabel" lineLimit={1}>{title}</Text><MetricNumber value={value} digits={1} pointSize={14} running={running}/></VStack>)}</HStack><Spacer/><HStack alignment="lastTextBaseline" spacing={2}><MetricNumber running={running} value={cpu?.usage} digits={1} pointSize={22} tone="#3485eb"/><Text font={11} foregroundStyle="#3485eb">%</Text></HStack></HStack>
 }
 export function CpuCard({w,history,running,onOpen,detail=false}:{w?:WrtInfo;history:number[];running:boolean;onOpen?:()=>void;detail?:boolean}) {
-  return <HomeCard onOpen={onOpen}><HStack><Text font={detail?15:16} fontWeight="semibold">{detail?w?.cpuModel||"CPU 型号未提供":"CPU"}</Text><Spacer/>{!detail?<Text font={11} foregroundStyle="#3485eb" padding={{horizontal:8,vertical:4}} background={<RoundedRectangle cornerRadius={8} fill={{light:"#edf5ff",dark:"#24374d"}}/>}>{w?.temperature===undefined?"-- °C":`${w.temperature.toFixed(1)} °C`}</Text>:null}</HStack><GridPlot samples={history} tone="#3485eb" percent running={running}/><CpuBreakdown cpu={w?.cpus?.find(c=>c.id==='cpu')} running={running&&!detail}/></HomeCard>
+  return <HomeCard onOpen={onOpen}><HStack><Text font={detail?15:16} fontWeight="semibold">{detail?w?.cpuModel||"CPU 型号未提供":"CPU"}</Text><Spacer/>{!detail?<Text font={11} foregroundStyle="#3485eb" padding={{horizontal:8,vertical:4}} background={<RoundedRectangle cornerRadius={8} fill={{light:"#edf5ff",dark:"#24374d"}}/>}>{w?.temperature===undefined?"-- °C":`${w.temperature.toFixed(1)} °C`}</Text>:null}</HStack><GridPlot samples={history} tone="#3485eb" percent running={running} plotWidth={PLOT_FULL_W}/><CpuBreakdown cpu={w?.cpus?.find(c=>c.id==='cpu')} running={running&&!detail}/></HomeCard>
 }
 export function TrafficCard({heading,rate,total,history,tone,running}:{heading:string;rate?:number;total?:number;history:number[];tone:string;running:boolean}) {
   const parts=rate===undefined?undefined:fmtSpeed(rate).split(' '),value=parts?Number(parts[0]):undefined,unit=parts?" "+parts.slice(1).join(' '):""
-  return <HomeCard><HStack spacing={3}><Text font={16} fontWeight="semibold">{heading}</Text><Spacer/><MetricNumber running={running} value={value} unit={unit} pointSize={14} tone={tone} digits={value!==undefined&&value<100?1:0}/></HStack><GridPlot samples={history} tone={tone} plotHeight={66} area running={running}/><Text font={12} foregroundStyle="secondaryLabel">{`已用 ${total===undefined?'--':fmtBytes(total)}`}</Text></HomeCard>
+  return <HomeCard><HStack spacing={3}><Text font={16} fontWeight="semibold">{heading}</Text><Spacer/><MetricNumber running={running} value={value} unit={unit} pointSize={14} tone={tone} digits={value!==undefined&&value<100?1:0}/></HStack><GridPlot samples={history} tone={tone} plotHeight={66} area running={running} plotWidth={PLOT_HALF_W}/><Text font={12} foregroundStyle="secondaryLabel">{`已用 ${total===undefined?'--':fmtBytes(total)}`}</Text></HomeCard>
 }
 // Deterministic bars: no GeometryReader. Equal flexible-width bars, one fixed 24pt row height.
 const BAR_ROW={minWidth:0,maxWidth:"infinity" as const,minHeight:24,maxHeight:24}
@@ -47,13 +70,18 @@ export function CapacityBars({fraction,tone}:{fraction?:number;tone:string}) {
   return <HStack spacing={2} frame={BAR_ROW}>{Array.from({length:24},(_,i)=><RoundedRectangle key={String(i)} cornerRadius={1.75} fill={{color:tone,opacity:i<n?0.85:0.12}} frame={BAR_CELL}/>)}</HStack>
 }
 export const LOAD_TONES={light:["#17965b","#c16b13","#287ed6"],dark:["#39d98a","#ffaf40","#56b5ff"]}
-// Same structure as the working RAM bars: plain rounded rectangles in one HStack. Each cell is a
-// VStack of at most two fixed-height rectangles (empty track above, filled part below).
+// GeometryReader (proven to render on device in 1.5.164) wrapped in ONE fixed 24pt-high container so
+// the row height is deterministic and the footer sits below it (card spacing 12).
 export function LoadBars({fraction,tone}:{fraction?:number;tone:string}) {
   const known=fraction!==undefined&&Number.isFinite(fraction)&&fraction>=0
-  const fill=known?Math.min(24,24*Math.min(1,fraction)):0,rest=24-fill
-  const rect=(opacity:number,size:number,key:string)=><RoundedRectangle key={key} cornerRadius={1.75} fill={{color:tone,opacity}} frame={{minWidth:0,maxWidth:"infinity",minHeight:size,maxHeight:size}}/>
-  return <HStack spacing={2} frame={BAR_ROW}>{Array.from({length:24},(_,i)=><VStack key={String(i)} spacing={0} frame={BAR_CELL}>{rest>0?rect(0.12,rest,"t"):null}{fill>0?rect(0.85,fill,"f"):null}</VStack>)}</HStack>
+  const height=known?24*Math.min(1,fraction):0
+  return <ZStack alignment="top" frame={{height:24}}><GeometryReader>{geometry=>{
+    const W=Math.max(0,geometry.size.width),gap=W*2.5/144,bar=Math.max(0,(W-23*gap)/24)
+    return <HStack spacing={gap} frame={{width:W,height:24}}>{Array.from({length:24},(_,i)=><ZStack key={String(i)} alignment="bottom" frame={{width:bar,height:24}}>
+      <RoundedRectangle cornerRadius={Math.min(1.75,bar/2)} fill={{color:tone,opacity:0.12}} frame={{width:bar,height:24}}/>
+      {height>0?<RoundedRectangle cornerRadius={Math.min(1.75,bar/2,height/2)} fill={tone} frame={{width:bar,height}}/>:null}
+    </ZStack>)}</HStack>
+  }}</GeometryReader></ZStack>
 }
 // Intrinsic content sets the row height; its background paints equal-height cards.
 // Neither the card nor the row asks for an infinite height proposal.
@@ -102,11 +130,21 @@ export function HomeDashboard({overview,histories,running,onCpu}:{overview:Overv
 export function CpuDetails({overview,histories,running}:{overview:Overview|null;histories:OverviewHistory;running:boolean}) {
   const w=overview?.wrt,cores=w?.cpus?.filter(x=>x.id!=='cpu')??[],rows=Array.from({length:Math.ceil(cores.length/2)},(_,i)=>cores.slice(i*2,i*2+2))
   const info=[['Uptime',w?fmtUptime(w.uptime,true):'--'],['Arch',w?.arch||'--'],['Cpu',cores.length?String(cores.length):'--'],['Kernel',w?.kernel||'--'],['Board',w?.model||'--']]
-  return <NavigationStack presentationDetents={['large']} presentationDragIndicator="visible" presentationContentInteraction="scrolls"><ScrollView navigationTitle="CPU" navigationBarTitleDisplayMode="inline" background={HOME_BG}><LazyVStack spacing={16} padding={{horizontal:16,top:12,bottom:24}}><HomeCard><Text font={15} fontWeight="semibold">{w?.release||'系统版本未提供'}</Text><VStack spacing={5}>{info.map(([title,value])=><HStack key={title}><Text font={12} foregroundStyle="label">{title}</Text><Spacer/><Text font={12} foregroundStyle="label" multilineTextAlignment="trailing">{value}</Text></HStack>)}</VStack></HomeCard><DetailCpuSummary w={w} history={histories.cpu.cpu??[]} running={running}/>{rows.map((row,i)=><HStack key={String(i)} spacing={16} alignment="top">{row.map(c=><CoreCard key={c.id} cpu={c} w={w} history={histories.cpu[c.id]??[]} running={running}/>)}{row.length===1?<Spacer frame={{minWidth:0,maxWidth:'infinity'}}/>:null}</HStack>)}{!cores.length?<Text font={12} foregroundStyle="secondaryLabel">/proc/stat未提供逻辑核数据或当前账号无读取权限。</Text>:null}</LazyVStack></ScrollView></NavigationStack>
+  return <NavigationStack presentationDetents={['large']} presentationDragIndicator="visible" presentationContentInteraction="scrolls"><ScrollView navigationTitle="CPU" navigationBarTitleDisplayMode="inline" background={HOME_BG}><LazyVStack spacing={16} padding={{horizontal:16,top:12,bottom:24}}><HomeCard><Text font={15} fontWeight="semibold">{w?.release||'系统版本未提供'}</Text><VStack spacing={5}>{info.map(([title,value])=><HStack key={title}><Text font={12} foregroundStyle="label">{title}</Text><Spacer/><Text font={12} foregroundStyle="label" multilineTextAlignment="trailing">{value}</Text></HStack>)}</VStack></HomeCard><DetailCpuSummary w={w} history={histories.cpu.cpu??[]} running={running}/>{rows.map((row,i)=><CoreRow key={String(i)} cpus={row} w={w} histories={histories} running={running}/>)}{!cores.length?<Text font={12} foregroundStyle="secondaryLabel">/proc/stat未提供逻辑核数据或当前账号无读取权限。</Text>:null}</LazyVStack></ScrollView></NavigationStack>
+}
+// Scroll cost: every sample replaces every core history, so a full list would re-render (and re-rasterise
+// an SVG for) all cores each second. Each LazyVStack row tracks its own visibility; an off-screen row keeps
+// its last snapshot (stable element tree, no rebuild) and catches up when it scrolls back. Data stays exact.
+export function CoreRow({cpus,w,histories,running}:{cpus:CpuUsage[];w?:WrtInfo;histories:OverviewHistory;running:boolean}) {
+  const [visible,setVisible]=useState(true),[snap]=useState({h:histories,w})
+  if(visible){snap.h=histories;snap.w=w}
+  const shown=snap.h,shownW=snap.w,live=running&&visible
+  const cards=useMemo(()=>cpus.map(c=><CoreCard key={c.id} cpu={c} w={shownW} history={shown.cpu[c.id]??[]} running={live}/>),[shown,shownW,live,cpus.map(c=>c.id).join(",")])
+  return <HStack spacing={16} alignment="top" onAppear={()=>setVisible(true)} onDisappear={()=>setVisible(false)}>{cards}{cpus.length===1?<Spacer frame={{minWidth:0,maxWidth:'infinity'}}/>:null}</HStack>
 }
 // Per-core plots use the same SVG GridPlot (no timers).
-export function SampledCpuPlot({samples}:{samples:number[]}) {
-  return <GridPlot samples={samples} tone="#2dbf82" percent plotHeight={76} running={false}/>
+export function SampledCpuPlot({samples,running=false}:{samples:number[];running?:boolean}) {
+  return <GridPlot samples={samples} tone="#2dbf82" percent plotHeight={76} running={running} plotWidth={PLOT_HALF_W}/>
 }
 export function DetailCpuSummary({w,history,running}:{w?:WrtInfo;history:number[];running:boolean}) {
   const [visible,setVisible]=useState(false)
@@ -114,5 +152,5 @@ export function DetailCpuSummary({w,history,running}:{w?:WrtInfo;history:number[
 }
 export function CoreCard({cpu,w,history,running}:{cpu:CpuUsage;w?:WrtInfo;history:number[];running:boolean}) {
   const meta=w?.cpuMeta?.[cpu.id]
-  return <HomeCard><HStack><Text font={12} foregroundStyle="secondaryLabel">{cpu.id.toUpperCase()}</Text><Spacer/><Text font={17} fontWeight="semibold" foregroundStyle="#2dbf82" lineLimit={1} minimumScaleFactor={0.65}>{cpu.usage===undefined?"--%":`${cpu.usage.toFixed(1)}%`}</Text></HStack><SampledCpuPlot samples={history}/><HStack spacing={5}><VStack alignment="leading" spacing={3}><Text font={9} fontWeight="semibold" foregroundStyle="secondaryLabel">频率</Text><Text font={11} fontWeight="semibold">{meta?.mhz===undefined?'-- MHz':`${meta.mhz.toFixed(0)} MHz`}</Text></VStack><Spacer/><VStack alignment="trailing" spacing={3}><Text font={9} fontWeight="semibold" foregroundStyle="secondaryLabel">缓存大小</Text><Text font={11} fontWeight="semibold">{meta?.cacheKB===undefined?'-- KB':`${meta.cacheKB} KB`}</Text></VStack></HStack></HomeCard>
+  return <HomeCard><HStack><Text font={12} foregroundStyle="secondaryLabel">{cpu.id.toUpperCase()}</Text><Spacer/><Text font={17} fontWeight="semibold" foregroundStyle="#2dbf82" lineLimit={1} minimumScaleFactor={0.65}>{cpu.usage===undefined?"--%":`${cpu.usage.toFixed(1)}%`}</Text></HStack><SampledCpuPlot samples={history} running={running}/><HStack spacing={5}><VStack alignment="leading" spacing={3}><Text font={9} fontWeight="semibold" foregroundStyle="secondaryLabel">频率</Text><Text font={11} fontWeight="semibold">{meta?.mhz===undefined?'-- MHz':`${meta.mhz.toFixed(0)} MHz`}</Text></VStack><Spacer/><VStack alignment="trailing" spacing={3}><Text font={9} fontWeight="semibold" foregroundStyle="secondaryLabel">缓存大小</Text><Text font={11} fontWeight="semibold">{meta?.cacheKB===undefined?'-- KB':`${meta.cacheKB} KB`}</Text></VStack></HStack></HomeCard>
 }

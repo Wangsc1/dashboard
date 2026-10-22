@@ -26,6 +26,14 @@
 
 原生 Tab API 面向 iOS 18+；外观与手势由系统及 Scripting 版本决定。仓库配置了 `remoteResource`，实际导入和更新以 Scripting 的处理结果为准。配置编辑器的 CodeMirror/Lezer/YAML 静态 bundle 已嵌入现有 `dashboard-pages.tsx`；在线更新仍只需原有运行文件，不需 CDN、额外资源下载或在手机安装 npm 包。`editor/` 为构建源码、锁定依赖及许可证，非运行依赖。
 
+## 1.5.167 更新
+
+- **负载条**：回到 1.5.164 实机能显示的 GeometryReader 条图，但外面包一层“单次固定 24pt 高”的 ZStack 容器，行高确定，下方数值至少隔 12pt；空值保留灰色底条。RAM 条不变。
+- **曲线平滑**：曲线仍是 SVG（无 Charts/Date/GeometryReader）。固定宽度的数据层按宿主文档的 `animation={{animation: Animation.linear(1), value}}` 加 `offset`，新样本到来时多画一格并在约 1 秒内向左滑动一格；无计时器、无 `withAnimation`/`rotationEffect`/`Transition.move`。开关集中在 `SLIDE_PLOTS`，不平滑或异常时改为 false 即回到 1.5.166 的逐秒步进；读不到屏幕宽度时自动回退。
+- **线宽一致**：所有曲线共用 `PLOT_STROKE=1.5`，SVG 以 1:1 的 viewBox 渲染（不再按卡片宽度拉伸），CPU 与上传/下载的实际线宽一致。
+- **详情页滚动**：每核按“行”渲染，行内用 onAppear/onDisappear 记录可见性；屏外的行沿用上一次的元素与动画状态，不重建 SVG，回到屏内后立即追上最新数据，数据不丢。此为推断出的卡顿原因（见回报），尚无真机滚动测量。
+- 保留 CPU 三项间距、RAM 对齐、完整 CPU 读取与无 X 按钮。本地仅为契约检查，真机显示与流畅度待验证。
+
 ## 1.5.166 更新
 
 - 曲线改回非 Charts 绘制：主页与 CPU 详情共用的 `GridPlot` 恢复为 1.5.161 前已在设备上显示的单个 SVG 路径（沿用同一 `scrollPoints`/`smoothPath`），固定 60 点窗口，最新点在最右、历史不足时向右生长且不补零，保留虚线网格、上传/下载面积填充、颜色和 96/66/76pt 高度；不再使用 `Chart`/`LineChart`/`AreaChart`，也不使用 GeometryReader、重复 frame、Date 域或原生图表动画（1.5.162–165 的实机反馈是 Charts 未显示曲线且详情崩溃）。

@@ -88,7 +88,7 @@ function fixture(url,init){if(url.endsWith('/cgi-bin/cgi-download'))return {stat
        const n=home.MetricFooterValue(footer.props);deep(n.props.frame,{minWidth:0,maxWidth:'infinity',alignment:footer.props.valueEdge??'center'});deep(n.props.fixedSize,{horizontal:false,vertical:true});assert.equal(n.props.spacing,3);deep(nodes(n,'Text').map(t=>t.props.font),[12,10]);assert.ok(nodes(n,'Text').every(t=>t.props.lineLimit===undefined))
      }
    }
-   assert.equal(ram.props.bars.type,home.CapacityBars);assert.equal(home.CapacityBars(ram.props.bars.props).props.frame.maxHeight,24);assert.ok(nodes(load.props.bars,home.LoadBars).every(n=>home.LoadBars(n.props).props.frame.maxHeight===24))
+   assert.equal(ram.props.bars.type,home.CapacityBars);assert.equal(home.CapacityBars(ram.props.bars.props).props.frame.maxHeight,24);assert.ok(nodes(load.props.bars,home.LoadBars).every(n=>home.LoadBars(n.props).props.frame.height===24))
    // Verifies native constraints, not actual iOS bounds or Dynamic Type rendering.
  })
  await test('主页/CPU详情与其他页面同款系统白底灰卡，移除渐变和阴影',()=>{
@@ -98,7 +98,7 @@ function fixture(url,init){if(url.endsWith('/cgi-bin/cgi-download'))return {stat
  })
  await test('sheet全部唯一逻辑核可滚动到达，只保留原生下拉关闭，无X或空toolbar',()=>{
    const overview={wrt:{release:'OpenWrt',uptime:100,arch:'x86_64',kernel:'6.6.80',model:'Board',cpus:[{id:'cpu',usage:10},...Array.from({length:17},(_,i)=>({id:'cpu'+i,usage:i}))],cpuMeta:{}}}
-   let closed=0;const sheet=home.CpuDetails({overview,histories:newHistory(),running:false,onDismiss(){closed++}});assert.equal(sheet.type,'NavigationStack');deep(sheet.props.presentationDetents,['large']);assert.equal(nodes(sheet,'ScrollView').length,1);assert.equal(nodes(sheet,home.CoreCard).length,17);assert.equal(new Set(nodes(sheet,home.CoreCard).map(n=>n.props.cpu.id)).size,17)
+   let closed=0;const sheet=home.CpuDetails({overview,histories:newHistory(),running:false,onDismiss(){closed++}});assert.equal(sheet.type,'NavigationStack');deep(sheet.props.presentationDetents,['large']);assert.equal(nodes(sheet,'ScrollView').length,1);const rowNodes=nodes(sheet,home.CoreRow);assert.equal(rowNodes.length,9);const ids=rowNodes.flatMap(r=>r.props.cpus.map(c=>c.id));assert.equal(ids.length,17);assert.equal(new Set(ids).size,17)
    for(const label of ['Uptime','Arch','Cpu','Kernel','Board']) {const n=nodes(sheet,'Text').find(n=>text(n)===label);assert.ok(n,label);assert.equal(n.props.foregroundStyle,'label')}
    const sc=nodes(sheet,'ScrollView')[0];assert.equal(sc.props.toolbar,undefined);assert.equal(nodes(sheet,'Button').length,0);assert.equal(sheet.props.presentationDragIndicator,'visible')
    const core=home.CoreCard({cpu:{id:'cpu2'},history:[],running:false});assert.ok(text(core).includes('-- MHz'));assert.ok(text(core).includes('-- KB'))

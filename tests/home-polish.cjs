@@ -11,19 +11,9 @@ function contrast(a,b){return (Math.max(lum(a),lum(b))+0.05)/(Math.min(lum(a),lu
    const h={up:[10,20],down:[20,30],cpu:{cpu:[10,20],...Object.fromEntries(Array.from({length:16},(_,i)=>['cpu'+i,[10,20]]))}},o={traffic:{up:10,down:20},wrt:{cpus:[{id:'cpu'},...Array.from({length:16},(_,i)=>({id:'cpu'+i}))],load:[0.09,0.06,0.02],memTotal:100,memFree:50,disk:{used:1,size:100,avail:99},cpuMeta:{}}}
    const main=expand(home.HomeDashboard({overview:o,histories:h,running:false,onCpu(){}})),detail=expand(home.CpuDetails({overview:o,histories:h,running:false}))
    for(const n of [main,detail]){assert.equal(nodes(n,'WebView').length,0);for(const c of ['Chart','LineChart','AreaChart'])assert.equal(nodes(n,c).length,0)}
-   assert.equal(nodes(main,'SVG').length,3);assert.equal(nodes(detail,'SVG').length,17);assert.ok(nodes(main,'RoundedRectangle').length>0);unmount();assert.equal(intervals.size,0)
+   assert.equal(nodes(main,'SVG').length,6);assert.equal(nodes(detail,'SVG').length,34);assert.ok(nodes(main,'RoundedRectangle').length>0);unmount();assert.equal(intervals.size,0)
  })
- await test('负载条契约(非实机): 与RAM同类HStack+RoundedRectangle，每格轨道+填充高度和为24，空值保留灰轨',()=>{
-   for(const f of [0,0.09/16,0.06/16,0.02/16,0.333,1,2,undefined,NaN,-1]){
-     const row=home.LoadBars({fraction:f,tone:'#17965b'}),known=f!==undefined&&Number.isFinite(f)&&f>=0,fillH=known?24*Math.min(1,f):0
-     assert.equal(row.type,'HStack');assert.equal(row.props.children.length,24);assert.equal(nodes(row,'GeometryReader').length,0);assert.equal(nodes(row,'ZStack').length,0)
-     for(const cell of row.props.children){
-       assert.equal(cell.type,'VStack');assert.equal(cell.props.spacing,0);const rs=nodes(cell,'RoundedRectangle');assert.ok(rs.length>=1&&rs.length<=2)
-       const track=rs.filter(r=>r.props.fill.opacity===0.12),fg=rs.filter(r=>r.props.fill.opacity===0.85),sum=rs.reduce((a,r)=>a+r.props.frame.minHeight,0)
-       assert.ok(Math.abs(sum-24)<1e-9);assert.equal(fg.length,fillH>0?1:0);if(fillH>0)assert.ok(Math.abs(fg[0].props.frame.minHeight-fillH)<1e-9)
-       assert.equal(track.length,fillH<24?1:0);for(const r of rs)assert.equal(r.props.frame.minHeight,r.props.frame.maxHeight)
-     }
-   }
+ await test('RAM条仍按段计数',()=>{
    const ram=home.CapacityBars({fraction:0.04,tone:'#a179d1'});assert.equal(nodes(ram,'RoundedRectangle').length,24);assert.equal(nodes(ram,'RoundedRectangle').filter(n=>n.props.fill.opacity===0.85).length,1)
  })
  await test('磁盘原生连续细条：0/低于一段/非整百分比/满/未知/非法size，不造最小值',()=>{
@@ -35,7 +25,7 @@ function contrast(a,b){return (Math.max(lum(a),lum(b))+0.05)/(Math.min(lum(a),lu
  await test('负载日夜对应三色对比提高且不篡改高度，灰卡取样对比>=3',()=>{
    const old=['#77c59a','#dcaf7d','#79aee3'],results=[]
    for(const theme of ['light','dark']){mockColorScheme=theme;const c=home.LoadCard({w:{load:[0.09,0.06,0.02],cpus:[{id:'cpu0'},{id:'cpu1'}]}}),bars=nodes(c.props.bars,home.LoadBars),bg=theme==='light'?'#f2f2f7':'#1c1c1e';assert.equal(new Set(bars.map(n=>n.props.tone)).size,3)
-     bars.forEach((b,i)=>{const ratio=contrast(b.props.tone,bg);assert.ok(ratio>=3);if(theme==='light')assert.ok(ratio>contrast(old[i],bg));const f=nodes(home.LoadBars(b.props),'RoundedRectangle').find(n=>n.props.fill.opacity===0.85);assert.ok(Math.abs(f.props.frame.minHeight-24*[0.09,0.06,0.02][i]/2)<1e-12);results.push({theme,color:b.props.tone,contrast:Number(ratio.toFixed(2))})})
+     bars.forEach((b,i)=>{const ratio=contrast(b.props.tone,bg);assert.ok(ratio>=3);if(theme==='light')assert.ok(ratio>contrast(old[i],bg));const f=nodes(home.LoadBars(b.props).props.children[0].props.children[0]({size:{width:43}}),'RoundedRectangle').find(n=>n.props.fill.opacity===undefined);assert.ok(Math.abs(f.props.frame.height-24*[0.09,0.06,0.02][i]/2)<1e-12);results.push({theme,color:b.props.tone,contrast:Number(ratio.toFixed(2))})})
    }mockColorScheme='light';console.log(JSON.stringify(results))
  })
  // CPU三项紧凑布局的契约在 home-layout.cjs 中检查。

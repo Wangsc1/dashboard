@@ -8,8 +8,8 @@ const checks=String.raw`
      let charts=0,marks=0
      for(let sample=0;sample<3;sample++)for(let i=0;i<cores;i++){
        const card=home.CoreCard({cpu:{id:'cpu'+i,usage:10+sample},history:[10,20,30+sample],running:true});assert.equal(nodes(card,home.MetricNumber).length,0)
-       const p=nodes(card,home.SampledCpuPlot)[0],child=home.SampledCpuPlot(p.props);assert.equal(child.type,home.GridPlot);assert.equal(child.props.running,false)
-       const chart=render(home.GridPlot,child.props,true);await flush();assert.equal(chart.type,'SVG');charts++;marks+=(chart.props.code.match(/ C /g)||[]).length
+       const p=nodes(card,home.SampledCpuPlot)[0],child=home.SampledCpuPlot(p.props);assert.equal(child.type,home.GridPlot);assert.equal(child.props.running,true)
+       const chart=render(home.GridPlot,child.props,true);await flush();assert.ok(chart.type==='SVG'||chart.type==='ZStack');charts++;marks+=(nodes(chart,'SVG').at(-1)?.props.code??chart.props.code).match(/ C /g)?.length??0
      }
      assert.equal(intervals.size,0);const before=intervals.size;now+=1000;for(const timer of intervals.values())timer.fn();assert.equal(intervals.size,before)
      console.log(JSON.stringify({cores,realSampleUpdates:3,svgPlotsBuilt:charts,dataMarks:marks,jsAnimationTimers:intervals.size,betweenSampleJsChartCallbacks:0}));unmount()
