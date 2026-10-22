@@ -1,3 +1,4 @@
+import { detailReads, useRouterDetail, peekDetail, prefetchRouterDetails, detailWrite, observeDetailsPhase, selectDetailsSource } from "./router-details"
 import { HOME_BG, HomeDashboard, CpuDetails, LiveCpuDetails, CpuDetailFrame } from "./home-ui"
 import { newHistory, appendHistory, OverviewHistory } from "./openwrt-metrics"
 import { rootToolbar } from "./root-toolbar"
@@ -327,13 +328,12 @@ function OverviewPage({ active, version, onSwitch, onClose, selected = true }: {
 }
 
 function WrtInterfacesPage({ active, version }: { active: Controller; version: number }) {
-  const [list, setList] = useState<WrtIface[]>([])
-  const [err, setErr] = useState("")
-  useInterval(current => loadWrtInterfaces(active).then(l => { if (current()) { setList(l); setErr("") } }).catch(e => { if (current()) setErr(msg(e)) }), 5000, [overviewSource(active), version])
+  const {value:list,error:err}=useRouterDetail(active,"interfaces",()=>detailReads.interfaces(active),version,5000)
   return <Form background="systemBackground" scrollContentBackground="hidden" navigationTitle="网络接口" navigationBarTitleDisplayMode="inline">
+    {!list&&!err?<Text>正在读取…</Text>:null}
     {err ? <Section listRowBackground={panelRowBackground()}><Text foregroundStyle="systemRed">{err}</Text></Section> : null}
     <Section listRowBackground={panelRowBackground()}>
-      {list.map(i => <VStack key={i.name} alignment="leading" spacing={2}>
+      {list?.map(i => <VStack key={i.name} alignment="leading" spacing={2}>
         <HStack><Text>{i.name}</Text><Spacer /><Text font={13} foregroundStyle={i.up ? "systemGreen" : "systemRed"}>{i.up ? "已连接" : "未连接"}</Text></HStack>
         <Text font={12} foregroundStyle="secondaryLabel">{`${i.proto || "-"} · ${i.device || "-"} · ${i.ip || "无 IPv4"}${i.up ? " · " + fmtUptime(i.uptime) : ""}`}</Text>
       </VStack>)}
@@ -341,13 +341,12 @@ function WrtInterfacesPage({ active, version }: { active: Controller; version: n
   </Form>
 }
 function WrtLeasesPage({ active, version }: { active: Controller; version: number }) {
-  const [list, setList] = useState<WrtLease[]>([])
-  const [err, setErr] = useState("")
-  useInterval(current => loadWrtLeases(active).then(l => { if (current()) { setList(l); setErr("") } }).catch(e => { if (current()) setErr(msg(e)) }), 10000, [overviewSource(active), version])
-  return <Form background="systemBackground" scrollContentBackground="hidden" navigationTitle={`在线设备 (${list.length})`} navigationBarTitleDisplayMode="inline">
+  const {value:list,error:err}=useRouterDetail(active,"leases",()=>detailReads.leases(active),version,10000)
+  return <Form background="systemBackground" scrollContentBackground="hidden" navigationTitle={list ? `在线设备 (${list.length})` : "在线设备"} navigationBarTitleDisplayMode="inline">
+    {!list&&!err?<Text>正在读取…</Text>:null}
     {err ? <Section listRowBackground={panelRowBackground()}><Text foregroundStyle="systemRed">{err}</Text></Section> : null}
     <Section listRowBackground={panelRowBackground()} footer={<Text>来自 DHCP 租约，不含静态地址设备。</Text>}>
-      {list.map(l => <VStack key={l.mac + l.ip} alignment="leading" spacing={2}>
+      {list?.map(l => <VStack key={l.mac + l.ip} alignment="leading" spacing={2}>
         <Text>{l.host || "未命名设备"}</Text>
         <Text font={12} foregroundStyle="secondaryLabel">{`${l.ip} · ${l.mac}`}</Text>
       </VStack>)}
@@ -370,17 +369,20 @@ function Field({ title, value, onChanged, keyboard }: { title: string; value: st
 
 const gi = (n: number) => (n / 1073741824).toFixed(2) + " Gi"
 function DockerPage({ active }: { active: Controller }) {
-  const [ov, setOv] = useState<DockerOverview | null>(null)
-  const [list, setList] = useState<DockerContainer[]>([]), [images, setImages] = useState<DockerImage[]>([])
-  const [err, setErr] = useState(""), [busy, setBusy] = useState(false), [tick, setTick] = useState(0)
-  useEffect(() => { let alive = true; loadDockerImages(active).then(x => { if (alive) setImages(x) }).catch(() => {}); return () => { alive = false } }, [active.id, tick])
-  useEffect(() => { let alive = true; loadDockerContainers(active).then(x => { if (alive) { setList(x); setErr("") } }).catch(() => { if (alive) setErr("Docker 读取不可用：路由器未启用 Docker 或账号权限不足。") }); return () => { alive = false } }, [active.id, tick])
-  useEffect(() => { let alive = true; loadDockerOverview(active).then(x => { if (alive) setOv(x) }).catch(() => {}); return () => { alive = false } }, [active.id, tick])
+  const [busy,setBusy]=useState(false),[tick,setTick]=useState(0)
+  const {value:ov,error:overviewError}=useRouterDetail(active,"docker",()=>detailReads.docker(active),tick)
+  const {value:list,error:err}=useRouterDetail(active,"containers",()=>detailReads.containers(active),tick)
+  const {value:images,error:imageError}=useRouterDetail(active,"images",()=>detailReads.images(active),tick)
   const act = (x: DockerContainer, action: "start" | "stop" | "restart", label: string) => {
     if (busy) return
-    void guarded(setBusy, async () => { await confirmed(`${active.name} · ${x.name}`, `${label}容器；会影响该容器承载的服务。`, () => dockerAction(active, x.id, action)); setTick(t => t + 1) })
+    void guarded(setBusy, async () => { await confirmed(`${active.name} · ${x.name}`, `${label}容器；会影响该容器承载的服务。`, () => detailWrite(active,"docker",() => dockerAction(active, x.id, action))); setTick(t => t + 1) })
   }
   return <Form background="systemBackground" scrollContentBackground="hidden" navigationTitle="Docker 管理" navigationBarTitleDisplayMode="inline">
+    {!ov&&!overviewError?<Text>正在读取 Docker 概览…</Text>:null}
+    {overviewError?<Text foregroundStyle="systemRed">{overviewError}</Text>:null}
+    {!list&&!err?<Text>正在读取容器…</Text>:null}
+    {!images&&!imageError?<Text>正在读取镜像…</Text>:null}
+    {imageError?<Text foregroundStyle="systemRed">{imageError}</Text>:null}
     {err ? <Section listRowBackground={panelRowBackground()}><Text foregroundStyle="systemRed">{err}</Text></Section> : null}
     {ov ? <Section listRowBackground={panelRowBackground()} header={<Text>概览</Text>}>
       <HStack spacing={14}>
@@ -400,7 +402,7 @@ function DockerPage({ active }: { active: Controller }) {
     </Section> : null}
     <Section listRowBackground={panelRowBackground()}><NavigationLink destination={<DockerSettingsPage active={active} />}><Label title="Docker 参数" systemImage="slider.horizontal.3" /></NavigationLink></Section>
     <Section listRowBackground={panelRowBackground()} header={<Text>容器</Text>}>
-      {list.map(x => <NavigationLink key={x.id} destination={<ContainerPage active={active} x={x} />}
+      {list?.map(x => <NavigationLink key={x.id} destination={<ContainerPage active={active} x={x} />}
           trailingSwipeActions={{ allowsFullSwipe: false, actions: [
             x.state === "running" ? <Button title="停止" tint="systemRed" action={() => act(x, "stop", "停止")} /> : <Button title="启动" tint="systemGreen" action={() => act(x, "start", "启动")} />,
             <Button title="重启" tint="systemBlue" action={() => act(x, "restart", "重启")} />,
@@ -416,7 +418,7 @@ function DockerPage({ active }: { active: Controller }) {
       </NavigationLink>)}
     </Section>
     <Section listRowBackground={panelRowBackground()} header={<Text>镜像</Text>}>
-      {images.map(x => <NavigationLink key={x.id} destination={<ImagePage active={active} x={x} onDone={() => setTick(t => t + 1)} />}>
+      {images?.map(x => <NavigationLink key={x.id} destination={<ImagePage active={active} x={x} onDone={() => setTick(t => t + 1)} />}>
         <HStack spacing={10}>
           <DockerLogo size={26} />
           <VStack alignment="leading" spacing={3}>
@@ -435,7 +437,7 @@ function Row({ title, value }: { title: string; value: string }) { return <VStac
 
 function ImagePage({ active, x, onDone }: { active: Controller; x: DockerImage; onDone: () => void }) {
   const dismiss = Navigation.useDismiss(), [busy, setBusy] = useState(false)
-  const del = (force: boolean) => guarded(setBusy, async () => { if (await confirmed(`${active.name} · ${x.tags[0] ?? x.id.slice(7, 19)}`, `${force ? "强制" : ""}删除镜像；${x.containers.length ? "仍有容器使用它，" : ""}不可恢复。`, () => dockerImageRemove(active, x.id, force))) { onDone(); dismiss() } })
+  const del = (force: boolean) => guarded(setBusy, async () => { if (await confirmed(`${active.name} · ${x.tags[0] ?? x.id.slice(7, 19)}`, `${force ? "强制" : ""}删除镜像；${x.containers.length ? "仍有容器使用它，" : ""}不可恢复。`, () => detailWrite(active,"docker",() => dockerImageRemove(active, x.id, force)))) { onDone(); dismiss() } })
   return <Form background="systemBackground" scrollContentBackground="hidden" navigationTitle="镜像" navigationBarTitleDisplayMode="inline">
     <Section listRowBackground={panelRowBackground()} header={<Text>镜像文件概览</Text>}>
       <Row title="标签" value={x.tags.join("\n")} />
@@ -453,11 +455,14 @@ function ImagePage({ active, x, onDone }: { active: Controller; x: DockerImage; 
 
 function ContainerPage({ active, x }: { active: Controller; x: DockerContainer }) {
   const dismiss = Navigation.useDismiss()
-  const [d, setD] = useState<DockerContainerDetail | null>(null), [policy, setPolicy] = useState(""), [orig, setOrig] = useState(""), [busy, setBusy] = useState(false), [err, setErr] = useState(""), [tick, setTick] = useState(0)
-  useEffect(() => { let alive = true; loadContainerDetail(active, x.id).then(v => { if (alive) { setD(v); setPolicy(v.policy); setOrig(v.policy); setErr("") } }).catch(() => { if (alive) setErr("读取容器信息失败") }); return () => { alive = false } }, [x.id, tick])
+  const [tick,setTick]=useState(0)
+  const {value:d,error:err}=useRouterDetail(active,`container:${x.id}`,()=>loadContainerDetail(active,x.id),tick)
+  const [policy,setPolicy]=useState(()=>peekDetail<DockerContainerDetail>(active,`container:${x.id}`)?.policy??""),[orig,setOrig]=useState(policy),[busy,setBusy]=useState(false)
+  useEffect(()=>{if(d&&policy===orig){setPolicy(d.policy);setOrig(d.policy)}},[d])
   const op = (label: string, effect: string, fn: () => Promise<any>, leave = false) => guarded(setBusy, async () => { if (await confirmed(`${active.name} · ${x.name}`, effect, fn)) { if (leave) dismiss(); else setTimeout(() => setTick(t => t + 1), 800) } })
-  const save = () => guarded(setBusy, async () => { await confirmed(`${active.name} · ${x.name}`, `将重启策略改为 ${policy}，不重启容器。`, () => saveContainerPolicy(active, x.id, policy)); setOrig(policy) })
+  const save = () => guarded(setBusy, async () => { await confirmed(`${active.name} · ${x.name}`, `将重启策略改为 ${policy}，不重启容器。`, () => detailWrite(active,"docker",() => saveContainerPolicy(active, x.id, policy))); setOrig(policy) })
   return <Form background="systemBackground" scrollContentBackground="hidden" navigationTitle={x.name} navigationBarTitleDisplayMode="inline">
+    {!d&&!err?<Text>正在读取…</Text>:null}
     {err ? <Section listRowBackground={panelRowBackground()}><Text foregroundStyle="systemRed">{err}</Text></Section> : null}
     {d ? <Section listRowBackground={panelRowBackground()} header={<Text>容器概览</Text>}>
       <Row title="容器" value={d.name} />
@@ -470,12 +475,12 @@ function ContainerPage({ active, x }: { active: Controller; x: DockerContainer }
       <Row title="创建时间" value={when(d.created)} />
     </Section> : null}
     {d ? <Section listRowBackground={panelRowBackground()}>
-      <Button title={d.paused ? "恢复" : "暂停"} disabled={busy} action={() => op("", `${d.paused ? "恢复" : "暂停"}容器。`, () => dockerContainerOp(active, x.id, d.paused ? "unpause" : "pause"))} />
-      <Button title="重启" disabled={busy} action={() => op("", "重启容器；服务会短暂中断。", () => dockerAction(active, x.id, "restart"))} />
-      <Button title="停止" disabled={busy} action={() => op("", "停止容器；服务会中断。", () => dockerAction(active, x.id, "stop"))} />
-      <Button title="强制结束" tint="systemRed" disabled={busy} action={() => op("", "向容器发送 KILL 信号，立即终止进程。", () => dockerContainerOp(active, x.id, "kill"))} />
-      <Button title="删除" tint="systemRed" disabled={busy} action={() => op("", "删除容器（需先停止）；不可恢复。", () => dockerContainerOp(active, x.id, "remove"), true)} />
-      <Button title="强制删除" tint="systemRed" disabled={busy} action={() => op("", "强制删除容器，即使正在运行；不可恢复。", () => dockerContainerOp(active, x.id, "force-remove"), true)} />
+      <Button title={d.paused ? "恢复" : "暂停"} disabled={busy} action={() => op("", `${d.paused ? "恢复" : "暂停"}容器。`, () => detailWrite(active,"docker",() => dockerContainerOp(active, x.id, d.paused ? "unpause" : "pause")))} />
+      <Button title="重启" disabled={busy} action={() => op("", "重启容器；服务会短暂中断。", () => detailWrite(active,"docker",() => dockerAction(active, x.id, "restart")))} />
+      <Button title="停止" disabled={busy} action={() => op("", "停止容器；服务会中断。", () => detailWrite(active,"docker",() => dockerAction(active, x.id, "stop")))} />
+      <Button title="强制结束" tint="systemRed" disabled={busy} action={() => op("", "向容器发送 KILL 信号，立即终止进程。", () => detailWrite(active,"docker",() => dockerContainerOp(active, x.id, "kill")))} />
+      <Button title="删除" tint="systemRed" disabled={busy} action={() => op("", "删除容器（需先停止）；不可恢复。", () => detailWrite(active,"docker",() => dockerContainerOp(active, x.id, "remove")), true)} />
+      <Button title="强制删除" tint="systemRed" disabled={busy} action={() => op("", "强制删除容器，即使正在运行；不可恢复。", () => detailWrite(active,"docker",() => dockerContainerOp(active, x.id, "force-remove")), true)} />
     </Section> : null}
     {policy ? <Section listRowBackground={panelRowBackground()} header={<Text>参数</Text>} footer={<Text>仅修改重启策略；端口、挂载、环境变量需重建容器，这里不提供。</Text>}>
       <Picker title="重启策略" pickerStyle="menu" value={policy} onChanged={setPolicy}>
@@ -487,11 +492,17 @@ function ContainerPage({ active, x }: { active: Controller; x: DockerContainer }
 }
 
 function DockerSettingsPage({ active }: { active: Controller }) {
-  const [s, setS] = useState<DockerSettings | null>(null), [busy, setBusy] = useState(false), [err, setErr] = useState("")
-  useEffect(() => { let alive = true; loadDockerSettings(active).then(v => { if (alive) setS(v) }).catch(() => { if (alive) setErr("读取 Docker 参数失败") }); return () => { alive = false } }, [active.id])
-  const set = (k: keyof DockerSettings, v: string) => setS(o => o ? { ...o, [k]: v } : o)
-  const save = () => s && guarded(setBusy, async () => { await confirmed(`${active.name} · dockerd`, "保存后将重启 Docker 服务，所有容器会短暂中断。", () => saveDockerSettings(active, s)) })
+  const {value:remote,error:err}=useRouterDetail(active,"dockerSettings",()=>detailReads.dockerSettings(active))
+  const source=overviewSource(active)
+  const [edit,setEdit]=useState(()=>({source,value:peekDetail<DockerSettings>(active,"dockerSettings")??null})),[busy,setBusy]=useState(false)
+  const [dirtySource,setDirtySource]=useState("")
+  const s=edit.source===source?edit.value:peekDetail<DockerSettings>(active,"dockerSettings")??null
+  const setS=(value:DockerSettings|((old:DockerSettings|null)=>DockerSettings|null))=>setEdit(old=>({source,value:typeof value==="function"?value(old.source===source?old.value:null):value}))
+  useEffect(()=>{if(remote&&dirtySource!==source)setS(remote)},[remote,source])
+  const set = (k: keyof DockerSettings, v: string) => {setDirtySource(source);setS(o => o ? { ...o, [k]: v } : o)}
+  const save = () => s && guarded(setBusy, async () => { await confirmed(`${active.name} · dockerd`, "保存后将重启 Docker 服务，所有容器会短暂中断。", () => detailWrite(active,"docker",() => saveDockerSettings(active, s))) })
   return <Form background="systemBackground" scrollContentBackground="hidden" navigationTitle="Docker 参数" navigationBarTitleDisplayMode="inline">
+    {!s&&!err?<Text>正在读取…</Text>:null}
     {err ? <Section listRowBackground={panelRowBackground()}><Text foregroundStyle="systemRed">{err}</Text></Section> : null}
     {s ? <Section listRowBackground={panelRowBackground()} header={<Text>常规</Text>} footer={<Text>数据目录为只读（改动会让现有容器消失）。保存会重启 Docker。</Text>}>
       <HStack><Text>数据目录</Text><Spacer /><Text foregroundStyle="secondaryLabel">{s.dataRoot}</Text></HStack>
@@ -509,15 +520,15 @@ function DockerSettingsPage({ active }: { active: Controller }) {
 }
 
 function FrpPage({ active }: { active: Controller }) {
-  const [info, setInfo] = useState<FrpInfo | null>(null)
-  const [err, setErr] = useState(""), [busy, setBusy] = useState(false), [tick, setTick] = useState(0)
-  useEffect(() => { let alive = true; loadFrp(active).then(x => { if (alive) { setInfo(x); setErr("") } }).catch(() => { if (alive) setErr("frp 读取不可用：路由器未安装 frpc 或账号权限不足。") }); return () => { alive = false } }, [active.id, tick])
+  const [busy,setBusy]=useState(false),[tick,setTick]=useState(0)
+  const {value:info,error:err}=useRouterDetail(active,"frp",()=>detailReads.frp(active),tick)
   const act = (action: "start" | "stop" | "restart", label: string) => {
     if (busy) return
-    void guarded(setBusy, async () => { await confirmed(`${active.name} · frpc`, `${label} frp 客户端；穿透服务会短暂中断。`, () => frpAction(active, action)); setTimeout(() => setTick(t => t + 1), 1500) })
+    void guarded(setBusy, async () => { await confirmed(`${active.name} · frpc`, `${label} frp 客户端；穿透服务会短暂中断。`, () => detailWrite(active,"frp",() => frpAction(active, action))); setTimeout(() => setTick(t => t + 1), 1500) })
   }
   const reload = () => setTimeout(() => setTick(t => t + 1), 1500)
   return <Form background="systemBackground" scrollContentBackground="hidden" navigationTitle="FRP 管理" navigationBarTitleDisplayMode="inline">
+    {!info&&!err?<Text>正在读取…</Text>:null}
     {err ? <Section listRowBackground={panelRowBackground()}><Text foregroundStyle="systemRed">{err}</Text></Section> : null}
     {info ? <Section listRowBackground={panelRowBackground()} header={<Text>服务</Text>}>
       <HStack><Text>状态</Text><Spacer /><HStack spacing={6}><Circle fill={info.running ? "systemGreen" : "systemRed"} frame={{ width: 7, height: 7 }} /><Text foregroundStyle="secondaryLabel">{info.running ? "运行中" : "已停止"}</Text></HStack></HStack>
@@ -528,7 +539,7 @@ function FrpPage({ active }: { active: Controller }) {
     </Section> : null}
     {info ? <Section listRowBackground={panelRowBackground()} header={<Text>穿透规则</Text>}>
       {info.proxies.map(x => <NavigationLink key={x.id} destination={<FrpProxyPage active={active} initial={x} onDone={reload} />}
-          trailingSwipeActions={{ allowsFullSwipe: false, actions: [<Button title="删除" tint="systemRed" action={() => { void guarded(setBusy, async () => { await confirmed(`${active.name} · ${x.name}`, "删除该穿透规则并重启 frpc。", () => deleteFrpProxy(active, x.id)); reload() }) }} />] }}>
+          trailingSwipeActions={{ allowsFullSwipe: false, actions: [<Button title="删除" tint="systemRed" action={() => { void guarded(setBusy, async () => { await confirmed(`${active.name} · ${x.name}`, "删除该穿透规则并重启 frpc。", () => detailWrite(active,"frp",() => deleteFrpProxy(active, x.id))); reload() }) }} />] }}>
         <VStack alignment="leading" spacing={2}>
           <Text fontWeight="semibold">{x.name}</Text>
           <Text font={12} foregroundStyle="secondaryLabel">{`${x.type.toUpperCase()} · ${x.local} → ${x.remote}`}</Text>
@@ -543,7 +554,7 @@ const maskUrl = (u: string) => u.replace(/(\d{1,3}\.\d{1,3}\.)\d{1,3}\.\d{1,3}(?
 function FrpCommonPage({ active, info, onDone }: { active: Controller; info: FrpInfo; onDone: () => void }) {
   const dismiss = Navigation.useDismiss()
   const [addr, setAddr] = useState(info.common.addr), [port, setPort] = useState(info.common.port), [tls, setTls] = useState(info.common.tls), [token, setToken] = useState(info.common.token), [busy, setBusy] = useState(false)
-  const save = () => guarded(setBusy, async () => { if (await confirmed(`${active.name} · frpc`, "保存服务端参数并重启 frpc；穿透会短暂中断，参数错误会导致断连。", () => saveFrpCommon(active, { addr: addr.trim(), port: port.trim(), tls, token: token.trim() }))) { onDone(); dismiss() } })
+  const save = () => guarded(setBusy, async () => { if (await confirmed(`${active.name} · frpc`, "保存服务端参数并重启 frpc；穿透会短暂中断，参数错误会导致断连。", () => detailWrite(active,"frp",() => saveFrpCommon(active, { addr: addr.trim(), port: port.trim(), tls, token: token.trim() })))) { onDone(); dismiss() } })
   return <Form background="systemBackground" scrollContentBackground="hidden" navigationTitle="服务端参数" navigationBarTitleDisplayMode="inline">
     <Section listRowBackground={panelRowBackground()}>
       <Field title="服务器地址" value={addr} onChanged={setAddr} />
@@ -562,7 +573,7 @@ function FrpProxyPage({ active, initial, onDone }: { active: Controller; initial
   const [name, setName] = useState(initial?.name ?? ""), [type, setType] = useState(initial?.type ?? "tcp")
   const [lip, setLip] = useState(initial ? rawLocal.slice(0, idx) : "10.0.0.1"), [lport, setLport] = useState(initial ? rawLocal.slice(idx + 1) : "")
   const [rport, setRport] = useState(initial?.remote ?? ""), [busy, setBusy] = useState(false)
-  const save = () => guarded(setBusy, async () => { if (await confirmed(`${active.name} · ${name || "新规则"}`, `${initial ? "修改" : "添加"}穿透规则并重启 frpc。`, () => saveFrpProxy(active, { id: initial?.id, name: name.trim(), type, local_ip: lip.trim(), local_port: lport.trim(), remote_port: rport.trim() }))) { onDone(); dismiss() } })
+  const save = () => guarded(setBusy, async () => { if (await confirmed(`${active.name} · ${name || "新规则"}`, `${initial ? "修改" : "添加"}穿透规则并重启 frpc。`, () => detailWrite(active,"frp",() => saveFrpProxy(active, { id: initial?.id, name: name.trim(), type, local_ip: lip.trim(), local_port: lport.trim(), remote_port: rport.trim() })))) { onDone(); dismiss() } })
   return <Form background="systemBackground" scrollContentBackground="hidden" navigationTitle={initial ? initial.name : "添加规则"} navigationBarTitleDisplayMode="inline">
     <Section listRowBackground={panelRowBackground()}>
       <Field title="名称" value={name} onChanged={setName} />
@@ -585,40 +596,41 @@ function PkgRow({ p, actions }: { p: Pkg; actions: any[] }) {
 
 function SoftwarePage({ active }: { active: Controller }) {
   const [tab, setTab] = useState<"available" | "installed" | "updates">("installed")
-  const [installed, setInstalled] = useState<Pkg[]>([]), [available, setAvailable] = useState<Pkg[] | null>(null)
   const [q, setQ] = useState(""), [url, setUrl] = useState(""), [limit, setLimit] = useState(100), [busy, setBusy] = useState(false), [err, setErr] = useState(""), [log, setLog] = useState(""), [tick, setTick] = useState(0)
-  const [disk, setDisk] = useState("")
-  useEffect(() => { let alive = true; loadInstalledPkgs(active).then(x => { if (alive) { setInstalled(x); setErr("") } }).catch(() => { if (alive) setErr("软件列表读取不可用：路由器未使用 apk/opkg 或账号权限不足。") }); return () => { alive = false } }, [active.id, tick])
-  useEffect(() => { let alive = true; loadDiskUsage(active).then(d => { if (alive && d) setDisk(`${Math.round(d.used / d.size * 100)}% 已用（${mib(d.used)} / ${mib(d.size)}，剩余 ${mib(d.avail)}）`) }).catch(() => {}); return () => { alive = false } }, [active.id, tick])
-  useEffect(() => { if (tab === "available" || tab === "updates") { let alive = true; if (!available) loadAvailablePkgs(active).then(x => { if (alive) setAvailable(x) }).catch(() => { if (alive) setErr("可用软件包读取失败，请先点“更新列表”") }); return () => { alive = false } } }, [tab, active.id, available === null])
+  const {value:installedData,error:installedError}=useRouterDetail(active,"installed",()=>detailReads.installed(active),tick)
+  const {value:available,error:availableError}=useRouterDetail(active,"available",()=>detailReads.available(active),tick)
+  const {value:diskData}=useRouterDetail(active,"disk",()=>detailReads.disk(active),tick)
+  const installed=installedData??[]
+  const disk=diskData?`${Math.round(diskData.used/diskData.size*100)}% 已用（${mib(diskData.used)} / ${mib(diskData.size)}，剩余 ${mib(diskData.avail)}）`:""
   const updates = available ? upgradablePkgs(installed, available) : []
   const source = tab === "installed" ? installed : tab === "updates" ? updates : (available ?? [])
   const shown = filterPkgs(source, q, limit)
   const run = (title: string, effect: string, fn: () => Promise<{ code: number; out: string }>) => guarded(setBusy, async () => {
     if (!await confirmed(`${active.name} · ${title}`, effect, async () => { const r = await fn(); setLog(`${r.code === 0 ? "成功" : "失败（代码 " + r.code + "）"}\n${r.out}`) })) return
-    setAvailable(null); setTick(t => t + 1)
+    setTick(t => t + 1)
   })
 
   const swipeFor = (p: Pkg): any[] => p.installed
-    ? [...(p.upgradeTo ? [<Button title="升级" tint="systemBlue" action={() => run(p.name, `升级到 ${p.upgradeTo}；可能重启相关服务。`, () => pkgUpgrade(active, [p.name]))} />] : []),
-       <Button title="卸载" tint="systemRed" action={() => run(p.name, "卸载软件包及其不再需要的依赖；可能导致依赖它的功能失效。", () => pkgRemove(active, [p.name]))} />]
-    : [<Button title="安装" tint="systemBlue" action={() => run(p.name, "下载并安装；会改动系统。", () => pkgInstall(active, [p.name]))} />]
+    ? [...(p.upgradeTo ? [<Button title="升级" tint="systemBlue" action={() => run(p.name, `升级到 ${p.upgradeTo}；可能重启相关服务。`, () => detailWrite(active,"software",() => pkgUpgrade(active, [p.name])))} />] : []),
+       <Button title="卸载" tint="systemRed" action={() => run(p.name, "卸载软件包及其不再需要的依赖；可能导致依赖它的功能失效。", () => detailWrite(active,"software",() => pkgRemove(active, [p.name])))} />]
+    : [<Button title="安装" tint="systemBlue" action={() => run(p.name, "下载并安装；会改动系统。", () => detailWrite(active,"software",() => pkgInstall(active, [p.name])))} />]
   return <Form background="systemBackground" scrollContentBackground="hidden" navigationTitle="软件管理" navigationBarTitleDisplayMode="inline">
+    {installedError||availableError?<Text foregroundStyle="systemRed">{installedError||availableError}</Text>:null}
     {err ? <Section listRowBackground={panelRowBackground()}><Text foregroundStyle="systemRed">{err}</Text></Section> : null}
-    <Section listRowBackground={panelRowBackground()} header={<Text>磁盘空间</Text>} footer={<Text>软件包操作可能破坏系统，请谨慎。</Text>}><Text foregroundStyle="secondaryLabel">{disk || "-"}</Text></Section>
+    <Section listRowBackground={panelRowBackground()} header={<Text>磁盘空间</Text>} footer={<Text>软件包操作可能破坏系统，请谨慎。</Text>}><Text foregroundStyle="secondaryLabel">{disk || (diskData===undefined?"正在读取…":"-")}</Text></Section>
     <Section listRowBackground={panelRowBackground()} header={<Text>过滤器</Text>}><TextField title="输入关键字过滤" value={q} onChanged={(v: string) => { setQ(v); setLimit(100) }} autocorrectionDisabled textInputAutocapitalization="never" /></Section>
     <Section listRowBackground={panelRowBackground()} header={<Text>下载并安装</Text>}>
       <TextField title="软件包名称" value={url} onChanged={setUrl} autocorrectionDisabled textInputAutocapitalization="never" />
-      <Button title="安装" disabled={busy || !url.trim()} action={() => run(url.trim(), "下载并安装；会改动系统。", () => pkgInstall(active, [url.trim()]))} />
+      <Button title="安装" disabled={busy || !url.trim()} action={() => run(url.trim(), "下载并安装；会改动系统。", () => detailWrite(active,"software",() => pkgInstall(active, [url.trim()])))} />
     </Section>
     <Section listRowBackground={panelRowBackground()} header={<Text>操作</Text>}>
-      <Button title="更新列表" disabled={busy} action={() => run("软件源", "刷新软件源索引，需联网，不安装任何软件。", () => pkgUpdateLists(active))} />
-      {updates.length ? <Button title="升级全部" tint="systemRed" disabled={busy} action={() => run(`${updates.length} 个软件包`, "升级全部可更新的软件包；可能重启服务，系统核心包升级有风险。", () => pkgUpgrade(active, updates.map(p => p.name)))} /> : null}
+      <Button title="更新列表" disabled={busy} action={() => run("软件源", "刷新软件源索引，需联网，不安装任何软件。", () => detailWrite(active,"software",() => pkgUpdateLists(active)))} />
+      {updates.length ? <Button title="升级全部" tint="systemRed" disabled={busy} action={() => run(`${updates.length} 个软件包`, "升级全部可更新的软件包；可能重启服务，系统核心包升级有风险。", () => detailWrite(active,"software",() => pkgUpgrade(active, updates.map(p => p.name))))} /> : null}
     </Section>
     <Section listRowBackground={panelRowBackground()}>
       <Picker title="" pickerStyle="segmented" value={tab} onChanged={(v: any) => { setTab(v); setLimit(100) }}><Text tag="available">可用</Text><Text tag="installed">已安装</Text><Text tag="updates">更新</Text></Picker>
     </Section>
-    <Section listRowBackground={panelRowBackground()} footer={<Text>{tab !== "installed" && !available ? "正在读取软件源（首次约十几秒）…" : shown.total > shown.items.length ? `显示 ${shown.items.length} / ${shown.total}，输入关键字缩小范围` : `共 ${shown.total} 项`}</Text>}>
+    <Section listRowBackground={panelRowBackground()} footer={<Text>{tab !== "installed" && !available ? "正在读取软件源（首次约十几秒）…" : shown.total > shown.items.length ? `显示 ${shown.items.length} / ${shown.total}，输入关键字缩小范围` : !installedData ? "正在读取…" : `共 ${shown.total} 项`}</Text>}>
       {shown.items.map(p => { const q = tab === "available" && installed.some(i => i.name === p.name) ? { ...p, installed: true, upgradeTo: updates.find(u => u.name === p.name)?.upgradeTo } : p; return <PkgRow key={p.name + p.version} p={q} actions={swipeFor(q)} /> })}
       {shown.total > shown.items.length ? <Button title="显示更多" action={() => setLimit(limit + 100)} /> : null}
     </Section>
@@ -708,6 +720,7 @@ function EditController({ initial, onDone }: { initial?: Controller; onDone: () 
 }
 
 function SettingsPage({ active, onChanged }: { active: Controller | null; onChanged: () => void }) {
+  useEffect(()=>active?prefetchRouterDetails(active):undefined,[active?overviewSource(active):""])
   const [revealed, setRevealed] = useState<string[]>([])
   const [list, setList] = useState(listControllers())
   const reload = () => { setList(listControllers()); onChanged() }
@@ -731,11 +744,11 @@ function SettingsPage({ active, onChanged }: { active: Controller | null; onChan
       <NavigationLink destination={<LogsPage />}><Label title="运行日志" systemImage="doc.text" /></NavigationLink>
     </Section> : null}
     {active ? <Section listRowBackground={panelRowBackground()} header={<Text>路由器详情</Text>}>
-      <NavigationLink destination={<WrtInterfacesPage active={active} version={0} />}><Label title="网络接口" systemImage="network" /></NavigationLink>
-      <NavigationLink destination={<WrtLeasesPage active={active} version={0} />}><Label title="在线设备" systemImage="laptopcomputer.and.iphone" /></NavigationLink>
-      <NavigationLink destination={<DockerPage active={active} />}><HStack spacing={10}><DockerLogo size={22} mono /><Text>Docker 管理</Text></HStack></NavigationLink>
-      <NavigationLink destination={<FrpPage active={active} />}><Label title="FRP 管理" systemImage="arrow.left.arrow.right" /></NavigationLink>
-      <NavigationLink destination={<SoftwarePage active={active} />}><Label title="软件管理" systemImage="shippingbox" /></NavigationLink>
+      <NavigationLink destination={<WrtInterfacesPage key={overviewSource(active)} active={active} version={0} />}><Label title="网络接口" systemImage="network" /></NavigationLink>
+      <NavigationLink destination={<WrtLeasesPage key={overviewSource(active)} active={active} version={0} />}><Label title="在线设备" systemImage="laptopcomputer.and.iphone" /></NavigationLink>
+      <NavigationLink destination={<DockerPage key={overviewSource(active)} active={active} />}><HStack spacing={10}><DockerLogo size={22} mono /><Text>Docker 管理</Text></HStack></NavigationLink>
+      <NavigationLink destination={<FrpPage key={overviewSource(active)} active={active} />}><Label title="FRP 管理" systemImage="arrow.left.arrow.right" /></NavigationLink>
+      <NavigationLink destination={<SoftwarePage key={overviewSource(active)} active={active} />}><Label title="软件管理" systemImage="shippingbox" /></NavigationLink>
       <NavigationLink destination={<LogsPage />}><Label title="运行日志" systemImage="doc.text" /></NavigationLink>
     </Section> : null}
     <PanelSettingsSections />
@@ -747,6 +760,7 @@ function MorePage({ active, onChanged, onClose, selected = true }: { active: Con
   return <DashboardMorePage selected={selected} active={active} onChanged={onChanged} onClose={onClose} />
 }
 function Root() {
+  useEffect(observeDetailsPhase,[])
   const dismiss = Navigation.useDismiss()
   const [version, setVersion] = useState(0)
   const selection = useObservable<RootTab>(() => { const p = getPreferences().defaultPage; return p === "overview" ? "home" : p })
@@ -761,6 +775,7 @@ function Root() {
   const tab = selection.value
   const active = getActive(), bump = () => { setVersion(v => v + 1) }
   const homeSource = active ? overviewSource(active) : ""
+  useEffect(()=>{selectDetailsSource(active)},[homeSource])
   const foreground = useForeground()
   useEffect(() => {
     if (!active || active.kind !== "openwrt") return

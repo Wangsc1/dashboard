@@ -1,7 +1,7 @@
 import { CpuSampler, CpuUsage, CpuMeta, parseCpuInfo, thermalCelsius } from "./openwrt-metrics"
 
 import { getPreferences, customHeaders, recordEvent, controllerHealth, feedback } from "./preferences"
-export const VERSION = "1.15"
+export const VERSION = "1.16"
 
 export type Kind = "clash" | "openwrt"
 export type Plugin = "openclash" | "nikki" | "mihomo"
@@ -1181,7 +1181,7 @@ const okPkg = (n: string) => /^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$/.test(n)
 async function pkgExec(c: Controller, args: string[], timeoutSec = 60): Promise<string> {
   for (let attempt = 0; attempt < 2; attempt++) {
     let sid = sessions[c.id]?.sid
-    if (!sid || Date.now() - sessions[c.id].at > 50 * 60 * 1000) sid = await wrtLogin(c)
+    if (!sid || sessions[c.id].auth !== overviewSource(c) || Date.now() - sessions[c.id].at > 50 * 60 * 1000) sid = await wrtLogin(c)
     const body = `sessionid=${enc(sid)}&command=${enc([PKG, ...args].join(" "))}&stderr=1`
     const r = await fetch(c.url + "/cgi-bin/cgi-exec", {
       method: "POST", headers: { ...customHeaders(), "Content-Type": "application/x-www-form-urlencoded" }, body, allowInsecureRequest: true, timeout: timeoutSec,
@@ -1208,11 +1208,12 @@ export async function loadInstalledPkgs(c: Controller): Promise<Pkg[]> {
 }
 let availableCache: Record<string, { at: number; list: Pkg[] }> = {}
 export async function loadAvailablePkgs(c: Controller, force = false): Promise<Pkg[]> {
-  const hit = availableCache[c.id]
+  const key=overviewSource(c), hit = availableCache[key]
   if (!force && hit && Date.now() - hit.at < 10 * 60 * 1000) return hit.list
   const list = parsePkgs(await pkgExec(c, ["list-available"], 120), false)
   list.sort((a, b) => a.name.localeCompare(b.name))
-  availableCache[c.id] = { at: Date.now(), list }
+  if(overviewSource(c)!==key)throw new Error("来源或读取代次已改变")
+  availableCache[key] = { at: Date.now(), list }
   return list
 }
 export function upgradablePkgs(installed: Pkg[], available: Pkg[]): Pkg[] {
@@ -1230,10 +1231,10 @@ async function pkgOp(c: Controller, args: string[]): Promise<PkgResult> {
   try { const j = JSON.parse(text); return { code: num(j.code), out: [j.stdout, j.stderr].filter(Boolean).join("\n").slice(0, 3000) } }
   catch { return { code: 255, out: text.slice(0, 500) } }
 }
-export async function pkgUpdateLists(c: Controller) { delete availableCache[c.id]; return pkgOp(c, ["update"]) }
-export async function pkgInstall(c: Controller, names: string[]) { if (!names.length || !names.every(okPkg)) throw new Error("软件包名称无效"); delete availableCache[c.id]; return pkgOp(c, ["install", ...names]) }
+export async function pkgUpdateLists(c: Controller) { delete availableCache[overviewSource(c)]; return pkgOp(c, ["update"]) }
+export async function pkgInstall(c: Controller, names: string[]) { if (!names.length || !names.every(okPkg)) throw new Error("软件包名称无效"); delete availableCache[overviewSource(c)]; return pkgOp(c, ["install", ...names]) }
 export async function pkgRemove(c: Controller, names: string[]) { if (!names.length || !names.every(okPkg)) throw new Error("软件包名称无效"); return pkgOp(c, ["remove", ...names]) }
-export async function pkgUpgrade(c: Controller, names: string[]) { if (!names.length || !names.every(okPkg)) throw new Error("软件包名称无效"); delete availableCache[c.id]; return pkgOp(c, ["upgrade", ...names]) }
+export async function pkgUpgrade(c: Controller, names: string[]) { if (!names.length || !names.every(okPkg)) throw new Error("软件包名称无效"); delete availableCache[overviewSource(c)]; return pkgOp(c, ["upgrade", ...names]) }
 
 export async function loadDiskUsage(c: Controller): Promise<DiskUsage | null> {
   return mountUsage(await ubus(c,"luci","getMountPoints"))
