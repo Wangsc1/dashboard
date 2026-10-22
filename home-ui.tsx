@@ -5,8 +5,12 @@ import { InlineCanvasPlot } from "./plot-view"
 export const HOME_BG = "systemBackground"
 const INK="label",PANEL="secondarySystemBackground"
 export function HomeCard({children,onOpen}:{children?:any;onOpen?:()=>void}) {
-  return <VStack alignment="leading" spacing={12} foregroundStyle={INK} font={13} onTapGesture={onOpen}
-    modifiers={modifiers().frame({minWidth:0,maxWidth:"infinity",alignment:"leading"}).padding(16).background(<RoundedRectangle cornerRadius={14} fill={PANEL}/>)}>{children}</VStack>
+  const shell=modifiers().frame({minWidth:0,maxWidth:"infinity",alignment:"leading"}).padding(16).background(<RoundedRectangle cornerRadius={14} fill={PANEL}/>)
+  // Native hit plane ABOVE the WebView, sized after card padding/background.
+  // A clear fill plus explicit contentShape includes chart, numbers and empty space.
+  // Only tappable cards get this plane; a tap recognizer does not add a drag handler.
+  return <VStack alignment="leading" spacing={12} foregroundStyle={INK} font={13}
+    modifiers={onOpen?shell.overlay(<RoundedRectangle cornerRadius={14} fill="clear" contentShape="rect" onTapGesture={onOpen}/>):shell}>{children}</VStack>
 }
 export function MetricNumber({value,unit="",pointSize=16,tone="label",digits=0,running=true}:{running?:boolean;value?:number;unit?:string;pointSize?:number;tone?:any;digits?:number}) {
   const shown=value===undefined||!Number.isFinite(value)?"--":value.toFixed(digits)

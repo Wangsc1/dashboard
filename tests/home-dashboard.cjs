@@ -91,6 +91,20 @@ function fixture(url,init){if(url.endsWith('/cgi-bin/cgi-download'))return {stat
    assert.equal(ram.props.bars.type,home.CapacityBars);assert.equal(home.CapacityBars(ram.props.bars.props).props.frame.maxHeight,24);assert.ok(nodes(load.props.bars,home.LoadBars).every(n=>home.LoadBars(n.props).props.frame.height===24))
    // Verifies native constraints, not actual iOS bounds or Dynamic Type rendering.
  })
+ await test('CPU整卡点击面覆盖绘制层和留白，入口只触发一次；其他卡片不拦截',()=>{
+   let opens=0;const onOpen=()=>opens++
+   const cpu=home.CpuCard({history:[10,20],running:true,onOpen})
+   assert.equal(cpu.props.onOpen,onOpen)
+   const card=home.HomeCard(cpu.props),steps=card.props.modifiers.steps
+   deep(steps.map(s=>s[0]),['frame','padding','background','overlay'])
+   const hit=steps.at(-1)[1]
+   assert.equal(hit.type,'RoundedRectangle');assert.equal(hit.props.fill,'clear');assert.equal(hit.props.contentShape,'rect')
+   assert.equal(hit.props.frame,undefined,'overlay uses the complete padded base bounds, not a title-sized frame')
+   assert.equal(hit.props.onTapGesture,onOpen);assert.equal(card.props.onTapGesture,undefined,'no duplicate parent gesture')
+   hit.props.onTapGesture();assert.equal(opens,1)
+   assert.equal(hit.props.onDragGesture,undefined)
+   for(const other of [home.HomeCard({children:[]}),home.HomeCard(home.CpuCard({history:[],running:true,detail:true}).props)])assert.ok(!other.props.modifiers.steps.some(s=>s[0]==='overlay'))
+ })
  await test('主页/CPU详情与其他页面同款系统白底灰卡，移除渐变和阴影',()=>{
    assert.equal(home.HOME_BG,'systemBackground');const card=home.HomeCard({children:[]}),bg=card.props.modifiers.steps.find(s=>s[0]==='background')[1];assert.equal(bg.props.fill,'secondarySystemBackground');assert.equal(card.props.foregroundStyle,'label');assert.equal(card.props.shadow,undefined)
    const detail=home.CpuDetails({overview:null,histories:newHistory(),running:false,onDismiss(){}});assert.equal(nodes(detail,'ScrollView')[0].props.background,'systemBackground')

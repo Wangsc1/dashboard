@@ -26,6 +26,12 @@
 
 原生 Tab API 面向 iOS 18+；外观与手势由系统及 Scripting 版本决定。仓库配置了 `remoteResource`，实际导入和更新以 Scripting 的处理结果为准。配置编辑器的 CodeMirror/Lezer/YAML 静态 bundle 已嵌入现有 `dashboard-pages.tsx`；在线更新仍只需原有运行文件，不需 CDN、额外资源下载或在手机安装 npm 包。`editor/` 为构建源码、锁定依赖及许可证，非运行依赖。
 
+## 1.5.176 更新
+
+- 修复更换绘制层后的 CPU 卡片点击范围回归：在完整卡片 padding 和背景之后添加原生透明点击面，显式矩形 contentShape，覆盖标题、曲线、数值及留白；不再依赖底层 WebView 将点击交给父级。
+- 只有具有 onOpen 的主页 CPU 卡片添加覆盖层，详情和其他非交互卡不变；保留 Canvas 动画，不添加拖动手势。
+- 本地验证覆盖层顺序、完整基底边界、单次入口回调及无入口卡片不覆盖；实际触摸与滚动仍需 iPhone 验收。
+
 ## 1.5.175 更新
 
 - 实际替换主页与 CPU 详情共用的曲线绘制层：不再使用 50ms 原生状态更新和整张 SVG 位图替换；改为内嵌 Canvas 与 requestAnimationFrame，仅新采样跨原生桥接。卡片、全部逻辑核、数值和弹窗导航保持原生。
