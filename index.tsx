@@ -5,7 +5,7 @@ import { newHistory, appendHistory, OverviewHistory } from "./openwrt-metrics"
 import { rootToolbar } from "./root-toolbar"
 import { prefetchMoreVersions, prefetchProxies, prefetchRules, prefetchConnections, ProxiesPage, ConnectionsPage, RulesPage, GroupSection, MorePage as DashboardMorePage } from "./dashboard-pages"
 import {
-  AppEvents, Animation, Transition, Button, ForEach, Form, HStack, Label, Navigation, NavigationLink, NavigationStack, Picker, Script, Section, SecureField, Spacer,
+  AppEvents, Animation, Transition, Button, ForEach, Form, HStack, Label, LongPressGesture, Navigation, NavigationLink, NavigationStack, Picker, Script, Section, SecureField, Spacer,
   Image, Menu, RoundedRectangle, Circle, ScrollView, SVG, Text, ZStack, modifiers, TextField, Toggle, VStack, TabView, Tab, useObservable, useEffect, useState, useMemo,
 } from "scripting"
 import {
@@ -749,7 +749,7 @@ function SettingsPage({ active, onChanged }: { active: Controller | null; onChan
     <Section listRowBackground={panelRowBackground()} header={<HStack><Text>OpenWrt</Text><Spacer /><Text font={12} foregroundStyle="secondaryLabel">{`v${VERSION}`}</Text></HStack>}>
       {list.map(c => <NavigationLink key={c.id} destination={<EditController initial={c} onDone={reload} />}
           trailingSwipeActions={{ allowsFullSwipe: false, actions: [<Button title="删除" tint="systemRed" action={() => remove(c.id)} />] }}>
-          <VStack alignment="leading" onLongPressGesture={() => setRevealed([...revealed, c.id])}><Text>{c.name}</Text>{controllerHealth[c.id] === false && !revealed.includes(c.id)
+          <VStack alignment="leading" frame={{maxWidth:"infinity",alignment:"leading"}} simultaneousGesture={LongPressGesture().onEnded(() => setRevealed(ids => ids.includes(c.id) ? ids : [...ids, c.id]))}><Text>{c.name}</Text>{controllerHealth[c.id] === false && !revealed.includes(c.id)
             ? <Text font={12} foregroundStyle="secondaryLabel">连接失败 · 长按展开地址</Text>
             : <Text font={12} foregroundStyle="secondaryLabel">{maskUrl(c.url)}</Text>}</VStack>
         </NavigationLink>)}
