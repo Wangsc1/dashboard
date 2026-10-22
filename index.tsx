@@ -319,7 +319,7 @@ function OverviewPage({ active, version, onSwitch, onClose, selected = true }: {
     // Status is an overlay: only the single title participates in toolbar layout,
     // so adding the subtitle does not lift the title above other tabs' baseline.
     principal: <Text font={17} fontWeight="semibold" overlay={{alignment:"bottom",content:
-      <HStack spacing={4} offset={{y:14}}><Circle fill={statusColor} frame={{ width: 5, height: 5 }} /><Text font={11} foregroundStyle={statusColor}>{statusText}</Text></HStack>
+      <HStack spacing={4} offset={{x:0,y:14}}><Circle fill={statusColor} frame={{ width: 5, height: 5 }} /><Text font={11} foregroundStyle={statusColor}>{statusText}</Text></HStack>
     }}>{active?.name||"OpenWrt 状态"}</Text> }), [active, onSwitch, onClose, statusText, statusColor])
   if (!active) return <Form navigationTitle="dashboard" navigationBarTitleDisplayMode="inline" toolbar={toolbar} onAppear={() => setVisible(true)} onDisappear={() => setVisible(false)}><NoController /></Form>
   const closeCpu=(value:boolean)=>{setCpuOpen(value);if(!value)setVisible(true)}
