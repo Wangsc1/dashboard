@@ -606,6 +606,12 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
   await test('运行日志UI：四级过滤、搜索、刷新、复制全部与清空确认', async () => {
     pref.clearLogs(); pref.recordEvent('start', true); pref.recordEvent('login', false)
     let tree = render(ui.LogsPage, {}, true), menu = trailing(tree.props.toolbar)
+    assert.equal(nodes(tree, 'Section').length, 1)
+    assert.ok(!text(tree).includes('条日志 · 当前'))
+    const children = nodes(tree, 'Section')[0].props.children
+    const toggleIndex = children.findIndex(n => n.type === 'Toggle')
+    assert.equal(children[toggleIndex + 1].type, 'VStack')
+    assert.equal(pref.getLogs().length, 2)
     assert.equal(nodes(menu, 'Button').length, 8)
     await button(menu, '复制全部').props.action(); assert.ok(clipboard.includes('路由器登录失败'))
     context.confirmResult = false; await button(menu, '清空日志').props.action(); assert.equal(pref.getLogs().length, 2)
@@ -695,7 +701,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) { const lazy = ['proxies','rules','connections'].includes(ids[i]) && ids[i] !== id; assert.equal(nodes(tree, types[i]).length, lazy ? 0 : 1); if (!lazy) assert.equal(nodes(tree, types[i])[0].props.selected, ids[i] === id) }
     }
-    assert.equal(api.VERSION, '1.5.195'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.5.196'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('独立导航栈保留业务owner和身份，只有选中页提供可见工具栏', () => {
     pref.savePreferences({ defaultPage: 'overview' })
@@ -1729,7 +1735,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       const diagnostic = logs.filter(x => x.startsWith('[preferences-icon]'))
       for (const stage of ['change','accepted','proxies-render','group-render']) assert.ok(diagnostic.some(x => x.includes('stage=' + stage) && x.includes('enabled=false')))
       assert.ok(diagnostic.every(x => !x.includes('private.invalid') && !x.includes('private-group-name') && !x.includes('secret-')))
-      assert.ok(diagnostic.every(x => x.includes('build=1.5.195') && /instance=[a-z0-9]+/.test(x)))
+      assert.ok(diagnostic.every(x => x.includes('build=1.5.196') && /instance=[a-z0-9]+/.test(x)))
       assert.equal(new Set(diagnostic.map(x => x.match(/instance=([^ ]+)/)[1])).size, 1)
     } finally { context.console = originalConsole; unmount(); pref.savePreferences({ customIcons: true, testURL: 'https://www.gstatic.com/generate_204' }) }
   })
