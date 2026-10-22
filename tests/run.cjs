@@ -163,28 +163,28 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
   })
   await test('阈值双滑块：固定滑轨与稳定回调、不能交叉、结束保存及失败回滚', async () => {
     pref.savePreferences({ delayGreen: 240, delayRed: 500 })
-    function track(tree) { return nodes(tree, 'GeometryReader')[0].props.children[0]({ size: { width: 744 } }) }
+    function track(tree) { return nodes(tree, 'GeometryReader')[0].props.children[0]({ size: { width: 500 } }) }
     const event = (start, x, y = 0) => ({ startLocation: { x: start, y: 28 }, translation: { width: x, height: y } })
     let tree = render(ui.ThresholdRange, {}, true); await flush()
     const initial = track(tree), gesture = initial.props.onDragGesture
     assert.equal(nodes(initial, 'ZStack').filter(x => x.props.onDragGesture).length, 1)
     assert.equal(nodes(initial, 'Circle').filter(x => x.props.onDragGesture).length, 0)
     assert.equal(nodes(initial, 'RoundedRectangle')[0].props.fill.colors.join(','), 'systemGreen,systemYellow,systemOrange,systemRed')
-    gesture.onChanged(event(162, 100)); tree = render(ui.ThresholdRange, {}); await flush()
+    gesture.onChanged(event(240, 100)); tree = render(ui.ThresholdRange, {}); await flush()
     assert.ok(text(tree).includes('340–500 ms')); assert.equal(pref.getPreferences().delayGreen, 240)
     assert.equal(track(tree).props.onDragGesture, gesture)
     assert.equal(track(tree).props.offset, undefined)
-    gesture.onEnded(event(162, 100)); assert.equal(pref.getPreferences().delayGreen, 340)
+    gesture.onEnded(event(240, 100)); assert.equal(pref.getPreferences().delayGreen, 340)
     tree = render(ui.ThresholdRange, {}); await flush()
-    gesture.onChanged(event(422, 500)); tree = render(ui.ThresholdRange, {}); await flush()
-    gesture.onEnded(event(422, 500)); assert.equal(pref.getPreferences().delayRed, 800)
+    gesture.onChanged(event(500, 500)); tree = render(ui.ThresholdRange, {}); await flush()
+    gesture.onEnded(event(500, 500)); assert.equal(pref.getPreferences().delayRed, 500)
     tree = render(ui.ThresholdRange, {}); await flush()
-    gesture.onEnded(event(262, 0, 100)); assert.equal(pref.getPreferences().delayGreen, 340)
-    failStorage = true; gesture.onChanged(event(262, -400)); gesture.onEnded(event(262, -400)); failStorage = false
-    tree = render(ui.ThresholdRange, {}); await flush(); assert.ok(text(tree).includes('340–800 ms')); assert.equal(pref.getPreferences().delayGreen, 340)
-    for (const which of ['green','red']) for (const v of [-10000,100,240,500,800,10000]) {
+    gesture.onEnded(event(340, 0, 100)); assert.equal(pref.getPreferences().delayGreen, 340)
+    failStorage = true; gesture.onChanged(event(340, -400)); gesture.onEnded(event(340, -400)); failStorage = false
+    tree = render(ui.ThresholdRange, {}); await flush(); assert.ok(text(tree).includes('340–500 ms')); assert.equal(pref.getPreferences().delayGreen, 340)
+    for (const which of ['green','red']) for (const v of [-10000,0,100,240,500,800,10000]) {
       const pair = ui.thresholdPair(240, 500, which, v)
-      assert.ok(pair.delayGreen >= 100 && pair.delayGreen < pair.delayRed && pair.delayRed <= 800)
+      assert.ok(pair.delayGreen >= 0 && pair.delayGreen < pair.delayRed && pair.delayRed <= 500)
     }
     unmount(); pref.savePreferences({ delayGreen: 240, delayRed: 500 })
     const global = render(pages.ProxyTestSettings, {}, true)
@@ -197,13 +197,13 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     scripting.useState = (...args) => { const [v, setter] = original(...args); return [v, n => { paints++; setter(n) }] }
     try {
       let tree = render(ui.ThresholdRange, {}, true); await flush(); paints = 0
-      const gesture = nodes(tree, 'GeometryReader')[0].props.children[0]({ size: { width: 744 } }).props.onDragGesture
+      const gesture = nodes(tree, 'GeometryReader')[0].props.children[0]({ size: { width: 500 } }).props.onDragGesture
       for (let i = 1; i <= 100; i++) {
         now += 1
-        gesture.onChanged({ startLocation: { x: 162, y: 28 }, translation: { width: i, height: 0 } })
+        gesture.onChanged({ startLocation: { x: 240, y: 28 }, translation: { width: i, height: 0 } })
       }
       assert.ok(paints <= 4, String(paints)); assert.equal(pref.getPreferences().delayGreen, 240)
-      gesture.onEnded({ startLocation: { x: 162, y: 28 }, translation: { width: 100, height: 0 } })
+      gesture.onEnded({ startLocation: { x: 240, y: 28 }, translation: { width: 100, height: 0 } })
       assert.equal(pref.getPreferences().delayGreen, 340)
       tree = render(ui.ThresholdRange, {}); await flush(); assert.ok(text(tree).includes('340–500 ms'))
     } finally { unmount(); scripting.useState = original; pref.savePreferences({ delayGreen: 240, delayRed: 500 }) }
@@ -234,10 +234,17 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
   await test('阈值轨道独立固定占位，绘制不越界；测速链接独立行并与超时分隔', () => {
     let tree = render(ui.ThresholdRange, {}, true)
     const slot = tree.props.children[1]
-    assert.equal(slot.type, 'VStack'); assert.equal(slot.props.frame.height, 56)
+    assert.equal(slot.type, 'VStack'); assert.equal(slot.props.frame.height, 28)
     const geometry = nodes(slot, 'GeometryReader')[0]
-    const track = geometry.props.children[0]({ size: { width: 340, height: 56 } })
+    const track = geometry.props.children[0]({ size: { width: 340, height: 28 } })
     assert.equal(track.props.alignment, 'topLeading')
+    assert.equal(track.props.frame.alignment, 'topLeading')
+    assert.equal(tree.props.spacing, 12)
+    assert.equal(track.props.children[0].props.offset.x, 0)
+    assert.equal(track.props.children[0].props.frame.width, 340)
+    assert.deepEqual(JSON.parse(JSON.stringify(ui.thresholdPair(150, 249, 'green', -1))), { delayGreen: 0, delayRed: 249 })
+    assert.deepEqual(JSON.parse(JSON.stringify(ui.thresholdPair(150, 249, 'red', 900))), { delayGreen: 150, delayRed: 500 })
+    const before = pref.getPreferences(); pref.savePreferences({ delayGreen: 0, delayRed: 500 }); assert.equal(pref.getPreferences().delayGreen, 0); pref.savePreferences(before)
     for (const shape of track.props.children) {
       assert.ok(shape.props.offset.y >= 0)
       assert.ok(shape.props.offset.y + shape.props.frame.height <= slot.props.frame.height)
@@ -735,7 +742,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) { const lazy = ['proxies','rules','connections'].includes(ids[i]) && ids[i] !== id; assert.equal(nodes(tree, types[i]).length, lazy ? 0 : 1); if (!lazy) assert.equal(nodes(tree, types[i])[0].props.selected, ids[i] === id) }
     }
-    assert.equal(api.VERSION, '1.5.198'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.5.199'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('独立导航栈保留业务owner和身份，只有选中页提供可见工具栏', () => {
     pref.savePreferences({ defaultPage: 'overview' })
@@ -1769,7 +1776,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       const diagnostic = logs.filter(x => x.startsWith('[preferences-icon]'))
       for (const stage of ['change','accepted','proxies-render','group-render']) assert.ok(diagnostic.some(x => x.includes('stage=' + stage) && x.includes('enabled=false')))
       assert.ok(diagnostic.every(x => !x.includes('private.invalid') && !x.includes('private-group-name') && !x.includes('secret-')))
-      assert.ok(diagnostic.every(x => x.includes('build=1.5.198') && /instance=[a-z0-9]+/.test(x)))
+      assert.ok(diagnostic.every(x => x.includes('build=1.5.199') && /instance=[a-z0-9]+/.test(x)))
       assert.equal(new Set(diagnostic.map(x => x.match(/instance=([^ ]+)/)[1])).size, 1)
     } finally { context.console = originalConsole; unmount(); pref.savePreferences({ customIcons: true, testURL: 'https://www.gstatic.com/generate_204' }) }
   })

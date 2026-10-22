@@ -77,9 +77,9 @@ export function Range({ title, value, min, max, step = 1, suffix = "", divider =
 
 export function thresholdPair(green: number, red: number, handle: "green" | "red", value: number) {
   const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, Math.round(n)))
-  const g = clamp(green, 100, 799), r = clamp(red, g + 1, 800)
-  return handle === "green" ? { delayGreen: clamp(value, 100, r - 1), delayRed: r }
-    : { delayGreen: g, delayRed: clamp(value, g + 1, 800) }
+  const g = clamp(green, 0, 499), r = clamp(red, g + 1, 500)
+  return handle === "green" ? { delayGreen: clamp(value, 0, r - 1), delayRed: r }
+    : { delayGreen: g, delayRed: clamp(value, g + 1, 500) }
 }
 export function ThresholdRange() {
   const p = usePreferences(["delayGreen", "delayRed"])
@@ -90,7 +90,7 @@ export function ThresholdRange() {
     type Event = { startLocation: { x: number; y: number }; translation: { width: number; height: number } }
     const state = { width: 1, handle: null as "green" | "red" | null, base: draft, pair: draft, lastPaint: -Infinity,
       gesture: {} as { minDistance: number; onChanged: (e: Event) => void; onEnded: (e: Event) => void } }
-    const position = (n: number) => 22 + (Math.max(100, Math.min(800, n)) - 100) / 700 * state.width
+    const position = (n: number) => Math.max(0, Math.min(500, n)) / 500 * state.width
     function move(e: Event, final = false) {
       if (!state.handle) {
         if (Math.abs(e.translation.height) > Math.abs(e.translation.width)) return
@@ -99,8 +99,8 @@ export function ThresholdRange() {
         state.handle = Math.abs(e.startLocation.x - position(state.base.delayGreen)) <= Math.abs(e.startLocation.x - position(state.base.delayRed)) ? "green" : "red"
       }
       const key = state.handle === "green" ? "delayGreen" : "delayRed"
-      const start = Math.max(100, Math.min(800, state.base[key]))
-      const next = thresholdPair(state.base.delayGreen, state.base.delayRed, state.handle, start + e.translation.width / state.width * 700)
+      const start = Math.max(0, Math.min(500, state.base[key]))
+      const next = thresholdPair(state.base.delayGreen, state.base.delayRed, state.handle, start + e.translation.width / state.width * 500)
       state.pair = next
       // Coalesce high-rate native callbacks; no timers, disk writes, feedback or
       // global preference notifications while the finger is moving.
@@ -123,21 +123,21 @@ export function ThresholdRange() {
       drag.pair = next; setDraft(next)
     }
   }, [p.delayGreen, p.delayRed])
-  return <VStack alignment="leading" spacing={18} padding={{ vertical: 8 }} listRowSeparator="hidden">
+  return <VStack alignment="leading" spacing={12} padding={{ vertical: 8 }} listRowSeparator="hidden">
     <HStack><Text>延迟阈值范围</Text><Spacer /><Text foregroundStyle="secondaryLabel">{`${draft.delayGreen}–${draft.delayRed} ms`}</Text></HStack>
-    <VStack spacing={0} frame={{ height: 56 }}>
+    <VStack spacing={0} frame={{ height: 28 }}>
     <GeometryReader>{(proxy: { size: { width: number } }) => {
-      const width = Math.max(1, proxy.size.width - 44)
+      const width = Math.max(1, proxy.size.width)
       drag.width = width
-      const x = (n: number) => 22 + (Math.max(100, Math.min(800, n)) - 100) / 700 * width
-      return <ZStack alignment="topLeading" frame={{ width: proxy.size.width, height: 56 }} background="clear" onDragGesture={drag.gesture}>
-        <RoundedRectangle cornerRadius={2} fill={gradient("linear", { colors: ["systemGreen", "systemYellow", "systemOrange", "systemRed"], startPoint: "leading", endPoint: "trailing" })} frame={{ width, height: 4 }} offset={{ x: 22, y: 26 }} />
-        {(["green", "red"] as const).map(handle => <Circle key={handle} fill="white" stroke={{ shapeStyle: "#DDDDDD", strokeStyle: { lineWidth: 0.5 } }} frame={{ width: 26, height: 26 }} offset={{ x: x(handle === "green" ? draft.delayGreen : draft.delayRed) - 13, y: 15 }} />)}
+      const x = (n: number) => Math.max(0, Math.min(500, n)) / 500 * width
+      return <ZStack alignment="topLeading" frame={{ width: proxy.size.width, height: 28, alignment: "topLeading" }} background="clear" onDragGesture={drag.gesture}>
+        <RoundedRectangle cornerRadius={2} fill={gradient("linear", { colors: ["systemGreen", "systemYellow", "systemOrange", "systemRed"], startPoint: "leading", endPoint: "trailing" })} frame={{ width, height: 4 }} offset={{ x: 0, y: 12 }} />
+        {(["green", "red"] as const).map(handle => <Circle key={handle} fill="white" stroke={{ shapeStyle: "#DDDDDD", strokeStyle: { lineWidth: 0.5 } }} frame={{ width: 26, height: 26 }} offset={{ x: x(handle === "green" ? draft.delayGreen : draft.delayRed) - 13, y: 1 }} />)}
       </ZStack>
     }}</GeometryReader>
     </VStack>
     <Text font={12} foregroundStyle="tertiaryLabel">{`低于${draft.delayGreen}ms显示为绿色，${draft.delayGreen}ms到${draft.delayRed}ms之间显示为黄色，高于${draft.delayRed}ms或超时显示为红色。`}</Text>
-    {p.delayGreen < 100 || p.delayRed > 800 ? <Text font={12} foregroundStyle="secondaryLabel">当前保留原阈值；首次拖动将调整到100–800 ms范围。</Text> : null}
+    {p.delayGreen < 0 || p.delayRed > 500 ? <Text font={12} foregroundStyle="secondaryLabel">当前保留原阈值；首次拖动将调整到0–500 ms范围。</Text> : null}
   </VStack>
 }
 

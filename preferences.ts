@@ -27,7 +27,7 @@ export function traceIconPreference(stage: "change" | "accepted" | "global-rende
   try {
     const raw = Storage.get<Partial<Preferences>>(KEY)
     const stored = typeof raw?.customIcons === "boolean" ? raw.customIcons : "unavailable"
-    console.log(`[preferences-icon] build=1.5.198 instance=${preferenceInstance} revision=${preferenceRevision} stage=${stage} enabled=${enabled} snapshot=${getPreferences().customIcons} stored=${stored}`)
+    console.log(`[preferences-icon] build=1.5.199 instance=${preferenceInstance} revision=${preferenceRevision} stage=${stage} enabled=${enabled} snapshot=${getPreferences().customIcons} stored=${stored}`)
   } catch { console.log("[preferences-icon] diagnostic-unavailable") }
 }
 export function preferenceTrace(stage: string) { console.log(`[preferences] revision=${preferenceRevision} ${stage}`) }
@@ -48,7 +48,7 @@ export function normalizePreferences(raw: Partial<Preferences>): Preferences {
   for (const [k, choices] of Object.entries({ theme: ["system", "light", "dark"], connectionStyle: ["standard", "compact"], proxyStyle: ["list", "compact"], defaultPage: ["overview", "proxies", "rules", "connections", "more"], nodeSort: ["default", "name", "nameDesc", "delay", "delayDesc"] })) {
     if (!choices.includes((p as any)[k])) (p as any)[k] = (DEFAULTS as any)[k]
   }
-  for (const [k, min, max] of [["requestTimeout", 1, 30], ["testTimeout", 1000, 10000], ["logLimit", 100, 2000], ["delayGreen", 1, 9999], ["delayRed", 1, 10000]] as [keyof Preferences, number, number][]) {
+  for (const [k, min, max] of [["requestTimeout", 1, 30], ["testTimeout", 1000, 10000], ["logLimit", 100, 2000], ["delayGreen", 0, 9999], ["delayRed", 1, 10000]] as [keyof Preferences, number, number][]) {
     if (!Number.isInteger(p[k]) || Number(p[k]) < min || Number(p[k]) > max) (p as any)[k] = DEFAULTS[k]
   }
   if (p.delayGreen >= p.delayRed) { p.delayGreen = DEFAULTS.delayGreen; p.delayRed = DEFAULTS.delayRed }
