@@ -1,7 +1,7 @@
 import { HStack, VStack, Text, Image, RoundedRectangle, Spacer, ScrollView, LazyVStack, SVG, ZStack, Device, NavigationStack, modifiers, useState, useEffect, useMemo, GeometryReader, useColorScheme } from "scripting"
 import { Overview, WrtInfo, fmtBytes, fmtSpeed, fmtUptime } from "./api"
 import { CpuUsage, OverviewHistory } from "./openwrt-metrics"
-import { CHART_HISTORY, PlotPoint, animateChart, scrollPoints, smoothPath } from "./chart"
+import { CHART_HISTORY, animateChart, scrollPoints, smoothPath } from "./chart"
 export const HOME_BG = "systemBackground"
 const INK="label",PANEL="secondarySystemBackground"
 export function HomeCard({children,onOpen}:{children?:any;onOpen?:()=>void}) {
@@ -9,12 +9,7 @@ export function HomeCard({children,onOpen}:{children?:any;onOpen?:()=>void}) {
     modifiers={modifiers().frame({minWidth:0,maxWidth:"infinity",alignment:"leading"}).padding(16).background(<RoundedRectangle cornerRadius={14} fill={PANEL}/>)}>{children}</VStack>
 }
 export function MetricNumber({value,unit="",pointSize=16,tone="label",digits=0,running=true}:{running?:boolean;value?:number;unit?:string;pointSize?:number;tone?:any;digits?:number}) {
-  const target=value===undefined||!Number.isFinite(value)?"--":value.toFixed(digits)
-  const [shown,setShown]=useState(target),[track]=useState({value:target,unit,at:Date.now()})
-  useEffect(()=>{const end=Number(target),start=Number(track.value),now=Date.now();if(!running||target==='--'||!Number.isFinite(start)||track.unit!==unit){track.value=target;track.unit=unit;track.at=now;setShown(target);return}if(track.value===target)return
-    const span=Math.max(300,Math.min(2500,now-track.at));track.at=now
-    const t=setInterval(()=>{const p=Math.min(1,(Date.now()-now)/span),v=(start+(end-start)*(p*p*(3-2*p))).toFixed(digits);track.value=v;setShown(v);if(p===1)clearInterval(t)},16);return()=>clearInterval(t)
-  },[target,unit,running])
+  const shown=value===undefined||!Number.isFinite(value)?"--":value.toFixed(digits)
   return <Text font={pointSize} fontWeight="semibold" foregroundStyle={tone} lineLimit={1} minimumScaleFactor={0.65}>{`${shown}${unit}`}</Text>
 }
 // One SVG, same rendering boundary as 1.5.166. The existing shared 50ms scheduler supplies
@@ -24,48 +19,25 @@ const SIZED=typeof SCREEN_W==="number"&&SCREEN_W>112&&SCREEN_W<=600
 export const PLOT_FULL_W:number|undefined=SIZED?SCREEN_W-64:undefined
 export const PLOT_HALF_W:number|undefined=SIZED?(SCREEN_W-48)/2-32:undefined
 export const PLOT_STROKE=1.5
-export function GridPlot({samples,tone,plotHeight=96,area=false,running=true,percent=false,plotWidth,stableSamples=false}:{samples:number[];tone:string;plotHeight?:number;area?:boolean;running?:boolean;percent?:boolean;plotWidth?:number;stableSamples?:boolean}) {
+export function GridPlot({samples,tone,plotHeight=96,area=false,running=true,percent=false,plotWidth}:{samples:number[];tone:string;plotHeight?:number;area?:boolean;running?:boolean;percent?:boolean;plotWidth?:number}) {
   const [visible,setVisible]=useState(false)
-  // Detail-only: a fresh array with identical values is not a new visual frame.
-  // Keep homepage reference-based behavior unchanged. At most 60 numbers are compared.
-  const sampleKey=useMemo(()=>stableSamples?samples.slice(-CHART_HISTORY).join(","):samples,[samples,stableSamples])
-  const values=useMemo(()=>samples.slice(-CHART_HISTORY).filter(Number.isFinite),[sampleKey])
+  const values=useMemo(()=>samples.slice(-CHART_HISTORY).filter(Number.isFinite),[samples])
   const enabled=running&&visible
   const W=plotWidth!==undefined&&Number.isFinite(plotWidth)&&plotWidth>0?plotWidth:336,H=plotHeight
-  const [track]=useState({previous:values,current:values,enabled,at:Date.now(),duration:1000,animating:false,
-    shown:null as null|{points:PlotPoint[];scale:number;done:boolean;svg:string;tone:string;area:boolean;W:number;H:number},
-    motion:null as null|{origin:PlotPoint[];from:PlotPoint[];to:PlotPoint[];scaleFrom:number;scaleTo:number}})
+  const [track]=useState({previous:values,current:values,enabled,at:Date.now(),duration:1000,animating:false})
   const [tick,setTick]=useState(Date.now())
   // Prepare endpoints BEFORE rendering the new sample, so its first frame is progress=0,
   // never an intermediate target-frame jump before an effect runs. No state setter here.
   if(track.current!==values||track.enabled!==enabled){
     const now=Date.now(),changed=track.current!==values
-    const reset=!enabled||!track.enabled||!values.length||values.length<track.current.length||(stableSamples&&!track.current.length)
-    track.motion=null
-    if(stableSamples&&changed&&!reset&&values.length>=2&&track.shown){
-      // Retarget from the last SVG actually produced, NOT the unfinished old target.
-      // At a completed window remove only the off-window outgoing knot; the visible
-      // geometry is the canonical current history. During interruption keep every knot.
-      const origin=track.shown.done?scrollPoints(track.current,track.current,0,W):track.shown.points
-      const target=scrollPoints(values,values,0,W)
-      const to=track.current.length===CHART_HISTORY&&values.length===CHART_HISTORY?[{x:-W/(CHART_HISTORY-1),value:track.current[0]},...target]:target
-      const count=Math.max(origin.length,to.length)
-      // At most 61 geometry knots. Repeating the right endpoint is a zero-length
-      // segment, not an invented sample; this preserves shape while history grows.
-      const pad=(ps:PlotPoint[])=>Array.from({length:count},(_,i)=>ps[Math.min(i,ps.length-1)])
-      track.motion={origin,from:pad(origin),to:pad(to),scaleFrom:track.shown.scale,scaleTo:percent?100:Math.max(1024,...values)}
-    }
+    const reset=!enabled||!track.enabled||!values.length||values.length<track.current.length
     track.previous=reset?values:track.current
     track.current=values;track.enabled=enabled
-    // Detail samples arrive on the existing 1s poll. Content dedupe can skip many
-    // visual updates: that idle interval is NOT the duration of the next transition.
-    track.duration=stableSamples?1000:Math.max(500,Math.min(1500,now-track.at||1000))
+    track.duration=Math.max(500,Math.min(1500,now-track.at||1000))
     track.at=now;track.animating=changed&&!reset&&values.length>=2
   }
   useEffect(()=>{
-    // Detail p0 already renders synchronously; a same-time tick only caused an
-    // extra setter/render with identical geometry. Homepage timing is unchanged.
-    if(!stableSamples)setTick(Date.now())
+    setTick(Date.now())
     if(!track.animating)return
     return animateChart(at=>{setTick(at);return at<track.at+track.duration})
   },[values,enabled])
@@ -78,17 +50,12 @@ export function GridPlot({samples,tone,plotHeight=96,area=false,running=true,per
   // previous retains the outgoing sample even when source history has already trimmed to 60.
   const code=useMemo(()=>{
     const current=track.current===values?track.current:values,previous=track.current===values?track.previous:values
-    const motion=stableSamples?track.motion:null
-    // An interrupted retarget p0 is exactly the already-produced frame. Reuse
-    // its SVG, rather than rebuilding the exact same path string again.
-    if(motion&&p===0&&track.shown?.points===motion.origin&&track.shown.tone===tone&&track.shown.area===area&&track.shown.W===W&&track.shown.H===H)return track.shown.svg
-    const points=motion?(p===0?motion.origin:motion.from.map((a,i)=>({x:a.x+(motion.to[i].x-a.x)*p,value:a.value+(motion.to[i].value-a.value)*p}))):scrollPoints(previous,current,p,W)
-    const scale=motion?motion.scaleFrom+(motion.scaleTo-motion.scaleFrom)*p:scales.from+(scales.to-scales.from)*p
+    const points=scrollPoints(previous,current,p,W)
+    const scale=scales.from+(scales.to-scales.from)*p
     const line=values.length<2?"":smoothPath(points,H,scale,2),first=points[0],last=points[points.length-1]
     const fill=area&&line&&first&&last?`<path d="${line} L ${last.x},${H} L ${first.x},${H} Z" fill="${tone}" fill-opacity="0.10"/>`:""
     const stroke=line?`<path d="${line}" fill="none" stroke="${tone}" stroke-width="${PLOT_STROKE}" stroke-linecap="round"/>`:""
     const svg=staticSvg.head+fill+stroke+staticSvg.tail
-    if(stableSamples)track.shown={points,scale,done:p===1||!track.animating,svg,tone,area,W,H}
     return svg
   },[values,track.previous,track.current,p,staticSvg,tone,area,scales])
   return <SVG code={code} resizable frame={plotWidth!==undefined?{width:W,height:H}:{height:H}} onAppear={()=>setVisible(true)} onDisappear={()=>setVisible(false)}/>
@@ -97,7 +64,7 @@ export function CpuBreakdown({cpu,running}:{cpu?:CpuUsage;running:boolean}) {
   return <HStack spacing={0} alignment="bottom"><HStack spacing={22}>{([['SYS',cpu?.system],['USER',cpu?.user],['STEAL',cpu?.steal]] as const).map(([title,value])=><VStack key={title} alignment="leading" spacing={3}><Text font={10} fontWeight="semibold" foregroundStyle="secondaryLabel" lineLimit={1}>{title}</Text><MetricNumber value={value} digits={1} pointSize={14} running={running}/></VStack>)}</HStack><Spacer/><HStack alignment="lastTextBaseline" spacing={2}><MetricNumber running={running} value={cpu?.usage} digits={1} pointSize={22} tone="#3485eb"/><Text font={11} foregroundStyle="#3485eb">%</Text></HStack></HStack>
 }
 export function CpuCard({w,history,running,onOpen,detail=false}:{w?:WrtInfo;history:number[];running:boolean;onOpen?:()=>void;detail?:boolean}) {
-  return <HomeCard onOpen={onOpen}><HStack><Text font={detail?15:16} fontWeight="semibold">{detail?w?.cpuModel||"CPU 型号未提供":"CPU"}</Text><Spacer/>{!detail?<Text font={11} foregroundStyle="#3485eb" padding={{horizontal:8,vertical:4}} background={<RoundedRectangle cornerRadius={8} fill={{light:"#edf5ff",dark:"#24374d"}}/>}>{w?.temperature===undefined?"-- °C":`${w.temperature.toFixed(1)} °C`}</Text>:null}</HStack><GridPlot samples={history} tone="#3485eb" percent running={running} plotWidth={PLOT_FULL_W} stableSamples={detail}/><CpuBreakdown cpu={w?.cpus?.find(c=>c.id==='cpu')} running={running&&!detail}/></HomeCard>
+  return <HomeCard onOpen={onOpen}><HStack><Text font={detail?15:16} fontWeight="semibold">{detail?w?.cpuModel||"CPU 型号未提供":"CPU"}</Text><Spacer/>{!detail?<Text font={11} foregroundStyle="#3485eb" padding={{horizontal:8,vertical:4}} background={<RoundedRectangle cornerRadius={8} fill={{light:"#edf5ff",dark:"#24374d"}}/>}>{w?.temperature===undefined?"-- °C":`${w.temperature.toFixed(1)} °C`}</Text>:null}</HStack><GridPlot samples={history} tone="#3485eb" percent running={running} plotWidth={PLOT_FULL_W}/><CpuBreakdown cpu={w?.cpus?.find(c=>c.id==='cpu')} running={running&&!detail}/></HomeCard>
 }
 export function TrafficCard({heading,rate,total,history,tone,running}:{heading:string;rate?:number;total?:number;history:number[];tone:string;running:boolean}) {
   const parts=rate===undefined?undefined:fmtSpeed(rate).split(' '),value=parts?Number(parts[0]):undefined,unit=parts?" "+parts.slice(1).join(' '):""
@@ -188,7 +155,7 @@ export function CoreRow({cpus,w,histories,running}:{cpus:CpuUsage[];w?:WrtInfo;h
 }
 // Per-core plots share GridPlot and the single scheduler; no per-core timer.
 export function SampledCpuPlot({samples,running=false}:{samples:number[];running?:boolean}) {
-  return <GridPlot samples={samples} tone="#2dbf82" percent plotHeight={76} running={running} plotWidth={PLOT_HALF_W} stableSamples/>
+  return <GridPlot samples={samples} tone="#2dbf82" percent plotHeight={76} running={running} plotWidth={PLOT_HALF_W}/>
 }
 export function DetailCpuSummary({w,history,running}:{w?:WrtInfo;history:number[];running:boolean}) {
   const [visible,setVisible]=useState(false)

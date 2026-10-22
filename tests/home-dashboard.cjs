@@ -103,11 +103,11 @@ function fixture(url,init){if(url.endsWith('/cgi-bin/cgi-download'))return {stat
    const sc=nodes(sheet,'ScrollView')[0];assert.equal(sc.props.toolbar,undefined);assert.equal(nodes(sheet,'Button').length,0);assert.equal(sheet.props.presentationDragIndicator,'visible')
    const core=home.CoreCard({cpu:{id:'cpu2'},history:[],running:false});assert.ok(text(core).includes('-- MHz'));assert.ok(text(core).includes('-- KB'))
  })
- await test('数字/曲线动画平滑更新且遮挡停止、单位切换不跨量级插值、卸载清理',async()=>{
-   let p={value:10,unit:' MB/s',running:true,digits:1};render(home.MetricNumber,p,true);await flush();now+=1000;render(home.MetricNumber,{...p,value:20});await flush();assert.equal([...intervals.values()].filter(x=>x.ms===16).length,1)
-   now+=500;for(const t of [...intervals.values()])t.fn();let n=render(home.MetricNumber,{...p,value:20});assert.ok(Number(text(n).split(' ')[0])>10);assert.ok(Number(text(n).split(' ')[0])<20)
-   n=render(home.MetricNumber,{...p,value:20,running:false});await flush();assert.equal(intervals.size,0);n=render(home.MetricNumber,{...p,value:20,running:false});assert.ok(text(n).startsWith('20.0'))
-   render(home.MetricNumber,{value:1,unit:' GB/s',running:true,digits:1});await flush();assert.equal(intervals.size,0);unmount()
+ await test('所有数值逐采样直接显示，无数字timer；曲线保持SVG',async()=>{
+   for(const running of [true,false])for(const value of [10,20,0,undefined,NaN]){
+     const n=render(home.MetricNumber,{value,unit:'%',digits:1,running},true);await flush()
+     assert.equal(text(n),(value===undefined||!Number.isFinite(value)?'--':value.toFixed(1))+'%');assert.equal(intervals.size,0);unmount()
+   }
    const chart=render(home.GridPlot,{samples:[10,20,40],tone:'#3485eb',percent:true,running:true},true);await flush();assert.equal(intervals.size,0);assert.equal(chart.type,'SVG');unmount()
  })
  await test('CPU sheet开关/后台/切Tab: 单轮询、详情共享样本、旧来源不覆盖',async()=>{
