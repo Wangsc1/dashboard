@@ -1,3 +1,4 @@
+import { useDetailPage, routerDetailsStatus } from "./router-details"
 import { cadenceSummary } from "./cadence-diagnostics"
 import { ScrollView, Button, Circle, GeometryReader, ZStack, RoundedRectangle, gradient, Form, HStack, Image, Menu, Picker, Section, Spacer, Text, TextField, Toggle, VStack, useEffect, useState } from "scripting"
 import { Controller, ClashConfig, LOG_LEVELS, loadConfig, cachedKernelConfig, forgetKernelConfig, patchConfig, validateConfigPatch } from "./api"
@@ -361,17 +362,23 @@ function CloudSettingsPage() {
 }
 const LEVELS: [LogLevel, string, string][] = [["info", "信息", "systemBlue"], ["success", "成功", "systemGreen"], ["warning", "警告", "systemOrange"], ["error", "错误", "systemRed"]]
 export function LogsPage() {
+  const page=useDetailPage()
   const p = usePreferences(["logLimit", "detailedAPI"])
   const [logs, setLogs] = useState<AppLog[]>(getLogs()), [query, setQuery] = useState(""), [search, setSearch] = useState(false), [levels, setLevels] = useState<LogLevel[]>(LEVELS.map(x => x[0]))
-  useEffect(() => { const t = setInterval(() => setLogs(getLogs()), 2000); return () => clearInterval(t) }, [])
+  useEffect(()=>{
+    let timer:ReturnType<typeof setInterval>|undefined
+    const visible=(shown:boolean)=>{if(timer!==undefined)clearInterval(timer);timer=shown?setInterval(()=>{if(page.visible&&page.alive)setLogs(getLogs())},2000):undefined}
+    page.listeners.add(visible);visible(page.visible)
+    return()=>{page.listeners.delete(visible);visible(false)}
+  },[page])
   const shown = logs.filter(l => levels.includes(l.level) && (!query || (l.title + l.detail + l.category).toLowerCase().includes(query.toLowerCase()))).slice().reverse()
   async function clear() { if (await Dialog.confirm({ title: "清空运行日志", message: "将删除本脚本的全部应用日志，无法撤销。", confirmLabel: "清空" })) { clearLogs(); setLogs([]) } }
-  return <Form background="systemBackground" scrollContentBackground="hidden" navigationTitle="运行日志" navigationBarTitleDisplayMode="inline" toolbar={{ topBarTrailing: <Menu label={<Image systemName="ellipsis.circle" />}>
+  return <Form onAppear={page.onAppear} onDisappear={page.onDisappear} background="systemBackground" scrollContentBackground="hidden" navigationTitle="运行日志" navigationBarTitleDisplayMode="inline" toolbar={{ topBarTrailing: <Menu label={<Image systemName="ellipsis.circle" />}>
     <Button title={search ? "隐藏搜索" : "搜索日志"} systemImage="magnifyingglass" action={() => setSearch(!search)} />
     {LEVELS.map(([v, title]) => <Button key={v} title={`${levels.includes(v) ? "✓ " : ""}${title}`} action={() => setLevels(s => s.includes(v) ? s.filter(x => x !== v) : [...s, v])} />)}
     <Button title="刷新" systemImage="arrow.clockwise" action={() => setLogs(getLogs())} />
     <Button title="复制全部" systemImage="doc.on.doc" action={async () => { try { await Pasteboard.setString(exportLogs()); await Dialog.alert({ message: "已复制全部日志（不受筛选影响）" }) } catch { await Dialog.alert({ message: "复制失败" }) } }} />
-    <Button title="复制停顿诊断" systemImage="doc.on.doc" action={async()=>{try{await Pasteboard.setString(cadenceSummary());await Dialog.alert({message:"已复制本次运行的安全计时摘要；无需开启详细 API 日志"})}catch{await Dialog.alert({message:"复制失败"})}}} />
+    <Button title="复制停顿诊断" systemImage="doc.on.doc" action={async()=>{try{await Pasteboard.setString(cadenceSummary()+"\n"+routerDetailsStatus());await Dialog.alert({message:"已复制本次运行的安全计时摘要；无需开启详细 API 日志"})}catch{await Dialog.alert({message:"复制失败"})}}} />
     <Button title="清空日志" systemImage="trash" action={clear} />
   </Menu> }}>
     <Section listRowBackground={panelRowBackground()} header={<Text>运行日志设置</Text>}><Range title="最大记录条数" min={100} max={2000} step={100} value={p.logLimit} onChanged={n => update({ logLimit: n })} /><Toggle title="记录详细 API 请求" value={p.detailedAPI} onChanged={(v: boolean) => update({ detailedAPI: v })} />

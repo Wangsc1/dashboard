@@ -1,5 +1,5 @@
 import { beginCadenceDiagnostics, timingToken, timing } from "./cadence-diagnostics"
-import { detailReads, useRouterDetail, peekDetail, prefetchRouterDetails, detailWrite, observeDetailsPhase, selectDetailsSource } from "./router-details"
+import { detailReads, useDetailPage, useRouterDetail, peekDetail, prefetchRouterDetails, detailWrite, observeDetailsPhase, selectDetailsSource } from "./router-details"
 import { HOME_BG, HomeDashboard, CpuDetails, LiveCpuDetails, CpuDetailFrame } from "./home-ui"
 import { newHistory, appendHistory, OverviewHistory } from "./openwrt-metrics"
 import { rootToolbar } from "./root-toolbar"
@@ -336,8 +336,9 @@ function OverviewPage({ active, version, onSwitch, onClose, selected = true }: {
 }
 
 function WrtInterfacesPage({ active, version }: { active: Controller; version: number }) {
-  const {value:list,error:err}=useRouterDetail(active,"interfaces",()=>detailReads.interfaces(active),version,5000)
-  return <Form background="systemBackground" scrollContentBackground="hidden" navigationTitle="网络接口" navigationBarTitleDisplayMode="inline">
+  const page=useDetailPage()
+  const {value:list,error:err}=useRouterDetail(active,"interfaces",()=>detailReads.interfaces(active),version,5000,page)
+  return <Form onAppear={page.onAppear} onDisappear={page.onDisappear} background="systemBackground" scrollContentBackground="hidden" navigationTitle="网络接口" navigationBarTitleDisplayMode="inline">
     {!list&&!err?<Text>正在读取…</Text>:null}
     {err ? <Section listRowBackground={panelRowBackground()}><Text foregroundStyle="systemRed">{err}</Text></Section> : null}
     <Section listRowBackground={panelRowBackground()}>
@@ -349,8 +350,9 @@ function WrtInterfacesPage({ active, version }: { active: Controller; version: n
   </Form>
 }
 function WrtLeasesPage({ active, version }: { active: Controller; version: number }) {
-  const {value:list,error:err}=useRouterDetail(active,"leases",()=>detailReads.leases(active),version,10000)
-  return <Form background="systemBackground" scrollContentBackground="hidden" navigationTitle={list ? `在线设备 (${list.length})` : "在线设备"} navigationBarTitleDisplayMode="inline">
+  const page=useDetailPage()
+  const {value:list,error:err}=useRouterDetail(active,"leases",()=>detailReads.leases(active),version,10000,page)
+  return <Form onAppear={page.onAppear} onDisappear={page.onDisappear} background="systemBackground" scrollContentBackground="hidden" navigationTitle={list ? `在线设备 (${list.length})` : "在线设备"} navigationBarTitleDisplayMode="inline">
     {!list&&!err?<Text>正在读取…</Text>:null}
     {err ? <Section listRowBackground={panelRowBackground()}><Text foregroundStyle="systemRed">{err}</Text></Section> : null}
     <Section listRowBackground={panelRowBackground()} footer={<Text>来自 DHCP 租约，不含静态地址设备。</Text>}>
@@ -377,15 +379,16 @@ function Field({ title, value, onChanged, keyboard }: { title: string; value: st
 
 const gi = (n: number) => (n / 1073741824).toFixed(2) + " GiB"
 function DockerPage({ active }: { active: Controller }) {
+  const page=useDetailPage()
   const [busy,setBusy]=useState(false),[tick,setTick]=useState(0)
-  const {value:ov,error:overviewError}=useRouterDetail(active,"docker",()=>detailReads.docker(active),tick)
-  const {value:list,error:err}=useRouterDetail(active,"containers",()=>detailReads.containers(active),tick)
-  const {value:images,error:imageError}=useRouterDetail(active,"images",()=>detailReads.images(active),tick)
+  const {value:ov,error:overviewError}=useRouterDetail(active,"docker",()=>detailReads.docker(active),tick,0,page)
+  const {value:list,error:err}=useRouterDetail(active,"containers",()=>detailReads.containers(active),tick,0,page)
+  const {value:images,error:imageError}=useRouterDetail(active,"images",()=>detailReads.images(active),tick,0,page)
   const act = (x: DockerContainer, action: "start" | "stop" | "restart", label: string) => {
     if (busy) return
     void guarded(setBusy, async () => { await confirmed(`${active.name} · ${x.name}`, `${label}容器；会影响该容器承载的服务。`, () => detailWrite(active,"docker",() => dockerAction(active, x.id, action))); setTick(t => t + 1) })
   }
-  return <Form background="systemBackground" scrollContentBackground="hidden" navigationTitle="Docker 管理" navigationBarTitleDisplayMode="inline">
+  return <Form onAppear={page.onAppear} onDisappear={page.onDisappear} background="systemBackground" scrollContentBackground="hidden" navigationTitle="Docker 管理" navigationBarTitleDisplayMode="inline">
     {!ov&&!overviewError?<Text>正在读取 Docker 概览…</Text>:null}
     {overviewError?<Text foregroundStyle="systemRed">{overviewError}</Text>:null}
     {!list&&!err?<Text>正在读取容器…</Text>:null}
@@ -462,14 +465,15 @@ function ImagePage({ active, x, onDone }: { active: Controller; x: DockerImage; 
 }
 
 function ContainerPage({ active, x }: { active: Controller; x: DockerContainer }) {
+  const page=useDetailPage()
   const dismiss = Navigation.useDismiss()
   const [tick,setTick]=useState(0)
-  const {value:d,error:err}=useRouterDetail(active,`container:${x.id}`,()=>loadContainerDetail(active,x.id),tick)
+  const {value:d,error:err}=useRouterDetail(active,`container:${x.id}`,()=>loadContainerDetail(active,x.id),tick,0,page)
   const [policy,setPolicy]=useState(()=>peekDetail<DockerContainerDetail>(active,`container:${x.id}`)?.policy??""),[orig,setOrig]=useState(policy),[busy,setBusy]=useState(false)
   useEffect(()=>{if(d&&policy===orig){setPolicy(d.policy);setOrig(d.policy)}},[d])
   const op = (label: string, effect: string, fn: () => Promise<any>, leave = false) => guarded(setBusy, async () => { if (await confirmed(`${active.name} · ${x.name}`, effect, fn)) { if (leave) dismiss(); else setTimeout(() => setTick(t => t + 1), 800) } })
   const save = () => guarded(setBusy, async () => { await confirmed(`${active.name} · ${x.name}`, `将重启策略改为 ${policy}，不重启容器。`, () => detailWrite(active,"docker",() => saveContainerPolicy(active, x.id, policy))); setOrig(policy) })
-  return <Form background="systemBackground" scrollContentBackground="hidden" navigationTitle={x.name} navigationBarTitleDisplayMode="inline">
+  return <Form onAppear={page.onAppear} onDisappear={page.onDisappear} background="systemBackground" scrollContentBackground="hidden" navigationTitle={x.name} navigationBarTitleDisplayMode="inline">
     {!d&&!err?<Text>正在读取…</Text>:null}
     {err ? <Section listRowBackground={panelRowBackground()}><Text foregroundStyle="systemRed">{err}</Text></Section> : null}
     {d ? <Section listRowBackground={panelRowBackground()} header={<Text>容器概览</Text>}>
@@ -500,7 +504,8 @@ function ContainerPage({ active, x }: { active: Controller; x: DockerContainer }
 }
 
 function DockerSettingsPage({ active }: { active: Controller }) {
-  const {value:remote,error:err}=useRouterDetail(active,"dockerSettings",()=>detailReads.dockerSettings(active))
+  const page=useDetailPage()
+  const {value:remote,error:err}=useRouterDetail(active,"dockerSettings",()=>detailReads.dockerSettings(active),0,0,page)
   const source=overviewSource(active)
   const [edit,setEdit]=useState(()=>({source,value:peekDetail<DockerSettings>(active,"dockerSettings")??null})),[busy,setBusy]=useState(false)
   const [dirtySource,setDirtySource]=useState("")
@@ -509,7 +514,7 @@ function DockerSettingsPage({ active }: { active: Controller }) {
   useEffect(()=>{if(remote&&dirtySource!==source)setS(remote)},[remote,source])
   const set = (k: keyof DockerSettings, v: string) => {setDirtySource(source);setS(o => o ? { ...o, [k]: v } : o)}
   const save = () => s && guarded(setBusy, async () => { await confirmed(`${active.name} · dockerd`, "保存后将重启 Docker 服务，所有容器会短暂中断。", () => detailWrite(active,"docker",() => saveDockerSettings(active, s))) })
-  return <Form background="systemBackground" scrollContentBackground="hidden" navigationTitle="Docker 参数" navigationBarTitleDisplayMode="inline">
+  return <Form onAppear={page.onAppear} onDisappear={page.onDisappear} background="systemBackground" scrollContentBackground="hidden" navigationTitle="Docker 参数" navigationBarTitleDisplayMode="inline">
     {!s&&!err?<Text>正在读取…</Text>:null}
     {err ? <Section listRowBackground={panelRowBackground()}><Text foregroundStyle="systemRed">{err}</Text></Section> : null}
     {s ? <Section listRowBackground={panelRowBackground()} header={<Text>常规</Text>} footer={<Text>数据目录为只读（改动会让现有容器消失）。保存会重启 Docker。</Text>}>
@@ -528,14 +533,15 @@ function DockerSettingsPage({ active }: { active: Controller }) {
 }
 
 function FrpPage({ active }: { active: Controller }) {
+  const page=useDetailPage()
   const [busy,setBusy]=useState(false),[tick,setTick]=useState(0)
-  const {value:info,error:err}=useRouterDetail(active,"frp",()=>detailReads.frp(active),tick)
+  const {value:info,error:err}=useRouterDetail(active,"frp",()=>detailReads.frp(active),tick,0,page)
   const act = (action: "start" | "stop" | "restart", label: string) => {
     if (busy) return
     void guarded(setBusy, async () => { await confirmed(`${active.name} · frpc`, `${label} frp 客户端；穿透服务会短暂中断。`, () => detailWrite(active,"frp",() => frpAction(active, action))); setTimeout(() => setTick(t => t + 1), 1500) })
   }
   const reload = () => setTimeout(() => setTick(t => t + 1), 1500)
-  return <Form background="systemBackground" scrollContentBackground="hidden" navigationTitle="FRP 管理" navigationBarTitleDisplayMode="inline">
+  return <Form onAppear={page.onAppear} onDisappear={page.onDisappear} background="systemBackground" scrollContentBackground="hidden" navigationTitle="FRP 管理" navigationBarTitleDisplayMode="inline">
     {!info&&!err?<Text>正在读取…</Text>:null}
     {err ? <Section listRowBackground={panelRowBackground()}><Text foregroundStyle="systemRed">{err}</Text></Section> : null}
     {info ? <Section listRowBackground={panelRowBackground()} header={<Text>服务</Text>}>
@@ -603,11 +609,12 @@ function PkgRow({ p, actions }: { p: Pkg; actions: any[] }) {
 }
 
 function SoftwarePage({ active }: { active: Controller }) {
+  const page=useDetailPage()
   const [tab, setTab] = useState<"available" | "installed" | "updates">("installed")
   const [q, setQ] = useState(""), [url, setUrl] = useState(""), [limit, setLimit] = useState(100), [busy, setBusy] = useState(false), [err, setErr] = useState(""), [log, setLog] = useState(""), [tick, setTick] = useState(0)
-  const {value:installedData,error:installedError}=useRouterDetail(active,"installed",()=>detailReads.installed(active),tick)
-  const {value:available,error:availableError}=useRouterDetail(active,"available",()=>detailReads.available(active),tick)
-  const {value:diskData}=useRouterDetail(active,"disk",()=>detailReads.disk(active),tick)
+  const {value:installedData,error:installedError}=useRouterDetail(active,"installed",()=>detailReads.installed(active),tick,0,page)
+  const {value:available,error:availableError}=useRouterDetail(active,"available",()=>detailReads.available(active),tick,0,page)
+  const {value:diskData}=useRouterDetail(active,"disk",()=>detailReads.disk(active),tick,0,page)
   const installed=installedData??[]
   const disk=diskData?`${Math.round(diskData.used/diskData.size*100)}% 已用（${mib(diskData.used)} / ${mib(diskData.size)}，剩余 ${mib(diskData.avail)}）`:""
   const updates = available ? upgradablePkgs(installed, available) : []
@@ -622,7 +629,7 @@ function SoftwarePage({ active }: { active: Controller }) {
     ? [...(p.upgradeTo ? [<Button title="升级" tint="systemBlue" action={() => run(p.name, `升级到 ${p.upgradeTo}；可能重启相关服务。`, () => detailWrite(active,"software",() => pkgUpgrade(active, [p.name])))} />] : []),
        <Button title="卸载" tint="systemRed" action={() => run(p.name, "卸载软件包及其不再需要的依赖；可能导致依赖它的功能失效。", () => detailWrite(active,"software",() => pkgRemove(active, [p.name])))} />]
     : [<Button title="安装" tint="systemBlue" action={() => run(p.name, "下载并安装；会改动系统。", () => detailWrite(active,"software",() => pkgInstall(active, [p.name])))} />]
-  return <Form background="systemBackground" scrollContentBackground="hidden" navigationTitle="软件管理" navigationBarTitleDisplayMode="inline">
+  return <Form onAppear={page.onAppear} onDisappear={page.onDisappear} background="systemBackground" scrollContentBackground="hidden" navigationTitle="软件管理" navigationBarTitleDisplayMode="inline">
     {installedError||availableError?<Text foregroundStyle="systemRed">{installedError||availableError}</Text>:null}
     {err ? <Section listRowBackground={panelRowBackground()}><Text foregroundStyle="systemRed">{err}</Text></Section> : null}
     <Section listRowBackground={panelRowBackground()} header={<Text>磁盘空间</Text>} footer={<Text>软件包操作可能破坏系统，请谨慎。</Text>}><Text foregroundStyle="secondaryLabel">{disk || (diskData===undefined?"正在读取…":"-")}</Text></Section>

@@ -14,6 +14,7 @@ export type DetailKey = keyof typeof detailReads | `container:${string}`
 type Entry = { value?: any; pending?: Promise<any>; epoch:number; readers?: Set<()=>boolean>; requestPhase?:number }
 const snapshots = new Map<string, Map<string,Entry>>()
 const invalidations=new Set<(source:string,key:string)=>void>()
+let mountedPages=0,visiblePages=0
 let foreground = true, selectedSource = '', phaseEpoch = 0, working = 0, owners = 0
 const queue: Array<{run:()=>Promise<void>;cancel:()=>void;valid:()=>boolean}> = []
 function entry(c:Controller,key:string):Entry {
@@ -100,32 +101,68 @@ export function prefetchRouterDetails(c:Controller){
   schedule()
   return ()=>{alive=false;AppEvents.scenePhase.removeListener(changed);release();pump()}
 }
-// Visible pages refresh silently, retaining a real cached snapshot on failure.
-// Source-gated render prevents a same-id URL/auth change flashing old data.
-export function useRouterDetail<T>(c:Controller,key:DetailKey,read:()=>Promise<T>,revision=0,ms=0){
-  const source=api.overviewSource(c)
-  const [state,setState]=useState(()=>({source,value:peekDetail<T>(c,key),error:''}))
+// Native navigation can retain a mounted destination while it is covered or
+// being popped. Visibility, not eventual component disposal, owns page reads.
+export function useDetailPage(){
+  const [page]=useState(()=>{
+    const listeners=new Set<(visible:boolean)=>void>()
+    const state={visible:true,alive:true,counted:false,listeners,onAppear:()=>{},onDisappear:()=>{}}
+    const change=(visible:boolean)=>{if(!state.alive||state.visible===visible)return;state.visible=visible;if(state.counted)visiblePages+=visible?1:-1;for(const fn of listeners)fn(visible)}
+    state.onAppear=()=>change(true);state.onDisappear=()=>change(false)
+    return state
+  })
   useEffect(()=>{
-    const release=own(c);let alive=true,busy=false
-    setState({source,value:peekDetail<T>(c,key),error:''})
-    const refresh=async()=>{
-      if(!alive||busy||!foreground)return
-      busy=true
-      const began=phaseEpoch,version=entry(c,key).epoch
-      try{const value=await readDetail(c,key,read,()=>alive);if(alive&&api.overviewSource(c)===source)setState({source,value,error:''})}
-      catch(error){if(alive&&api.overviewSource(c)===source)setState(s=>({...s,error:String((error as any)?.message??error)}))}
-      finally{busy=false;if(alive&&foreground&&(began!==phaseEpoch||version!==entry(c,key).epoch))void refresh()}
+    mountedPages++;page.counted=true;if(page.visible)visiblePages++
+    return()=>{page.onDisappear();page.alive=false;page.listeners.clear();page.counted=false;mountedPages--}
+  },[page])
+  return page
+}
+// Explicitly copied with the existing safe timing summary; counters only, no
+// resource keys/identities or per-navigation persistent logging.
+export function routerDetailsStatus(){
+  let readers=0;for(const resources of snapshots.values())for(const resource of resources.values())readers+=resource.readers?.size??0
+  return `路由器详情生命周期（查看时）：已挂载页=${mountedPages} 可见页=${visiblePages} 前台=${foreground?1:0} 读取槽=${working}/2 排队=${queue.length} 读者=${readers} 数据订阅=${invalidations.size}`
+}
+type DetailPage=ReturnType<typeof useDetailPage>
+// Cached first frame is immediate. Hidden pages retain that frame but detach
+// timers/subscriptions/readers synchronously, before native transitions finish.
+export function useRouterDetail<T>(c:Controller,key:DetailKey,read:()=>Promise<T>,revision=0,ms=0,page?:DetailPage){
+  const source=api.overviewSource(c)
+  const [state,setState]=useState(()=>({source,key,value:peekDetail<T>(c,key),error:''}))
+  useEffect(()=>{
+    let stop=()=>{}
+    const start=()=>{
+      stop()
+      const release=own(c),resource=entry(c,key);let alive=true,busy=false
+      const valid=()=>alive
+      setState({source,key,value:peekDetail<T>(c,key),error:''})
+      const refresh=async()=>{
+        if(!alive||busy||!foreground)return
+        busy=true
+        const began=phaseEpoch,version=resource.epoch
+        try{const value=await readDetail(c,key,read,valid);if(alive&&api.overviewSource(c)===source)setState({source,key,value,error:''})}
+        catch(error){if(alive&&api.overviewSource(c)===source)setState(s=>({...s,error:String((error as any)?.message??error)}))}
+        finally{busy=false;if(alive&&foreground&&(began!==phaseEpoch||version!==resource.epoch))void refresh()}
+      }
+      const changed=(phase:'active'|'inactive'|'background')=>{if(phase==='active')void refresh()}
+      const invalidated=(changedSource:string,changedKey:string)=>{
+        if(changedSource===source&&changedKey===key){setState({source,key,value:undefined,error:''});void refresh()}
+      }
+      AppEvents.scenePhase.addListener(changed);invalidations.add(invalidated)
+      void refresh();const timer=ms?setInterval(refresh,ms):undefined
+      stop=()=>{
+        if(!alive)return
+        alive=false;resource.readers?.delete(valid)
+        invalidations.delete(invalidated);if(timer!==undefined)clearInterval(timer)
+        AppEvents.scenePhase.removeListener(changed);release();pump()
+      }
     }
-    const changed=(phase:'active'|'inactive'|'background')=>{if(phase==='active')void refresh()}
-    AppEvents.scenePhase.addListener(changed)
-    const invalidated=(changedSource:string,changedKey:string)=>{
-      if(changedSource===source&&changedKey===key){setState({source,value:undefined,error:''});void refresh()}
-    }
-    invalidations.add(invalidated)
-    void refresh();const timer=ms?setInterval(refresh,ms):undefined
-    return()=>{alive=false;invalidations.delete(invalidated);if(timer!==undefined)clearInterval(timer);AppEvents.scenePhase.removeListener(changed);release()}
-  },[source,key,revision])
-  return state.source===source?state:{source,value:peekDetail<T>(c,key),error:''}
+    const visible=(shown:boolean)=>{if(shown)start();else stop()}
+    page?.listeners.add(visible)
+    if(!page||page.visible)start()
+    return()=>{page?.listeners.delete(visible);stop()}
+  },[source,key,revision,page])
+  return state.source===source&&state.key===key?state:{source,key,value:peekDetail<T>(c,key),error:''}
 }
 // Invalidating after the existing confirmed write completes (even a partially
 // failed mutation) leaves its
