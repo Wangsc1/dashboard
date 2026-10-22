@@ -63,7 +63,7 @@ function load(name) {
   const file = path.join(root, name + (name === 'index' || name === 'settings-ui' || name === 'dashboard-pages' || name === 'root-toolbar' || name === 'home-ui' || name === 'plot-view' ? '.tsx' : '.ts'))
   let source = fs.readFileSync(file, 'utf8')
   if (name === 'index') source = source.replace(/\nrun\(\)\s*$/, '') + '\nexport { EditController, OverviewPage, InfoItem, SettingsPage, ConnectionsPage, ProxiesPage, RulesPage, Spark, RateChart, StatCard, GroupSection, MorePage, Root, AppearanceRoot };'
-  if (name === 'settings-ui') source += '\nexport { Choice, Range, TestURLField };'
+  if (name === 'settings-ui') source += '\nexport { Choice };'
   const code = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020, jsx: ts.JsxEmit.React, jsxFactory: 'h' } }).outputText
   const module = { exports: {} }; cache.set(name, module.exports)
   vm.runInNewContext('(function(require,module,exports){' + code + '\n})', context, { filename: file })(n => n === 'scripting' ? scripting : load(n), module, module.exports)
@@ -151,10 +151,10 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, ui.Choice).find(n => n.props.title === '外观模式').props.value, theme)
       assert.equal(pref.getPreferences().theme, theme)
     }
-    tree = render(ui.GlobalConfigPage, props, true); await flush()
+    tree = render(pages.ProxyTestSettings, {}, true); await flush()
     for (const timeout of [2, 8, 15, 3]) {
       nodes(tree, ui.Range).find(n => n.props.title === '连接超时时间').props.onChanged(timeout)
-      tree = render(ui.GlobalConfigPage, props); await flush()
+      tree = render(pages.ProxyTestSettings, {}); await flush()
       assert.equal(nodes(tree, ui.Range).find(n => n.props.title === '连接超时时间').props.value, timeout)
       assert.equal(pref.getPreferences().requestTimeout, timeout)
     }
@@ -187,7 +187,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.ok(pair.delayGreen >= 100 && pair.delayGreen < pair.delayRed && pair.delayRed <= 800)
     }
     unmount(); pref.savePreferences({ delayGreen: 240, delayRed: 500 })
-    const global = render(ui.GlobalConfigPage, { active: null }, true)
+    const global = render(pages.ProxyTestSettings, {}, true)
     assert.equal(nodes(global, ui.ThresholdRange).length, 1)
     assert.ok(!nodes(global, 'NavigationLink').some(x => text(x).includes('延迟阈值'))); unmount()
   })
@@ -221,7 +221,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     }
   })
   await test('全局配置：仅连接超时标题与滑块之间有分割线；设置行不隐藏系统分隔线；无图标', () => {
-    const tree = render(ui.GlobalConfigPage, { active: null }, true)
+    const tree = render(pages.ProxyTestSettings, {}, true)
     const ranges = nodes(tree, ui.Range)
     assert.equal(ranges.length, 2)
     assert.deepEqual(ranges.map(n => !!n.props.divider), [true, false])
@@ -231,14 +231,25 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     assert.ok(rendered.every(t => t.props.listRowSeparator !== 'hidden'))
     unmount()
   })
+  await test('代理页设置位于代理来源后，隐藏来源或无控制器仍可调整本地参数', () => {
+    const src = fs.readFileSync(path.join(root, 'dashboard-pages.tsx'), 'utf8')
+    const body = src.slice(src.indexOf('export function ProxiesPage'), src.indexOf('function ruleColor'))
+    assert.ok(body.indexOf('<ProxyTestSettings />') > body.indexOf('>代理来源</Text>'))
+    let tree = render(pages.ProxiesPage, { active: null, version: 0 }, true)
+    assert.equal(nodes(tree, pages.ProxyTestSettings).length, 1)
+    tree = render(pages.ProxyTestSettings, {}, true)
+    assert.ok(text(tree).indexOf('延迟阈值设置') < text(tree).indexOf('连接超时'))
+    assert.ok(text(tree).indexOf('连接超时') < text(tree).indexOf('测速设置'))
+    unmount()
+  })
   await test('全局配置移除主题/启动设置后，剩余分组顺序保持', () => {
     const tree = render(ui.GlobalConfigPage, { active: null }, true)
     const headers = nodes(tree, 'Section').map(n => text(n.props.header))
-    assert.equal(headers.join('|'), '缓存管理|控制器管理|交互体验|延迟阈值设置|连接超时|测速设置')
+    assert.equal(headers.join('|'), '缓存管理|控制器管理|交互体验')
     unmount()
   })
   await test('删除保存测速链接按钮；输入结束自动保存、拒绝无效值并显示失败', async () => {
-    const global = render(ui.GlobalConfigPage, { active: null }, true)
+    const global = render(pages.ProxyTestSettings, {}, true)
     assert.ok(!nodes(global, 'Button').some(x => x.props.title === '保存测速链接')); assert.equal(nodes(global, ui.TestURLField).length, 1)
     const before = pref.getPreferences().testURL
     let tree = render(ui.TestURLField, {}, true); await flush()
@@ -701,7 +712,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) { const lazy = ['proxies','rules','connections'].includes(ids[i]) && ids[i] !== id; assert.equal(nodes(tree, types[i]).length, lazy ? 0 : 1); if (!lazy) assert.equal(nodes(tree, types[i])[0].props.selected, ids[i] === id) }
     }
-    assert.equal(api.VERSION, '1.5.196'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.5.197'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('独立导航栈保留业务owner和身份，只有选中页提供可见工具栏', () => {
     pref.savePreferences({ defaultPage: 'overview' })
@@ -1363,10 +1374,10 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     const src = fs.readFileSync(path.join(root, 'settings-ui.tsx'), 'utf8'), body = src.slice(src.indexOf('export function GlobalConfigPage'), src.indexOf('function CloudSettingsPage'))
     assert.ok(!body.includes('iCloud 同步')); assert.ok(!body.includes('代理内核')); assert.ok(!body.includes('CloudSettingsPage')); assert.ok(!body.includes('KernelConfigPage')); assert.ok(src.includes('export function KernelConfigPage'))
   })
-  await test('全局配置移除外观入口，保留阈值与缓存管理', () => {
+  await test('全局配置移除外观与测速入口，保留缓存管理', () => {
     const src = fs.readFileSync(path.join(root, 'settings-ui.tsx'), 'utf8'), body = src.slice(src.indexOf('export function GlobalConfigPage'), src.indexOf('function CloudSettingsPage'))
     assert.ok(!body.includes('（本地替代）')); assert.ok(!body.includes('（长按组标题）')); assert.ok(!body.includes('（淡出替代）'))
-    for (const k of ['ThresholdRange','clearImageCache']) assert.ok(body.includes(k))
+    assert.ok(body.includes('clearImageCache')); for (const k of ['ThresholdRange','requestTimeout','testTimeout','TestURLField']) assert.ok(!body.includes(k))
     for (const k of ['theme','defaultPage','showHidden','customIcons']) assert.ok(!body.includes(k))
   })
   await test('设置子页打开时暂停主页偏好刷新，返回补齐；外观去掉编辑组图标', async () => {
@@ -1735,7 +1746,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       const diagnostic = logs.filter(x => x.startsWith('[preferences-icon]'))
       for (const stage of ['change','accepted','proxies-render','group-render']) assert.ok(diagnostic.some(x => x.includes('stage=' + stage) && x.includes('enabled=false')))
       assert.ok(diagnostic.every(x => !x.includes('private.invalid') && !x.includes('private-group-name') && !x.includes('secret-')))
-      assert.ok(diagnostic.every(x => x.includes('build=1.5.196') && /instance=[a-z0-9]+/.test(x)))
+      assert.ok(diagnostic.every(x => x.includes('build=1.5.197') && /instance=[a-z0-9]+/.test(x)))
       assert.equal(new Set(diagnostic.map(x => x.match(/instance=([^ ]+)/)[1])).size, 1)
     } finally { context.console = originalConsole; unmount(); pref.savePreferences({ customIcons: true, testURL: 'https://www.gstatic.com/generate_204' }) }
   })

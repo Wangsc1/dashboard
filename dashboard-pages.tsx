@@ -2,7 +2,7 @@ import { NikkiManagement, NikkiSubscription, NikkiRule, NikkiFile, NikkiManageme
 import { rootToolbar } from "./root-toolbar"
 import { AppEvents, Button, Divider, HStack, VStack, Text, Image, Circle, RoundedRectangle, Spacer, ScrollView, LazyVStack, NavigationLink, Menu, Picker, TextField, Toggle, Form, Section, Label, ProgressView, WebView, ZStack, modifiers, Safari, useState, useEffect } from "scripting"
 import { Controller, Group, Conn, Rule, Provider, loadGroups, testGroup, selectProxy, loadProviders, updateProvider, loadRules, loadConnections, closeConnection, closeAllConnections, fmtBytes, fmtSpeed, fmtUptime, delayColor, loadRuntimeVersions, loadNikkiRuntime, NikkiRuntime, verifyCoreRestart, lastControllerMode, loadConfig, setMode as setControllerMode, nikkiService, nikkiServiceStatus, coreAction, CoreAction, queryDNS, webpage } from "./api"
-import { usePreferences, KernelConfigPage, updatePreference, Choice } from "./settings-ui"
+import { usePreferences, KernelConfigPage, updatePreference, Choice, ThresholdRange, Range, TestURLField } from "./settings-ui"
 import { NODE_SORT_OPTIONS, savePreferences, cachedIcon, traceIconPreference, feedback } from "./preferences"
 import { selectable, sortedNodes, historyFor, filterConnections, clientLabels, saveClientLabel, sourceKey, confirmed } from "./dashboard-model"
 // BEGIN GENERATED NIKKI EDITOR
@@ -134,6 +134,17 @@ export function ProxyModeControl({c,enabled,version,onMode}:{c:Controller;enable
     {!session.loading&&!session.busy&&!session.mode?<Button title="重试读取代理模式" disabled={!enabled} action={()=>readMode()}/>:null}
   </VStack>
 }
+export function ProxyTestSettings() {
+  const p = usePreferences(["requestTimeout", "testTimeout"])
+  return <>
+    <HStack><Text font={20} fontWeight="bold" padding={{top:6}}>延迟阈值设置</Text><Spacer/></HStack>
+    <Card><ThresholdRange /></Card>
+    <HStack><Text font={20} fontWeight="bold" padding={{top:6}}>连接超时</Text><Spacer/></HStack>
+    <Card><Range title="连接超时时间" divider min={1} max={30} value={p.requestTimeout} suffix=" s" onChanged={n => updatePreference({ requestTimeout: n })} /></Card>
+    <HStack><Text font={20} fontWeight="bold" padding={{top:6}}>测速设置</Text><Spacer/></HStack>
+    <Card><TestURLField /><Range title="超时时间" min={1000} max={10000} step={100} value={p.testTimeout} suffix=" ms" onChanged={n => updatePreference({ testTimeout: n })} /></Card>
+  </>
+}
 const proxyCache=new Map<string,{groups:Group[];providers:Provider[]}>()
 export function ProxiesPage({active,version,onClose,selected=true}:{active:Controller|null;version:number;onClose?:()=>void;selected?:boolean}) {
   const p=usePreferences(),cacheKey=active?sourceKey(active):"",cached=proxyCache.get(cacheKey),[groups,setGroups]=useState<Group[]>(cached?.groups??[]),[providers,setProviders]=useState<Provider[]>(cached?.providers??[]),[loaded,setLoaded]=useState(!!cached),[err,setErr]=useState(""),[tick,setTick]=useState(0),[expanded,setExpanded]=useState(false),[showProviders,setShowProviders]=useState(true),[limit,setLimit]=useState(40),[visible,setVisible]=useState(selected),[confirmedMode,setConfirmedMode]=useState<{key:string;mode:string|null}>(()=>({key:cacheKey,mode:proxyModeCache.get(cacheKey)??null})),globalMode=confirmedMode.key===cacheKey&&confirmedMode.mode==="global"
@@ -144,7 +155,7 @@ export function ProxiesPage({active,version,onClose,selected=true}:{active:Contr
   const remote=providers.filter(x=>x.vehicleType.toLowerCase()==="http")
   const shownGroups=groups.filter(g=>g.name!=="GLOBAL"||p.showGlobal||globalMode)
   const menu=<Menu label={<Image systemName="ellipsis.circle"/>}><Picker title="节点排序" pickerStyle="menu" value={p.nodeSort} onChanged={(v:string)=>savePreferences({nodeSort:v as any})}>{NODE_SORT_OPTIONS.map(([key, label]) => <Text key={key} tag={key}>{label}</Text>)}</Picker><Toggle title="展示全部代理组" value={expanded} onChanged={setExpanded}/><Toggle title="显示代理来源" value={showProviders} onChanged={setShowProviders}/><Toggle title="显示隐藏组" value={p.showHidden} onChanged={(v:boolean)=>savePreferences({showHidden:v})}/><Toggle key="customIcons" title="显示图标" value={p.customIcons} onChanged={(v:boolean)=>updatePreference({customIcons:v})}/><Toggle key="disconnectOnSwitch" title="自动断开旧连接" value={p.disconnectOnSwitch} onChanged={(v:boolean)=>updatePreference({disconnectOnSwitch:v})}/></Menu>
-  return Shell({title:active?.name??"代理",toolbar:rootToolbar("proxies",onClose,menu),onAppear:()=>setVisible(true),onDisappear:()=>setVisible(false),children:<>{!active?<Empty/>:<><ProxyModeControl key={JSON.stringify(active)} c={active} enabled={selected&&visible} version={version} onMode={mode=>setConfirmedMode({key:cacheKey,mode})}/><HStack><Text font={20} fontWeight="bold" padding={{top:6}}>策略组</Text><Spacer/></HStack>{err?<Hint>{err}</Hint>:null}{!err&&loaded&&shownGroups.length===0?<Hint>未读取到策略组</Hint>:null}{shownGroups.slice(0,limit).map(g=><GroupSection key={g.name} c={active} g={g} expanded={expanded} onChanged={()=>setTick(t=>t+1)}/>)}<Pages hideCount limit={limit} total={shownGroups.length} more={()=>setLimit(limit+40)}/>{showProviders?<><HStack><Text font={20} fontWeight="bold" padding={{top:6}}>代理来源</Text><Spacer/></HStack>{remote.slice(0,limit).map(p=><ProviderCard key={p.name} c={active} p={p} kind="proxies" onChanged={()=>setTick(t=>t+1)}/>)}<Pages hideCount limit={limit} total={remote.length} more={()=>setLimit(limit+40)}/></>:null}</>}</>})
+  return Shell({title:active?.name??"代理",toolbar:rootToolbar("proxies",onClose,menu),onAppear:()=>setVisible(true),onDisappear:()=>setVisible(false),children:<>{!active?<Empty/>:<><ProxyModeControl key={JSON.stringify(active)} c={active} enabled={selected&&visible} version={version} onMode={mode=>setConfirmedMode({key:cacheKey,mode})}/><HStack><Text font={20} fontWeight="bold" padding={{top:6}}>策略组</Text><Spacer/></HStack>{err?<Hint>{err}</Hint>:null}{!err&&loaded&&shownGroups.length===0?<Hint>未读取到策略组</Hint>:null}{shownGroups.slice(0,limit).map(g=><GroupSection key={g.name} c={active} g={g} expanded={expanded} onChanged={()=>setTick(t=>t+1)}/>)}<Pages hideCount limit={limit} total={shownGroups.length} more={()=>setLimit(limit+40)}/>{showProviders?<><HStack><Text font={20} fontWeight="bold" padding={{top:6}}>代理来源</Text><Spacer/></HStack>{remote.slice(0,limit).map(p=><ProviderCard key={p.name} c={active} p={p} kind="proxies" onChanged={()=>setTick(t=>t+1)}/>)}<Pages hideCount limit={limit} total={remote.length} more={()=>setLimit(limit+40)}/></>:null}</>}<ProxyTestSettings /></>})
 }
 function ruleColor(type:string) { return /AND|OR|NOT|MATCH/.test(type)?"systemRed":/PROCESS/i.test(type)?"systemPurple":/IP|GEOIP/i.test(type)?"systemGreen":"systemBlue" }
 export function RulesPage({active,version,onClose,selected=true}:{active:Controller|null;version:number;onClose?:()=>void;selected?:boolean}) {

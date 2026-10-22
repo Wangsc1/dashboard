@@ -31,7 +31,7 @@ export { update as updatePreference, Choice }
 function Choice({ title, value, values, onChanged, disabled = false }: { title: string; value: string; values: string[][]; onChanged: (v: string) => void; disabled?: boolean }) {
   return <Picker title={title} pickerStyle="menu" value={value} onChanged={onChanged} disabled={disabled}>{values.map(([v, l]) => <Text key={v} tag={v}>{l}</Text>)}</Picker>
 }
-function Range({ title, value, min, max, step = 1, suffix = "", divider = false, onChanged }: { title: string; value: number; min: number; max: number; step?: number; suffix?: string; divider?: boolean; onChanged: (n: number) => void }) {
+export function Range({ title, value, min, max, step = 1, suffix = "", divider = false, onChanged }: { title: string; value: number; min: number; max: number; step?: number; suffix?: string; divider?: boolean; onChanged: (n: number) => void }) {
   const [draft, setDraft] = useState(value)
   const snap = (n: number) => Math.max(min, Math.min(max, min + Math.round((n - min) / step) * step))
   const [drag] = useState(() => {
@@ -307,7 +307,7 @@ export function KernelConfigPage({ c }: { c: Controller }) {
   </ScrollView>
 }
 
-function TestURLField() {
+export function TestURLField() {
   const p = usePreferences(["testURL"])
   const [url, setURL] = useState(() => p.testURL), [error, setError] = useState("")
   const [draft] = useState({ value: p.testURL, editing: false })
@@ -335,9 +335,6 @@ export function GlobalConfigPage({ active }: { active: Controller | null }) {
     <Section header={<Text>缓存管理</Text>}><Button title="清除图片缓存" action={clear} /></Section>
     <Section header={<Text>控制器管理</Text>}>{toggle("foldOffline", "自动折叠离线控制器")}</Section>
     <Section header={<Text>交互体验</Text>}>{toggle("haptics", "触感反馈")}</Section>
-    <Section header={<Text>延迟阈值设置</Text>}><ThresholdRange /></Section>
-    <Section header={<Text>连接超时</Text>}><Range title="连接超时时间" divider min={1} max={30} value={p.requestTimeout} suffix=" s" onChanged={n => update({ requestTimeout: n })} /></Section>
-    <Section header={<Text>测速设置</Text>}><TestURLField /><Range title="超时时间" min={1000} max={10000} step={100} value={p.testTimeout} suffix=" ms" onChanged={n => update({ testTimeout: n })} /></Section>
   </Form>
 }
 function CloudSettingsPage() {
