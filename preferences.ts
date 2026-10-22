@@ -27,7 +27,7 @@ export function traceIconPreference(stage: "change" | "accepted" | "global-rende
   try {
     const raw = Storage.get<Partial<Preferences>>(KEY)
     const stored = typeof raw?.customIcons === "boolean" ? raw.customIcons : "unavailable"
-    console.log(`[preferences-icon] build=1.7 instance=${preferenceInstance} revision=${preferenceRevision} stage=${stage} enabled=${enabled} snapshot=${getPreferences().customIcons} stored=${stored}`)
+    console.log(`[preferences-icon] build=1.8 instance=${preferenceInstance} revision=${preferenceRevision} stage=${stage} enabled=${enabled} snapshot=${getPreferences().customIcons} stored=${stored}`)
   } catch { console.log("[preferences-icon] diagnostic-unavailable") }
 }
 export function preferenceTrace(stage: string) { console.log(`[preferences] revision=${preferenceRevision} ${stage}`) }
@@ -156,12 +156,33 @@ export const controllerHealth: Record<string, boolean | undefined> = {}
 const IMAGE_INDEX = "dashboard_image_index_v140"
 let imageGeneration = 0
 const pendingIcons = new Map<string, Promise<any>>()
-export async function cachedIcon(url: string): Promise<any> {
-
+const decodedIcons = new Map<string, any>()
+function iconKey(url: string): string | null {
   if (!/^https:\/\//i.test(url) || /[?#]/.test(url) || /^https:\/\/[^/]*@/i.test(url)) return null
-  const key = "dashboard_image_v140_" + encodeURIComponent(url)
-  const data = Storage.getData(key)
-  if (data) return UIImage.fromData(data)
+  return "dashboard_image_v140_" + encodeURIComponent(url)
+}
+function rememberIcon(key: string, image: any) {
+  if (!image) return
+  if (!decodedIcons.has(key) && decodedIcons.size >= 100) decodedIcons.delete(decodedIcons.keys().next().value!)
+  decodedIcons.set(key, image)
+}
+// Synchronous, cache-only read for the first frame; validation is shared with downloads.
+export function readCachedIcon(url: string): any {
+  const key = iconKey(url)
+  if (!key) return null
+  if (decodedIcons.has(key)) return decodedIcons.get(key)
+  try {
+    const data = Storage.getData(key)
+    const image = data ? UIImage.fromData(data) : null
+    rememberIcon(key, image)
+    return image
+  } catch { return null }
+}
+export async function cachedIcon(url: string): Promise<any> {
+  const key = iconKey(url)
+  if (!key) return null
+  const image = readCachedIcon(url)
+  if (image) return image
   const pending = pendingIcons.get(key)
   if (pending) return pending
   const request = loadIcon(url, key, imageGeneration)
@@ -176,8 +197,9 @@ async function loadIcon(url: string, key: string, generation: number): Promise<a
   const bytes = await r.data()
   const image = UIImage.fromData(bytes)
   if (image && generation === imageGeneration) {
+    rememberIcon(key, image)
     let keys = Storage.get<string[]>(IMAGE_INDEX) ?? []
-    if (keys.length >= 100) { Storage.remove(keys[0]); keys = keys.slice(1) }
+    if (keys.length >= 100) { Storage.remove(keys[0]); decodedIcons.delete(keys[0]); keys = keys.slice(1) }
     if (Storage.set(IMAGE_INDEX, [...keys.filter(k => k !== key), key])) Storage.setData(key, bytes)
   }
   return image
@@ -187,6 +209,7 @@ export function clearImageCache() {
   // New reads must not join a pre-clear download. Its generation still prevents
   // stale bytes from being persisted when that download eventually completes.
   pendingIcons.clear()
+  decodedIcons.clear()
   const keys = Storage.get<string[]>(IMAGE_INDEX) ?? []
   for (const k of keys) if (k.startsWith("dashboard_image_v140_")) Storage.remove(k)
   Storage.remove(IMAGE_INDEX); recordEvent("cache", true)
