@@ -33,24 +33,13 @@ async function mount(){const node=render(plot.MountedCanvasPlot,props,true);awai
   host.handlers.plotReady();await flush();assert.equal(host.sent.length,0,'initial paint needs no evaluateJavaScript round trip')
   unmount();assert.equal(host.disposed,1);assert.equal(timeouts.size,0)
  })
- await test('诊断状态为原生文字，未知不冒充0；收到报告不重载或请求重绘',async()=>{
-  await mount();const host=hosts.at(-1)
-  let tree=render(plot.MountedCanvasPlot,props)
-  assert.ok(text(tree).includes('D183'));assert.ok(text(tree).includes('C:--'));assert.ok(text(tree).includes('JS:--'))
-  host.handlers.plotReady();host.handlers.plotDiagnostic({ms:2100,width:0,height:0,viewportWidth:0,viewportHeight:0,bitmapWidth:300,bitmapHeight:150,context:true,hidden:false,attempts:3,grids:0,frames:0,updates:2,samples:12,seq:2,active:true,error:''})
-  tree=render(plot.MountedCanvasPlot,props);assert.ok(text(tree).includes('C:0x0'));assert.ok(text(tree).includes('P:3 G:0 F:0 N:12 U:2'))
-  nodes(tree,'WebView')[0].props.onAppear();tree=render(plot.MountedCanvasPlot,props);assert.ok(text(tree).includes('A:1'))
-  assert.equal(host.loads,1);assert.equal(host.sent.length,0)
-  unmount();host.handlers.plotDiagnostic({ms:3000});assert.equal(host.disposed,1)
- })
- await test('诊断区为绘图区下方独立兄弟：不遮挡WebView且分配独立高度',async()=>{
-  const out=render(plot.MountedCanvasPlot,{...props,plotHeight:76},true)
-  assert.equal(out.type,'VStack');assert.equal(out.props.frame.height,132)
-  const [view,footer]=out.props.children
-  assert.equal(view.type,'WebView');assert.equal(view.props.frame.minHeight,76);assert.equal(view.props.frame.maxHeight,76)
-  assert.equal(footer.type,'VStack');assert.equal(footer.props.frame.height,56);assert.equal(footer.props.background,undefined)
-  assert.equal(nodes(out,'ZStack').length,0);assert.equal(view.props.overlay,undefined)
-  await flush();unmount()
+ await test('正式界面无诊断区、无额外高度、无报告处理器且默认关闭报告',async()=>{
+  for(const height of [66,76,96]){
+   const slot=render(plot.InlineCanvasPlot,{...props,plotHeight:height},true);assert.equal(slot.props.frame.height,height)
+   const out=render(plot.MountedCanvasPlot,{...props,plotHeight:height},true);assert.equal(out.type,'WebView');assert.equal(out.props.frame.minHeight,height);assert.equal(out.props.frame.maxHeight,height)
+   assert.equal(out.props.overlay,undefined);assert.equal(out.props.onAppear,undefined)
+   await flush();const host=hosts.at(-1);assert.equal(host.handlers.plotDiagnostic,undefined);assert.ok(host.html.includes('diagnosticEnabled=false'));unmount()
+  }
  })
  await test('准备好前合并采样；桥接串行；最新值接续；running=false同步',async()=>{
   await mount();const host=hosts.at(-1);assert.ok(host.html.includes('requestAnimationFrame'));assert.equal(host.sent.length,0)

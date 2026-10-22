@@ -50,6 +50,7 @@ const {chromium,webkit}=require(process.env.PLAYWRIGHT_PATH||'/tmp/neko-editor-b
    assert.equal(explicitResume.shown.at(-1).y,60);assert.equal(explicitResume.stats.liveLoops,0)
    // Actual canvas pixels exist, not merely a recorded drawing call.
    const pixels=await page.evaluate(()=>{const c=document.querySelector('canvas'),d=c.getContext('2d').getImageData(0,0,c.width,c.height).data;let n=0;for(let i=3;i<d.length;i+=4)if(d[i])n++;return n});assert.ok(pixels>0)
+   assert.equal(await page.evaluate(()=>window.diagnostics.length),0,'production/default runtime sends no diagnostic messages')
    // A newly mounted document paints its inline data before the ready callback,
    // with no native update/evaluate call needed for the first curve.
    const initial={seq:101,samples:[10,30,20],running:true,tone:'#3485eb',percent:true}
