@@ -24,8 +24,11 @@ async function mount(){const node=render(plot.MountedCanvasPlot,props,true);awai
  await test('绘制层就绪前WebView透明，避免白块闪现；就绪后显示',async()=>{
   let node=render(plot.MountedCanvasPlot,props,true);await flush();const host=hosts.at(-1)
   assert.equal(nodes(node,'WebView')[0].props.opacity,0)
+  const grid=nodes(node,'Canvas')[0];assert.ok(grid,'native grid shown before the WebView is ready')
+  const ops=[],ctx={setLineDash:a=>ops.push(['dash',a]),beginPath(){},moveTo:(x,y)=>ops.push(['m',x,y]),lineTo:(x,y)=>ops.push(['l',x,y]),stroke:()=>ops.push(['s'])}
+  grid.props.draw(ctx,{width:70,height:40});assert.equal(ctx.strokeStyle,'rgba(146,149,163,0.22)');assert.equal(ops.filter(o=>o[0]==='m').length,13);assert.equal(ops.filter(o=>o[0]==='l').length,13);assert.equal(JSON.stringify(ops[0]),'["dash",[3,3]]');assert.equal(JSON.stringify(ops.filter(o=>o[0]==='l')[7]),'["l",70,40]');assert.equal(JSON.stringify(ops.filter(o=>o[0]==='l')[12]),'["l",70,40]')
   host.handlers.plotReady();await flush();node=render(plot.MountedCanvasPlot,props)
-  assert.equal(nodes(node,'WebView')[0].props.opacity,1)
+  assert.equal(nodes(node,'WebView')[0].props.opacity,1);assert.equal(nodes(node,'Canvas').length,0)
  })
  await test('完全不发送原生出现事件：首屏仍创建并加载且只加载一次，首帧携带样本',async()=>{
   const slot=render(plot.InlineCanvasPlot,props,true)
@@ -42,7 +45,7 @@ async function mount(){const node=render(plot.MountedCanvasPlot,props,true);awai
  await test('正式界面无诊断区、无额外高度、无报告处理器且默认关闭报告',async()=>{
   for(const height of [66,76,96]){
    const slot=render(plot.InlineCanvasPlot,{...props,plotHeight:height},true);assert.equal(slot.props.frame.height,height)
-   const out=render(plot.MountedCanvasPlot,{...props,plotHeight:height},true);assert.equal(out.type,'WebView');assert.equal(out.props.frame.minHeight,height);assert.equal(out.props.frame.maxHeight,height)
+   const out=render(plot.MountedCanvasPlot,{...props,plotHeight:height},true);assert.equal(out.type,'ZStack');assert.equal(out.props.frame.minHeight,height);assert.equal(out.props.frame.maxHeight,height);const web=nodes(out,'WebView')[0];assert.equal(web.props.frame.minHeight,height);assert.equal(web.props.frame.maxHeight,height)
    assert.equal(out.props.overlay,undefined);assert.equal(out.props.onAppear,undefined)
    await flush();const host=hosts.at(-1);assert.equal(host.handlers.plotDiagnostic,undefined);assert.ok(host.html.includes('diagnosticEnabled=false'));unmount()
   }
