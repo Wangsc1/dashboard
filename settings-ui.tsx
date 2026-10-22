@@ -184,7 +184,7 @@ function HeaderFields({ icon }: { icon: any }) {
 }
 function NestedDelayRow({ icon }: { icon: any }) {
   const p = usePreferences(["nestedDelay"])
-  return <HStack spacing={12} padding={{ vertical: 12 }}>{icon}<Toggle title="嵌套代理组延迟显示" value={p.nestedDelay} onChanged={(v: boolean) => update({ nestedDelay: v })} frame={{ height: 31 }} /></HStack>
+  return <HStack spacing={12} padding={{ vertical: 12 }}>{icon}<Toggle title="套嵌代理组延迟" value={p.nestedDelay} onChanged={(v: boolean) => update({ nestedDelay: v })} frame={{ height: 31 }} /></HStack>
 }
 
 export function KernelConfigPage({ c }: { c: Controller }) {
