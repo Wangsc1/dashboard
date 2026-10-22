@@ -3,9 +3,9 @@ import { Overview, WrtInfo, fmtBytes, fmtSpeed, fmtUptime } from "./api"
 import { CpuUsage, OverviewHistory } from "./openwrt-metrics"
 export const HOME_BG = "systemBackground"
 const INK="label",PANEL="secondarySystemBackground"
-export function HomeCard({children,onOpen,stretchCard=false}:{children?:any;onOpen?:()=>void;stretchCard?:boolean}) {
+export function HomeCard({children,onOpen}:{children?:any;onOpen?:()=>void}) {
   return <VStack alignment="leading" spacing={12} foregroundStyle={INK} font={13} onTapGesture={onOpen}
-    modifiers={modifiers().frame({minWidth:0,maxWidth:"infinity",alignment:"leading",...(stretchCard?{maxHeight:"infinity" as const}:{})}).padding(16).background(<RoundedRectangle cornerRadius={14} fill={PANEL}/>)}>{children}</VStack>
+    modifiers={modifiers().frame({minWidth:0,maxWidth:"infinity",alignment:"leading"}).padding(16).background(<RoundedRectangle cornerRadius={14} fill={PANEL}/>)}>{children}</VStack>
 }
 export function MetricNumber({value,unit="",pointSize=16,tone="label",digits=0,running=true}:{running?:boolean;value?:number;unit?:string;pointSize?:number;tone?:any;digits?:number}) {
   const target=value===undefined||!Number.isFinite(value)?"--":value.toFixed(digits)
@@ -22,7 +22,7 @@ export function GridPlot({samples,tone,plotHeight=96,area=false,running=true,per
   const values=samples.slice(-60),top=percent?100:Math.max(1024,...values)
   const marks=useMemo(()=>values.map((value,i)=>({label:new Date((59-values.length+1+i)*1000),value,foregroundStyle:tone,interpolationMethod:"monotone" as const,lineStyle:{lineWidth:1.5,lineCap:"round" as const}})),[samples,tone])
   const grid={gridLine:{stroke:{lineWidth:0.5,dash:[3,3]}},tick:false,valueLabel:false}
-  return <Chart frame={{minWidth:0,maxWidth:"infinity",height:plotHeight}} chartLegend="hidden"
+  return <VStack spacing={0} modifiers={modifiers().frame({height:plotHeight}).frame({minWidth:0,maxWidth:"infinity"})}><Chart modifiers={modifiers().frame({height:plotHeight}).frame({minWidth:0,maxWidth:"infinity"})} chartLegend="hidden"
     chartXScale={{domain:{from:new Date(0),to:new Date(59000)},type:"date"}}
     chartYScale={{domain:{from:0,to:top},type:"linear"}}
     chartXAxis={{...grid,values:{type:"values",values:Array.from({length:8},(_,i)=>new Date(i*59000/7))}}}
@@ -30,7 +30,7 @@ export function GridPlot({samples,tone,plotHeight=96,area=false,running=true,per
     animation={running?{animation:Animation.linear(0.8),value:values.join(",")}:undefined}>
     {area?<AreaChart marks={marks.map(m=>({...m,opacity:0.10}))}/>:null}
     <LineChart marks={marks}/>
-  </Chart>
+  </Chart></VStack>
 }
 export function CpuBreakdown({cpu,running}:{cpu?:CpuUsage;running:boolean}) {
   return <HStack spacing={16} alignment="bottom"><HStack spacing={0} frame={{minWidth:0,maxWidth:"infinity"}}>{([['SYS',cpu?.system],['USER',cpu?.user],['STEAL',cpu?.steal]] as const).map(([title,value])=><VStack key={title} alignment="leading" spacing={3} frame={{minWidth:0,maxWidth:"infinity"}}><Text font={10} fontWeight="semibold" foregroundStyle="secondaryLabel" lineLimit={1} minimumScaleFactor={0.65}>{title}</Text><MetricNumber value={value} digits={1} pointSize={14} running={running}/></VStack>)}</HStack><HStack alignment="lastTextBaseline" spacing={2} fixedSize={{horizontal:false,vertical:true}}><MetricNumber running={running} value={cpu?.usage} digits={1} pointSize={22} tone="#3485eb"/><Text font={11} foregroundStyle="#3485eb">%</Text></HStack></HStack>
@@ -44,7 +44,7 @@ export function TrafficCard({heading,rate,total,history,tone,running}:{heading:s
 }
 export function CapacityBars({fraction,tone}:{fraction?:number;tone:string}) {
   const n=fraction===undefined?0:Math.round(Math.max(0,Math.min(1,fraction))*24)
-  return <GeometryReader frame={{minWidth:0,maxWidth:"infinity",height:28}}>{geometry=>{
+  return <GeometryReader modifiers={modifiers().frame({height:28}).frame({minWidth:0,maxWidth:"infinity"})}>{geometry=>{
     const W=Math.max(0,geometry.size.width),gap=W*2.5/144,bar=Math.max(0,(W-23*gap)/24)
     return <HStack spacing={gap} frame={{width:W,height:28}}>{Array.from({length:24},(_,i)=><RoundedRectangle key={String(i)} cornerRadius={Math.min(1.75,bar/2)} fill={{color:tone,opacity:i<n?0.85:0.12}} frame={{width:bar,height:24}}/>)}</HStack>
   }}</GeometryReader>
@@ -53,7 +53,7 @@ export const LOAD_TONES={light:["#17965b","#c16b13","#287ed6"],dark:["#39d98a","
 export function LoadBars({fraction,tone}:{fraction?:number;tone:string}) {
   const known=fraction!==undefined&&Number.isFinite(fraction)&&fraction>=0
   const height=known?24*Math.min(1,fraction):undefined
-  return <GeometryReader frame={{minWidth:0,maxWidth:"infinity",height:28}}>{geometry=>{
+  return <GeometryReader modifiers={modifiers().frame({height:28}).frame({minWidth:0,maxWidth:"infinity"})}>{geometry=>{
     const W=Math.max(0,geometry.size.width),gap=W*2.5/144,bar=Math.max(0,(W-23*gap)/24)
     return <HStack spacing={gap} frame={{width:W,height:28}}>{Array.from({length:24},(_,i)=><ZStack key={String(i)} alignment="bottom" frame={{width:bar,height:24}}>
       <RoundedRectangle cornerRadius={Math.min(1.75,bar/2)} fill={{color:tone,opacity:0.12}} frame={{width:bar,height:24}}/>
@@ -61,9 +61,11 @@ export function LoadBars({fraction,tone}:{fraction?:number;tone:string}) {
     </ZStack>)}</HStack>
   }}</GeometryReader>
 }
-// Identical header/chart/footer slots, with flexible intrinsic height for wrapping text.
+// Intrinsic content sets the row height; its background paints equal-height cards.
+// Neither the card nor the row asks for an infinite height proposal.
 export function CompactMetricCard({heading,trailing,bars,footer}:{heading:string;trailing?:any;bars:any;footer:any}) {
-  return <HomeCard stretchCard><HStack spacing={4}><Text font={16} fontWeight="semibold">{heading}</Text><Spacer/>{trailing}</HStack>{bars}{footer}</HomeCard>
+  return <VStack alignment="leading" spacing={12} foregroundStyle={INK} font={13}
+    modifiers={modifiers().frame({minWidth:0,maxWidth:"infinity",alignment:"leading"}).padding(16)}><HStack spacing={4}><Text font={16} fontWeight="semibold">{heading}</Text><Spacer/>{trailing}</HStack>{bars}{footer}</VStack>
 }
 export function MetricFooterValue({value,caption,valueEdge="center"}:{value:string;caption:string;valueEdge?:"leading"|"center"|"trailing"}) {
   return <VStack alignment={valueEdge} spacing={3} frame={{minWidth:0,maxWidth:"infinity"}} fixedSize={{horizontal:false,vertical:true}}>
@@ -87,7 +89,7 @@ export function LoadCard({w}:{w?:WrtInfo}) {
 export function DiskCapacityBar({used,size}:{used?:number;size?:number}) {
   const known=size!==undefined&&Number.isFinite(size)&&size>0&&used!==undefined&&Number.isFinite(used)&&used>=0
   const fraction=known?Math.min(1,used/size):undefined
-  return <GeometryReader frame={{minWidth:0,maxWidth:"infinity",height:8}}>{geometry=>{
+  return <GeometryReader modifiers={modifiers().frame({height:8}).frame({minWidth:0,maxWidth:"infinity"})}>{geometry=>{
     const W=Math.max(1,geometry.size.width),fill=fraction===undefined?undefined:W*fraction
     return <ZStack alignment="leading" frame={{width:W,height:8}}>
       <RoundedRectangle cornerRadius={4} fill={{color:"#859de0",opacity:0.12}} frame={{width:W,height:8}}/>
@@ -101,7 +103,7 @@ export function DiskCard({w}:{w?:WrtInfo}) {
 }
 export function HomeDashboard({overview,histories,running,onCpu}:{overview:Overview|null;histories:OverviewHistory;running:boolean;onCpu:()=>void}) {
   const w=overview?.wrt
-  return <VStack spacing={16}><CpuCard w={w} history={histories.cpu.cpu??[]} running={running} onOpen={onCpu}/><HStack spacing={16} alignment="top"><TrafficCard heading="上传" rate={overview?.traffic.up} total={overview?.upTotal} history={histories.up} tone="#2dbf82" running={running}/><TrafficCard heading="下载" rate={overview?.traffic.down} total={overview?.downTotal} history={histories.down} tone="#27b1cf" running={running}/></HStack><HStack spacing={16} alignment="top" fixedSize={{horizontal:false,vertical:true}}><RamCard w={w} running={running}/><LoadCard w={w}/></HStack><DiskCard w={w}/></VStack>
+  return <VStack spacing={16}><CpuCard w={w} history={histories.cpu.cpu??[]} running={running} onOpen={onCpu}/><HStack spacing={16} alignment="top"><TrafficCard heading="上传" rate={overview?.traffic.up} total={overview?.upTotal} history={histories.up} tone="#2dbf82" running={running}/><TrafficCard heading="下载" rate={overview?.traffic.down} total={overview?.downTotal} history={histories.down} tone="#27b1cf" running={running}/></HStack><HStack spacing={16} alignment="top" background={<HStack spacing={16}><RoundedRectangle cornerRadius={14} fill={PANEL} frame={{minWidth:0,maxWidth:"infinity"}}/><RoundedRectangle cornerRadius={14} fill={PANEL} frame={{minWidth:0,maxWidth:"infinity"}}/></HStack>}><RamCard w={w} running={running}/><LoadCard w={w}/></HStack><DiskCard w={w}/></VStack>
 }
 export function CpuDetails({overview,histories,running}:{overview:Overview|null;histories:OverviewHistory;running:boolean}) {
   const w=overview?.wrt,cores=w?.cpus?.filter(x=>x.id!=='cpu')??[],rows=Array.from({length:Math.ceil(cores.length/2)},(_,i)=>cores.slice(i*2,i*2+2))

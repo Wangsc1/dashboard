@@ -15,12 +15,12 @@ function contrast(a,b){return (Math.max(lum(a),lum(b))+0.05)/(Math.min(lum(a),lu
  })
  await test('原生marks真实样本右侧积累，CPU固定0..100、面积填充、无坐标字虚线格、统一1.5pt线宽',()=>{
    for(const [height,area,percent] of [[96,false,true],[66,true,false],[76,false,true]]){
-     const c=render(home.GridPlot,{samples:[20,40],tone:'#3485eb',plotHeight:height,area,percent,running:true},true),m=nodes(c,'LineChart')[0].props.marks
-     assert.equal(c.type,'Chart');assert.equal(c.props.frame.height,height);assert.equal(m.length,2);assert.equal(m[0].label.getTime(),58000);assert.equal(m[1].label.getTime(),59000);assert.equal(c.props.chartXScale.domain.from.getTime(),0);assert.equal(c.props.chartXScale.domain.to.getTime(),59000);assert.equal(c.props.chartYScale.domain.to,percent?100:1024)
+     const slot=render(home.GridPlot,{samples:[20,40],tone:'#3485eb',plotHeight:height,area,percent,running:true},true),c=nodes(slot,'Chart')[0],m=nodes(c,'LineChart')[0].props.marks
+     assert.equal(c.type,'Chart');assert.equal(slot.props.modifiers.steps[0][1].height,height);assert.equal(c.props.modifiers.steps[0][1].height,height);assert.equal(m.length,2);assert.equal(m[0].label.getTime(),58000);assert.equal(m[1].label.getTime(),59000);assert.equal(c.props.chartXScale.domain.from.getTime(),0);assert.equal(c.props.chartXScale.domain.to.getTime(),59000);assert.equal(c.props.chartYScale.domain.to,percent?100:1024)
      for(const x of m){assert.equal(x.lineStyle.lineWidth,1.5);assert.equal(x.interpolationMethod,'monotone');assert.equal(x.foregroundStyle,'#3485eb')}
      assert.equal(c.props.chartXAxis.valueLabel,false);assert.equal(c.props.chartYAxis.valueLabel,false);assert.equal(c.props.chartXAxis.tick,false);assert.equal(c.props.chartXAxis.gridLine.stroke.dash.join(','),'3,3');assert.equal(nodes(c,'AreaChart').length,area?1:0);if(area)assert.equal(nodes(c,'AreaChart')[0].props.marks[0].opacity,0.10);assert.ok(c.props.animation);assert.equal(intervals.size,0)
    }
-   const empty=render(home.GridPlot,{samples:[],tone:'#3485eb',running:false,percent:true},true);assert.equal(nodes(empty,'LineChart')[0].props.marks.length,0);assert.equal(empty.props.animation,undefined)
+   const empty=render(home.GridPlot,{samples:[],tone:'#3485eb',running:false,percent:true},true);assert.equal(nodes(empty,'LineChart')[0].props.marks.length,0);assert.equal(nodes(empty,'Chart')[0].props.animation,undefined)
    const bounded=render(home.GridPlot,{samples:Array.from({length:80},(_,i)=>i),tone:'#3485eb',running:false},true);assert.equal(nodes(bounded,'LineChart')[0].props.marks.length,60);assert.equal(nodes(bounded,'LineChart')[0].props.marks[0].value,20);unmount()
  })
  await test('原生负载24背景/底部连续高度：小值/0/未知/超核数、窄列宽边界；RAM仍整段计数',()=>{
