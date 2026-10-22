@@ -1,4 +1,4 @@
-import { HStack, VStack, Text, Image, RoundedRectangle, Spacer, ScrollView, LazyVStack, Chart, LineChart, AreaChart, ZStack, Animation, NavigationStack, modifiers, useState, useEffect, useMemo, GeometryReader, useColorScheme } from "scripting"
+import { HStack, VStack, Text, Image, RoundedRectangle, Spacer, ScrollView, LazyVStack, Chart, LineChart, AreaChart, ZStack, NavigationStack, modifiers, useState, useEffect, useMemo, GeometryReader, useColorScheme } from "scripting"
 import { Overview, WrtInfo, fmtBytes, fmtSpeed, fmtUptime } from "./api"
 import { CpuUsage, OverviewHistory } from "./openwrt-metrics"
 export const HOME_BG = "systemBackground"
@@ -16,21 +16,18 @@ export function MetricNumber({value,unit="",pointSize=16,tone="label",digits=0,r
   },[target,unit,running])
   return <Text font={pointSize} fontWeight="semibold" foregroundStyle={tone} lineLimit={1} minimumScaleFactor={0.65}>{`${shown}${unit}`}</Text>
 }
-// Native data marks, no per-frame JS callbacks or SVG scaling. The fixed Date
-// domain keeps short histories right-aligned without inserting fake zero samples.
-export function GridPlot({samples,tone,plotHeight=96,area=false,running=true,percent=false}:{samples:number[];tone:string;plotHeight?:number;area?:boolean;running?:boolean;percent?:boolean}) {
-  const values=samples.slice(-60),top=percent?100:Math.max(1024,...values)
-  const marks=useMemo(()=>values.map((value,i)=>({label:new Date((59-values.length+1+i)*1000),value,foregroundStyle:tone,interpolationMethod:"monotone" as const,lineStyle:{lineWidth:1.5,lineCap:"round" as const}})),[samples,tone])
-  const grid={gridLine:{stroke:{lineWidth:0.5,dash:[3,3]}},tick:false,valueLabel:false}
-  return <VStack spacing={0} modifiers={modifiers().frame({height:plotHeight}).frame({minWidth:0,maxWidth:"infinity"})}><Chart modifiers={modifiers().frame({height:plotHeight}).frame({minWidth:0,maxWidth:"infinity"})} chartLegend="hidden"
-    chartXScale={{domain:{from:new Date(0),to:new Date(59000)},type:"date"}}
+// Minimal documented native Chart: category labels, one direct frame, no Date domain,
+// hand-built axis values or animation. Fewer than two samples keeps only the fixed slot.
+export function GridPlot({samples,tone,plotHeight=96,area=false,percent=false}:{samples:number[];tone:string;plotHeight?:number;area?:boolean;running?:boolean;percent?:boolean}) {
+  const values=samples.slice(-60).filter(Number.isFinite),top=percent?100:Math.max(1024,...values)
+  const marks=useMemo(()=>values.map((value,i)=>({label:String(i).padStart(2,"0"),value,foregroundStyle:tone,interpolationMethod:"monotone" as const,lineStyle:{lineWidth:1.5,lineCap:"round" as const}})),[samples,tone])
+  if(values.length<2)return <VStack frame={{height:plotHeight}}/>
+  return <Chart frame={{height:plotHeight}} chartLegend="hidden" chartXAxis="hidden"
     chartYScale={{domain:{from:0,to:top},type:"linear"}}
-    chartXAxis={{...grid,values:{type:"values",values:Array.from({length:8},(_,i)=>new Date(i*59000/7))}}}
-    chartYAxis={{...grid,values:{type:"values",values:Array.from({length:5},(_,i)=>i*top/4)}}}
-    animation={running?{animation:Animation.linear(0.8),value:values.join(",")}:undefined}>
+    chartYAxis={{valueLabel:false,tick:false,gridLine:{stroke:{lineWidth:0.5,dash:[3,3]}}}}>
     {area?<AreaChart marks={marks.map(m=>({...m,opacity:0.10}))}/>:null}
     <LineChart marks={marks}/>
-  </Chart></VStack>
+  </Chart>
 }
 export function CpuBreakdown({cpu,running}:{cpu?:CpuUsage;running:boolean}) {
   return <HStack spacing={16} alignment="bottom"><HStack spacing={0} frame={{minWidth:0,maxWidth:"infinity"}}>{([['SYS',cpu?.system],['USER',cpu?.user],['STEAL',cpu?.steal]] as const).map(([title,value])=><VStack key={title} alignment="leading" spacing={3} frame={{minWidth:0,maxWidth:"infinity"}}><Text font={10} fontWeight="semibold" foregroundStyle="secondaryLabel" lineLimit={1} minimumScaleFactor={0.65}>{title}</Text><MetricNumber value={value} digits={1} pointSize={14} running={running}/></VStack>)}</HStack><HStack alignment="lastTextBaseline" spacing={2} fixedSize={{horizontal:false,vertical:true}}><MetricNumber running={running} value={cpu?.usage} digits={1} pointSize={22} tone="#3485eb"/><Text font={11} foregroundStyle="#3485eb">%</Text></HStack></HStack>

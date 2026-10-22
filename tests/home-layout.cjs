@@ -31,29 +31,25 @@ function slot(n,height){
    assert.equal(mixedFrames('<VStack modifiers={modifiers().frame({height:28}).frame({minWidth:0,maxWidth:"infinity"})}/>').length,0)
    assert.ok(!source.includes('maxHeight:"infinity"'),'home path must not regain unbounded vertical card stretch')
  })
- await test('Chart与外占位同步明确96/66/76pt；未知/首样本/连续样本不改变槽',()=>{
+ await test('GridPlot契约(仅检查传给宿主的props，非实机证明): 单次frame、<2点只留占位、无Date域/手工axis values/animation',()=>{
    const cpu=home.CpuCard({history:[],running:false}),traffic=home.TrafficCard({heading:'上传',history:[],tone:'blue',running:false}),core=home.SampledCpuPlot({samples:[]})
    assert.equal(nodes(cpu,home.GridPlot)[0].props.plotHeight,undefined) // default 96
    assert.equal(nodes(traffic,home.GridPlot)[0].props.plotHeight,66);assert.equal(core.props.plotHeight,76)
-   for(const height of [96,66,76])for(const samples of [[],[12],[12,18,32]]){
-     const outer=render(home.GridPlot,{samples,tone:'blue',plotHeight:height,running:false},true)
-     assert.equal(outer.type,'VStack');assert.equal(outer.props.spacing,0);slot(outer,height)
-     const charts=nodes(outer,'Chart');assert.equal(charts.length,1);slot(charts[0],height)
-     assert.equal(nodes(charts[0],'LineChart')[0].props.marks.length,samples.length)
+   for(const height of [96,66,76])for(const samples of [[],[12],NaN]){
+     const slotNode=render(home.GridPlot,{samples:samples===samples?samples:[NaN,1],tone:'blue',plotHeight:height,running:false},true)
+     assert.equal(slotNode.type,'VStack');deep(slotNode.props.frame,{height});assert.equal(slotNode.props.modifiers,undefined);assert.equal(nodes(slotNode,'Chart').length,0)
+   }
+   for(const height of [96,66,76])for(const percent of [true,false])for(const samples of [[1,2],[0,0,0],Array(60).fill(100),Array.from({length:80},(_,i)=>i*1024)]){
+     const c=render(home.GridPlot,{samples,tone:'blue',plotHeight:height,percent,area:height===66,running:true},true)
+     assert.equal(c.type,'Chart');deep(c.props.frame,{height});assert.equal(c.props.modifiers,undefined)
+     for(const k of ['animation','chartXScale','chartYAxis.values'])assert.equal(k.includes('.')?c.props.chartYAxis.values:c.props[k],undefined,k)
+     assert.equal(c.props.chartXAxis,'hidden');assert.equal(c.props.chartYAxis.valueLabel,false)
+     assert.equal(c.props.chartYScale.type,'linear');const y=c.props.chartYScale.domain;assert.ok(Number.isFinite(y.from)&&Number.isFinite(y.to)&&y.from===0&&y.to>0)
+     const marks=nodes(c,'LineChart')[0].props.marks;assert.equal(marks.length,Math.min(60,samples.length))
+     assert.ok(marks.every(m=>typeof m.label==='string'&&Number.isFinite(m.value)));assert.equal(new Set(marks.map(m=>m.label)).size,marks.length)
+     assert.equal(nodes(c,'AreaChart').length,height===66?1:0)
    }unmount()
- })
- await test('空/单样本/全零/常量/满窗: JS侧Date与数值域有限、递增且非零区间',()=>{
-   for(const percent of [true,false])for(const samples of [[],[0],[100],[0,0],Array(60).fill(0),Array(60).fill(100),Array.from({length:60},(_,i)=>i*1024)]){
-     const chart=nodes(render(home.GridPlot,{samples,tone:'blue',percent,running:false},true),'Chart')[0]
-     const x=chart.props.chartXScale,y=chart.props.chartYScale
-     assert.equal(x.type,'date');assert.equal(y.type,'linear');assert.equal(x.domain.from.getTime(),0);assert.equal(x.domain.to.getTime(),59000)
-     assert.ok(Number.isFinite(y.domain.from)&&Number.isFinite(y.domain.to));assert.ok(y.domain.from<y.domain.to);assert.ok(y.domain.to>0)
-     const dates=chart.props.chartXAxis.values.values.map(d=>d.getTime()),ys=chart.props.chartYAxis.values.values
-     for(const ticks of [dates,ys]){assert.ok(ticks.every(Number.isFinite));assert.ok(ticks.every((v,i)=>i===0||v>ticks[i-1]))}
-     const marks=nodes(chart,'LineChart')[0].props.marks;assert.ok(marks.every(m=>Number.isFinite(m.value)&&Number.isFinite(m.label.getTime())&&m.label.getTime()>=0&&m.label.getTime()<=59000))
-     assert.ok(marks.every((m,i)=>i===0||m.label.getTime()>marks[i-1].label.getTime()))
-   }unmount()
-   // This verifies JS objects BEFORE the native bridge, not its Date serialization.
+   const source=fs.readFileSync(path.join(root,'home-ui.tsx'),'utf8');for(const banned of ['new Date','Array.from({length:8}','chartXScale','animation=','Animation'])assert.ok(!source.includes(banned),banned)
  })
  await test('原生条图明确28/8pt占位，内部绘制不超槽，未知及窄宽保持比例',()=>{
    for(const width of [25,43,144,336])for(const fraction of [undefined,0,0.001,0.5,1,2]){
