@@ -40,7 +40,9 @@ export function GridPlot({samples,tone,plotHeight=96,area=false,running=true,per
     const reset=!enabled||!track.enabled||!values.length||values.length<track.current.length
     track.previous=reset?values:track.current
     track.current=values;track.enabled=enabled
-    track.duration=Math.max(500,Math.min(1500,now-track.at||1000))
+    // Detail samples arrive on the existing 1s poll. Content dedupe can skip many
+    // visual updates: that idle interval is NOT the duration of the next transition.
+    track.duration=stableSamples?1000:Math.max(500,Math.min(1500,now-track.at||1000))
     track.at=now;track.animating=changed&&!reset&&values.length>=2
   }
   useEffect(()=>{
@@ -74,7 +76,7 @@ export function CpuCard({w,history,running,onOpen,detail=false}:{w?:WrtInfo;hist
 }
 export function TrafficCard({heading,rate,total,history,tone,running}:{heading:string;rate?:number;total?:number;history:number[];tone:string;running:boolean}) {
   const parts=rate===undefined?undefined:fmtSpeed(rate).split(' '),value=parts?Number(parts[0]):undefined,unit=parts?" "+parts.slice(1).join(' '):""
-  return <HomeCard><HStack spacing={3}><Text font={16} fontWeight="semibold">{heading}</Text><Spacer/><MetricNumber running={running} value={value} unit={unit} pointSize={14} tone={tone} digits={value!==undefined&&value<100?1:0}/></HStack><GridPlot samples={history} tone={tone} plotHeight={66} area running={running} plotWidth={PLOT_HALF_W}/><Text font={12} foregroundStyle="secondaryLabel">{`已用 ${total===undefined?'--':fmtBytes(total)}`}</Text></HomeCard>
+  return <HomeCard><HStack spacing={3}><Text font={16} fontWeight="semibold">{heading}</Text><Spacer/><MetricNumber running={false} value={value} unit={unit} pointSize={14} tone={tone} digits={value!==undefined&&value<100?1:0}/></HStack><GridPlot samples={history} tone={tone} plotHeight={66} area running={running} plotWidth={PLOT_HALF_W}/><Text font={12} foregroundStyle="secondaryLabel">{`已用 ${total===undefined?'--':fmtBytes(total)}`}</Text></HomeCard>
 }
 // Deterministic bars: no GeometryReader. Equal flexible-width bars, one fixed 24pt row height.
 const BAR_ROW={minWidth:0,maxWidth:"infinity" as const,minHeight:24,maxHeight:24}

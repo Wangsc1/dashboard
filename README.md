@@ -26,6 +26,14 @@
 
 原生 Tab API 面向 iOS 18+；外观与手势由系统及 Scripting 版本决定。仓库配置了 `remoteResource`，实际导入和更新以 Scripting 的处理结果为准。配置编辑器的 CodeMirror/Lezer/YAML 静态 bundle 已嵌入现有 `dashboard-pages.tsx`；在线更新仍只需原有运行文件，不需 CDN、额外资源下载或在手机安装 npm 包。`editor/` 为构建源码、锁定依赖及许可证，非运行依赖。
 
+## 1.5.170 更新
+
+- **修正详情去重后的计时错误**：169按“上次视觉更新距今多久”选下一次插值时长；相同满窗连续去重后，该间隔被错误当成新过渡时长并封顶1500ms。真实hook复现：连续3次相同0值后加入40，1000ms末点仅到26.67，下一样本p0却直接从40开始。详情现在按既有1秒采样周期使用1000ms过渡，复现中前后均为40，不再从去重空档推算动画时长。主页曲线的计时算法不变。
+- **保留屏外节流**：不撤销可见集合限制，不让全部32核常驻20fps；相同内容新数组仍不重建，满窗完全相同数据本身没有可见形状位移。动态测试中同集合重复/换序、其他行轻微进出、重复onAppear、父级同内容新数组都未重启本行插值；真正空集合仍停止，重新进入追上最新数据。未证实实机宿主会给仍在屏内的行发送短暂移除，因此未叠加退出延迟或手势机制。
+- **首页上传/下载数字去逐帧补间**：仅TrafficCard速率的MetricNumber关闭16ms JS插值，每次采样显示一次当次真实格式化速率；不平均、不加延迟、不改采样频率、单位或小数规则。CPU/RAM等数字默认动画和首页曲线不变。
+- **连续时序验证**：16/32核页面各8个连续1秒周期、每周期20个50ms帧，覆盖58点长到60点再连续满窗；p1与下一p0的有效点坐标/数值逐点一致（边界差0），各启动/到期8次，中途重复事件没有额外启停。新增`cpu-continuity.cjs`还覆盖相同数据后恢复变化与速率跨单位显示且无16ms数字timer，原屏外工作量/清理及布局回归保留。
+- 以上为真实JS hooks＋模拟时间/原生回调验证，不能证明iPhone桥接/栅格化耗时、宿主可见回调频率、网络到样抖动或实机流畅度。布局、单SVG高度、60点右对齐、统一线宽、负载、元数据、全部核心及原生下滑关闭不变。本轮仅提交，不推送。
+
 ## 1.5.169 更新
 
 - **详情滚动减少屏外绘制**：本机官方 `views/scrollview/en.md`（同官网 [Scroll views](https://scriptingapp.github.io/guide/Views/Scroll%20views/index.md)）提供 `onScrollTargetVisibilityChange` + `scrollTargetLayout`：iOS18+/Scripting3.1按字符串key回报可见行集合。详情以行至少10%进入视口为准，仅这些行允许曲线插值，避免lazy预取的onAppear让屏外核心也持续20fps。未收到回调的旧宿主保留原onAppear回退，此时没有精确可见性收益。没有添加分页、吸附或手势拦截，下拉关闭保持原生。
@@ -159,6 +167,7 @@ node tests/home-dashboard.cjs
 node tests/cpuinfo-complete.cjs
 node tests/cpu-details-performance.cjs
 node tests/cpu-scroll-work.cjs
+node tests/cpu-continuity.cjs
 node tests/home-layout.cjs
 node tests/home-polish.cjs
 git diff --check
