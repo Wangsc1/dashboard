@@ -16,8 +16,8 @@ const html=vm.runInNewContext(harness+'\npages.nikkiEditorHTML(41)',{require,__d
     await page.waitForFunction(()=>window.nikkiEditor?.view)
     const snapshot=()=>page.evaluate(()=>{const s=window.nikkiEditor.snapshot();window.nikkiEditor.unlock();return s.text})
     assert.equal(await snapshot(),original)
-    for(const selector of ['.cm-content','.cm-lineNumbers'])assert.equal(await page.locator(selector).evaluate(e=>getComputedStyle(e).fontSize),'14px')
-    assert.equal(await page.locator('.cm-scroller').evaluate(e=>getComputedStyle(e).lineHeight),'21px')
+    for(const selector of ['.cm-content','.cm-lineNumbers'])assert.equal(await page.locator(selector).evaluate(e=>getComputedStyle(e).fontSize),'12px')
+    assert.equal(await page.locator('.cm-scroller').evaluate(e=>getComputedStyle(e).lineHeight),'18px')
     // HTML has no bottom footer/margin and tracks the actual available viewport.
     // A smaller viewport models resize only, NOT iOS keyboard/safe-area behavior.
     const fillsBottom=()=>page.evaluate(()=>({editor:document.querySelector('#editor').getBoundingClientRect().bottom,code:document.querySelector('.cm-editor').getBoundingClientRect().bottom,height:window.innerHeight}))

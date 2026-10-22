@@ -34,8 +34,8 @@ const scalarColors=ViewPlugin.fromClass(class {
   }});return Decoration.set(ranges,true)}
 },{decorations:p=>p.decorations})
 const theme=dark=>EditorView.theme({
-  '&':{height:'100%',fontSize:'14px',color:'var(--fg)',backgroundColor:'var(--bg)'},
-  '.cm-scroller':{fontFamily:'ui-monospace,SFMono-Regular,Menlo,monospace',lineHeight:'21px',overflow:'auto'},
+  '&':{height:'100%',fontSize:'12px',color:'var(--fg)',backgroundColor:'var(--bg)'},
+  '.cm-scroller':{fontFamily:'ui-monospace,SFMono-Regular,Menlo,monospace',lineHeight:'18px',overflow:'auto'},
   '.cm-content':{padding:'8px 0',minHeight:'100%',caretColor:'var(--fg)'},
   '.cm-line':{padding:'0 8px'},
   '.cm-gutters':{backgroundColor:'var(--bg)',color:'var(--comment)',border:'none'},
