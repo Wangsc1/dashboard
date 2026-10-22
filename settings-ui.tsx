@@ -232,6 +232,14 @@ export function KernelConfigPage({ c }: { c: Controller }) {
           session.tunSaving = Object.keys(patch).every(k => k === "tun" || k === "tun.stack") && Object.keys(patch).length > 0
           if (Object.keys(patch).length) await patchConfig(session.controller, patch)
           if (!current()) return
+          // TUN writes change kernel-side defaults (stack etc.) beyond the patch
+          // body; a silent re-read keeps tun fields reflecting the real kernel.
+          if (patch.tun || "tun.stack" in patch) {
+            try {
+              const fresh = await loadConfig(session.controller)
+              if (current()) { session.cfg = fresh; for (const [key, edit] of batch) if (session.revisions[key] === edit.revision) { delete session.dirty[key]; delete session.errors[key] }; paint(); continue }
+            } catch { if (!current()) return }
+          }
           session.cfg = { ...session.cfg, ...patch, ...(patch.tun ? { tun: { ...session.cfg?.tun, enable: patch.tun.enable } } : {}), ...("tun.stack" in patch ? { tun: { ...session.cfg?.tun, stack: patch["tun.stack"] } } : {}) }
           for (const [key, edit] of batch) {
             if (session.revisions[key] === edit.revision) { delete session.dirty[key]; delete session.errors[key] }
@@ -310,8 +318,8 @@ export function KernelConfigPage({ c }: { c: Controller }) {
       {card(<>
         <HStack spacing={12} padding={{ vertical: 12 }}>{icon("shield", "systemPurple")}{toggle("tun", "TUN 模式")}</HStack>
         {separator()}
-        <HStack spacing={12} padding={{ vertical: 12 }} frame={{ minHeight: 31, maxHeight: 31, maxWidth: "infinity" }}>{icon("rhombus", "systemIndigo")}<Text>TUN 堆栈</Text><Spacer />
-          <Menu frame={{ height: 31 }} disabled={busy || !provided("tun.stack")} label={<HStack spacing={6}><Text foregroundStyle="secondaryLabel">{TUN_STACKS.find(([value]) => value === (dirty["tun.stack"] ?? (cfg as any)?.tun?.stack))?.[1] ?? (busy ? "" : "未知")}</Text><Image systemName="chevron.up.chevron.down" font={12} foregroundStyle="secondaryLabel" /></HStack>}>
+        <HStack spacing={12} padding={{ vertical: 12 }}>{icon("rhombus", "systemIndigo")}<Text>TUN 堆栈</Text><Spacer />
+          <Menu disabled={busy || !provided("tun.stack")} label={<HStack spacing={6} frame={{ height: 31 }}><Text foregroundStyle="secondaryLabel">{TUN_STACKS.find(([value]) => value === (dirty["tun.stack"] ?? (cfg as any)?.tun?.stack))?.[1] ?? (busy ? "" : "未知")}</Text><Image systemName="chevron.up.chevron.down" font={12} foregroundStyle="secondaryLabel" /></HStack>}>
             {TUN_STACKS.map(([value, label]) => <Button key={value} title={label + ((dirty["tun.stack"] ?? (cfg as any)?.tun?.stack) === value ? " ✓" : "")} action={() => change("tun.stack", value)} />)}
           </Menu>
         </HStack>

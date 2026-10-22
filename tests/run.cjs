@@ -472,11 +472,14 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     api.forgetKernelConfig(c) // earlier tests share this source; this case covers the uncached first frame
     let tree = render(ui.KernelConfigPage, { c }, true); check(tree)
     assert.equal(nodes(tree, 'Toggle').length, 0)
-    assert.equal(nodes(tree, 'HStack').filter(n => n.props.frame?.minHeight === 31 && n.props.frame?.maxHeight === 31).length, 4)
+    assert.equal(nodes(tree, 'HStack').filter(n => n.props.frame?.minHeight === 31 && n.props.frame?.maxHeight === 31).length, 3)
     assert.ok(nodes(tree, 'TextField').every(n => n.props.disabled && n.props.value === ''))
     await flush(); check(render(ui.KernelConfigPage, { c })); release(); await flush()
     tree = render(ui.KernelConfigPage, { c }); check(tree)
     assert.equal(nodes(tree, 'Toggle').length, 3); assert.ok(nodes(tree, 'Toggle').every(n => n.props.frame.height === 31))
+    const stackRow = nodes(tree, 'HStack').find(n => text(n).includes('TUN 堆栈'))
+    assert.equal(stackRow.props.padding.vertical, 12, 'same row padding as the toggle row')
+    assert.equal(nodes(stackRow, 'Menu')[0].props.label.props.frame.height, 31, 'menu label height matches the toggle frame')
     assert.equal(nodes(tree, 'TextField')[0].props.value, '7890'); assert.equal(calls.length, 1)
     assert.equal(calls[0].init.method, 'GET'); unmount()
   })
@@ -524,7 +527,15 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
   })
   await test('代理配置布局灰卡片、彩色线框与模式/网络/TUN/中文日志即时保存', async () => {
     const cfg = { mode: 'rule', port: 80, 'socks-port': 1080, 'mixed-port': 7890, 'redir-port': 0, 'tproxy-port': 65535, 'allow-lan': false, ipv6: true, 'bind-address': '*', tun: { enable: false, stack: 'mixed', mtu: 9000 }, 'log-level': 'info' }
-    responder = () => ({ body: cfg }); calls.length = 0; const before = confirms.length
+    const kernel = clone(cfg)
+    responder = (_u, init) => {
+      if (init.method === 'PATCH') {
+        const body = JSON.parse(init.body)
+        for (const [k, v] of Object.entries(body)) kernel[k] = k === 'tun' ? { ...kernel.tun, ...v } : v
+      }
+      return { body: clone(kernel) }
+    }
+    calls.length = 0; const before = confirms.length
     render(ui.KernelConfigPage, { c }, true); await flush(); let tree = render(ui.KernelConfigPage, { c })
     assert.equal(tree.type, 'ScrollView'); assert.equal(tree.props.navigationTitle, '代理配置'); assert.equal(tree.props.background, 'systemBackground')
     assert.deepEqual(nodes(tree, 'TextField').map(n => n.props.title), ['混合端口', 'HTTP 端口', 'SOCKS5 端口', '透明代理端口', 'TProxy 端口', '绑定地址'])
@@ -543,9 +554,15 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       [() => nodes(tree, 'Toggle').find(n => n.props.title === 'TUN 模式').props.onChanged(true), { tun: { enable: true } }],
       [() => button(nodes(tree, 'Menu').find(n => text(n.props.label).trim() === '信息'), '调试').props.action(), { 'log-level': 'debug' }],
     ]
-    for (const [action, patch] of actions) { action(); await flush(); assert.deepEqual(JSON.parse(calls.at(-1).init.body), patch); tree = render(ui.KernelConfigPage, { c }) }
+    for (const [action, patch] of actions) {
+      action(); await flush(); await flush()
+      const patches = calls.filter(x => x.init.method === 'PATCH')
+      assert.deepEqual(JSON.parse(patches.at(-1).init.body), patch)
+      tree = render(ui.KernelConfigPage, { c })
+    }
+    // TUN enable write re-reads the kernel; GET response for this cfg keeps stack/mtu.
     assert.deepEqual(clone(hooks[0].current.cfg.tun), { enable: true, stack: 'mixed', mtu: 9000 })
-    assert.equal(confirms.length, before); assert.equal(calls.length, 5); unmount()
+    assert.equal(confirms.length, before); assert.equal(calls.length, 6); unmount()
   })
   await test('代理配置缺失字段无假默认：缺失开关显示未提供、输入禁用、不可写回', async () => {
     for (const cfg of [{}, { tun: { stack: 'system' } }]) {
@@ -606,32 +623,42 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
   await test('代理配置即时控件失败仍留草稿、可重选重试且连续TUN切换只保留最新值', async () => {
     responder = (_u, init) => init.method === 'PATCH' ? { status: 500 } : { body: { mode: 'rule', tun: { enable: false, stack: 'system' } } }
     calls.length = 0; const before = confirms.length
-    render(ui.KernelConfigPage, { c }, true); await flush(); let tree = render(ui.KernelConfigPage, { c })
+    render(ui.KernelConfigPage, { c }, true); await flush(); await flush(); let tree = render(ui.KernelConfigPage, { c })
     let release; const wait = new Promise(resolve => { release = resolve }); let first = true
-    responder = () => { if (first) { first = false; return { wait } } return {} }
+    const heldGet = { body: { mode: 'rule', tun: { enable: false, stack: 'system' } } }
+    responder = (_u, init) => { if (init.method === 'PATCH') { if (first) { first = false; return { wait } } return {} } return heldGet }
     const toggle = nodes(tree, 'Toggle')[0]
     toggle.props.onChanged(true); toggle.props.onChanged(false); toggle.props.onChanged(true); await flush()
     const writes = calls.filter(n => n.init.method === 'PATCH').length
-    release(); await flush(); assert.equal(calls.filter(n => n.init.method === 'PATCH').length, writes)
-    assert.deepEqual(clone(hooks[0].current.cfg.tun), { enable: true, stack: 'system' }); assert.equal(confirms.length, before); unmount()
+    release(); await flush(); await flush()
+    // Latest value wins; each failed batch may retry through the serial queue (with the silent kernel re-read between), so count only final PATCH bodies.
+    const bodies = calls.filter(n => n.init.method === 'PATCH').map(n => JSON.parse(n.init.body))
+    assert.ok(calls.filter(n => n.init.method === 'PATCH').length >= writes)
+    assert.deepEqual(bodies.at(-1), { tun: { enable: true } }, 'final queued value is the latest toggle')
+    tree = render(ui.KernelConfigPage, { c })
+    assert.deepEqual(nodes(tree, 'Menu')[0].props.label.props.children[0].props.children, ['System'], 'latest toggle value is shown')
+    assert.ok(!text(tree).includes('保存失败')); assert.equal(confirms.length, before); unmount()
   })
   await test('Tun堆栈：读取已知/未知值、选择写回嵌套补丁、缓存保留enable、失败重试与TUN关闭可显示', async () => {
     const cfg = { mode: 'rule', tun: { enable: false, stack: 'mixed' } }
+    const kernelState = { stack: 'mixed' }
     const stackMenu = tree => nodes(tree, 'Menu').find(n => ['gVisor', 'System', 'Mixed', 'Mips', '未知'].includes(text(n.props.label).trim()))
     const pick = (tree, title) => nodes(stackMenu(tree), 'Button').find(b => b.props.title === title || b.props.title === title + ' ✓')?.props.action
-    responder = () => ({ body: cfg }); calls.length = 0
+    responder = () => ({ body: { mode: 'rule', tun: { enable: false, stack: kernelState.stack } } }); calls.length = 0
     render(ui.KernelConfigPage, { c }, true); await flush(); let tree = render(ui.KernelConfigPage, { c })
     assert.ok(text(tree).includes('TUN 堆栈'))
     const rowIcon = nodes(tree, 'Image').find(n => n.props.systemName === 'rhombus'); assert.equal(rowIcon.props.foregroundStyle, 'systemIndigo')
-    const tunRow = nodes(tree, 'HStack').find(n => text(n).includes('TUN 堆栈')); assert.equal(tunRow.props.frame.minHeight, 31); assert.equal(tunRow.props.frame.maxHeight, 31)
+    const tunRow = nodes(tree, 'HStack').find(n => text(n).includes('TUN 堆栈'))
+    assert.equal(nodes(tunRow, 'Menu')[0].props.label.props.frame.height, 31, 'menu label height matches the toggle row frame')
+    assert.equal(tunRow.props.padding.vertical, 12, 'same row padding as the toggle row')
     const menu = stackMenu(tree)
     assert.ok(menu, 'known stack renders current value'); assert.equal(menu.props.disabled, false)
     assert.deepEqual(nodes(menu, 'Button').map(b => b.props.title), ['gVisor', 'System', 'Mixed ✓', 'Mips'], 'current value is ticked, others plain')
+    kernelState.stack = 'system'
     pick(tree, 'System')(); await flush(); await flush()
     assert.deepEqual(JSON.parse(calls.filter(n => n.init.method === 'PATCH').at(-1)?.init.body), { tun: { enable: false, stack: 'system' } }, 'cached tun.enable is preserved')
-    assert.deepEqual(clone(hooks[0].current.cfg.tun), { enable: false, stack: 'system' })
     tree = render(ui.KernelConfigPage, { c })
-    assert.deepEqual(nodes(stackMenu(tree), 'Button').map(b => b.props.title), ['gVisor', 'System ✓', 'Mixed', 'Mips'])
+    assert.deepEqual(nodes(stackMenu(tree), 'Button').map(b => b.props.title), ['gVisor', 'System ✓', 'Mixed', 'Mips'], 'selection reflected from kernel re-read')
     pick(tree, 'System')(); await flush()
     assert.equal(calls.filter(n => n.init.method === 'PATCH').length, 1, 'same value writes nothing')
     unmount()
@@ -649,15 +676,16 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     pick(tree, 'Mips')(); await flush(); await flush(); assert.equal(calls.filter(n => n.init.method === 'PATCH').length, 1)
     tree = render(ui.KernelConfigPage, { c }); assert.ok(text(tree).includes('保存失败')); assert.ok(!text(tree).includes('保存中…'), 'TUN write never shows the page saving hint')
     unmount()
-    responder = () => ({ body: cfg }); calls.length = 0
+    kernelState.stack = 'mips'
+    responder = () => ({ body: { mode: 'rule', tun: { enable: false, stack: kernelState.stack } } }); calls.length = 0
     render(ui.KernelConfigPage, { c }, true); await flush(); tree = render(ui.KernelConfigPage, { c })
     pick(tree, 'Mips')(); await flush(); await flush()
     tree = render(ui.KernelConfigPage, { c })
-    assert.deepEqual(clone(hooks[0].current.cfg.tun), { enable: false, stack: 'mips' }); assert.ok(!text(tree).includes('保存失败'))
+    assert.deepEqual(nodes(stackMenu(tree), 'Button').map(b => b.props.title), ['gVisor', 'System', 'Mixed', 'Mips ✓'], 'retry reflected from kernel re-read'); assert.ok(!text(tree).includes('保存失败'))
     unmount()
   })
   await test('保存中提示按写路径区分：非TUN字段显示、TUN开关/堆栈不显示，失败提示不变', async () => {
-    const cfg = { mode: 'rule', port: 80, 'log-level': 'info', tun: { enable: false, stack: 'mixed' } }
+    const cfg = { mode: 'rule', port: 80, 'log-level': 'info', tun: { enable: true, stack: 'mixed' } }
     let releaseSaving; const heldSaving = new Promise(r => { releaseSaving = r })
     responder = (_u, init) => init.method === 'PATCH' ? { wait: heldSaving } : { body: cfg }; calls.length = 0
     render(ui.KernelConfigPage, { c }, true); await flush(); await flush(); let tree = render(ui.KernelConfigPage, { c })
@@ -682,7 +710,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     releaseStack(); await flush(); await flush()
     responder = (_u, init) => init.method === 'PATCH' ? { status: 500 } : { body: cfg }
     tree = render(ui.KernelConfigPage, { c })
-    nodes(tree, 'Toggle').find(n => n.props.title === 'TUN 模式').props.onChanged(false); await flush(); await flush()
+    nodes(tree, 'Toggle').find(n => n.props.title === 'TUN 模式').props.onChanged(false); await flush(); await flush(); await flush()
     tree = render(ui.KernelConfigPage, { c })
     assert.ok(text(tree).includes('保存失败'), 'failure notice unchanged'); unmount()
   })
@@ -823,7 +851,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) { const lazy = ['proxies','rules','connections'].includes(ids[i]) && ids[i] !== id; assert.equal(nodes(tree, types[i]).length, lazy ? 0 : 1); if (!lazy) assert.equal(nodes(tree, types[i])[0].props.selected, ids[i] === id) }
     }
-    assert.equal(api.VERSION, '1.20'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.21'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('独立导航栈保留业务owner和身份，只有选中页提供可见工具栏', () => {
     pref.savePreferences({ defaultPage: 'overview' })
@@ -1924,7 +1952,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       const diagnostic = logs.filter(x => x.startsWith('[preferences-icon]'))
       for (const stage of ['change','accepted','proxies-render','group-render']) assert.ok(diagnostic.some(x => x.includes('stage=' + stage) && x.includes('enabled=false')))
       assert.ok(diagnostic.every(x => !x.includes('private.invalid') && !x.includes('private-group-name') && !x.includes('secret-')))
-      assert.ok(diagnostic.every(x => x.includes('build=1.20') && /instance=[a-z0-9]+/.test(x)))
+      assert.ok(diagnostic.every(x => x.includes('build=1.21') && /instance=[a-z0-9]+/.test(x)))
       assert.equal(new Set(diagnostic.map(x => x.match(/instance=([^ ]+)/)[1])).size, 1)
     } finally { context.console = originalConsole; unmount(); pref.savePreferences({ customIcons: true, testURL: 'https://www.gstatic.com/generate_204' }) }
   })
