@@ -27,7 +27,7 @@ const originalLoad=api.loadOverview
   const root=owner(app.Root);root.render({});await settle();assert.equal(requests,1);assert.ok(has('root-retry','pending=0'))
   for(const t of [...intervals.values()])t.fn();await settle();assert.equal(requests,1);assert.ok(has('root-retry','pending=1'))
   release();await settle();assert.ok(has('prime-failure','reason=timeout'))
-  api.loadOverview=async()=>{requests++;return sample};for(const t of [...intervals.values()])t.fn();await settle();assert.equal(requests,2)
+  api.loadOverview=async()=>{requests++;return sample};for(const t of [...intervals.values()])t.fn();await settle();assert.equal(requests,3,'one failed attempt plus the successful two-sample warmup')
   const page=owner(app.OverviewPage),props={active:c,selected:false,version:0,onSwitch(){}}
   let tree=page.render(props);await settle();tree=page.render(props);await settle()
   assert.equal(nodes(tree,home.HomeDashboard)[0].props.overview,sample);assert.ok(has('home-mount','cache=1'));assert.ok(has('home-state','ov=1'));assert.ok(has('home-receive'));assert.ok(has('home-ui','ui=1'))

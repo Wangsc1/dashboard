@@ -1,5 +1,5 @@
 import { HOME_BG, HomeDashboard, CpuDetails, LiveCpuDetails, CpuDetailFrame } from "./home-ui"
-import { newHistory, appendHistory } from "./openwrt-metrics"
+import { newHistory, appendHistory, OverviewHistory } from "./openwrt-metrics"
 import { rootToolbar } from "./root-toolbar"
 import { prefetchMoreVersions, prefetchProxies, prefetchRules, prefetchConnections, ProxiesPage, ConnectionsPage, RulesPage, GroupSection, MorePage as DashboardMorePage } from "./dashboard-pages"
 import {
@@ -181,29 +181,80 @@ function homeFailure(e: unknown): HomeDiagnostic["reason"] {
 }
 
 // First home sample is requested at launch, before any tab exists, so a non-launch home tab can show data on its first frame.
-const overviewPrime = new Map<string, Overview>()
-const overviewPrimeListeners = new Set<(source:string,o:Overview)=>void>()
+interface OverviewFrame { overview: Overview; histories: OverviewHistory }
+// Process-local display snapshots survive lazy native tab unmounts. Source keys
+// include authentication identity; neither samples nor history are persisted.
+const overviewPrime = new Map<string, OverviewFrame>()
+const overviewPrimeListeners = new Set<(source:string,frame:OverviewFrame)=>void>()
+function saveOverviewFrame(source: string, o: Overview, baseline: boolean): OverviewFrame {
+  const previous = overviewPrime.get(source), old = previous?.overview.wrt
+  const reboot = !!(old && o.wrt && o.wrt.uptime < old.uptime)
+  const h = !reboot && previous ? previous.histories : newHistory()
+  const cpus = o.wrt?.cpus ?? []
+  const sameBoot = !!(old && o.wrt && !reboot)
+  const keepCpu = baseline && sameBoot && cpus.length > 0 && cpus.length === old!.cpus?.length && cpus.every((c,i)=>c.usage===undefined && c.id===old!.cpus?.[i]?.id)
+  const keepTraffic = baseline && sameBoot
+  const overview = keepTraffic || keepCpu ? {...o,
+    ...(keepTraffic ? {traffic:previous!.overview.traffic} : {}),
+    ...(keepCpu ? {wrt:{...o.wrt!,cpu:old!.cpu,cpus:old!.cpus}} : {}),
+  } : o
+  const histories = appendHistory(h,o.traffic.down,o.traffic.up,cpus)
+  // A rebase measures counters, not CPU/rates. Retain the old drawing without
+  // adding held values or artificial zero points; real new samples append later.
+  if (baseline) { histories.up=h.up; histories.down=h.down }
+  if (keepCpu) histories.cpu=h.cpu
+  const frame = {overview,histories}
+  overviewPrime.set(source,frame)
+  return frame
+}
 const overviewPrimePending = new Map<string,Promise<void>>()
+// A cached baseline is useful for static fields, but is not a completed rate/CPU warmup.
+const overviewPrimeReady = new Set<string>()
 function primeOverview(active: Controller | null) {
   if (!active || active.kind !== "openwrt") return
   const source = overviewSource(active)
   if(overviewPrimePending.has(source))return overviewPrimePending.get(source)
   homeDiagnostic({stage:"prime-start",active:active.kind,cache:overviewPrime.has(source)})
-  const pending=loadOverview(active).then(o=>{
-    if(overviewSource(active)!==source){homeDiagnostic({stage:"prime-discard"});return}
-    overviewPrime.set(source,o)
+  let cancelled = false, timer: ReturnType<typeof setTimeout> | undefined, wake: (()=>void) | undefined
+  const phaseChanged = (phase: "active" | "inactive" | "background") => {
+    if (phase === "active" || cancelled) return
+    cancelled = true
+    if (timer !== undefined) clearTimeout(timer)
+    wake?.()
+    resetOverviewSampling(active)
+  }
+  AppEvents.scenePhase.addListener(phaseChanged)
+  const publish = (o: Overview, baseline: boolean) => {
+    if(cancelled || overviewSource(active)!==source){homeDiagnostic({stage:"prime-discard"});return false}
+    const frame=saveOverviewFrame(source,o,baseline)
+    for(const fn of overviewPrimeListeners)fn(source,frame)
+    return true
+  }
+  const pending=(async()=>{
+    const first = await loadOverview(active)
+    if (!publish(first,true)) return
+    // CpuSampler needs a counter delta; ratePrevious needs >= 0.5 s. Wait after
+    // the response, not after launch, so even a slow first RPC gets a real delta.
+    await new Promise<void>(resolve=>{wake=resolve;timer=setTimeout(resolve,1000)})
+    if (cancelled || overviewSource(active)!==source) return
+    const second = await loadOverview(active)
+    if (!publish(second,false)) return
+    overviewPrimeReady.add(source)
     homeDiagnostic({stage:"prime-success",cache:true})
-    for(const fn of overviewPrimeListeners)fn(source,o)
-  }).catch(e=>{homeDiagnostic({stage:"prime-failure",reason:homeFailure(e)},false)}).finally(()=>{overviewPrimePending.delete(source)})
+  })().catch(e=>{homeDiagnostic({stage:"prime-failure",reason:homeFailure(e)},false)}).finally(()=>{
+    if (timer !== undefined) clearTimeout(timer)
+    AppEvents.scenePhase.removeListener(phaseChanged)
+    overviewPrimePending.delete(source)
+  })
   overviewPrimePending.set(source,pending)
   return pending
 }
 function OverviewPage({ active, version, onSwitch, onClose, selected = true }: { active: Controller | null; version: number; onSwitch: () => void; onClose?: () => void; selected?: boolean }) {
   const prefs = usePreferences(["connectionBackground"])
   const [hosts, setHosts] = useState<string[]>([])
-  const [ov, setOv] = useState<Overview | null>(() => (active ? overviewPrime.get(overviewSource(active)) ?? null : null))
+  const [ov, setOv] = useState<Overview | null>(() => (active ? overviewPrime.get(overviewSource(active))?.overview ?? null : null))
   const [err, setErr] = useState("")
-  const [histories, setHistories] = useState(newHistory)
+  const [histories, setHistories] = useState(() => (active ? overviewPrime.get(overviewSource(active))?.histories : undefined) ?? newHistory())
   const [sampleSource,setSampleSource]=useState(() => (active ? overviewSource(active) : ""))
   const [cpuOpen,setCpuOpen]=useState(false)
   const source=active?overviewSource(active):""
@@ -217,9 +268,9 @@ function OverviewPage({ active, version, onSwitch, onClose, selected = true }: {
   const live = showCharts || priming
   useEffect(()=>{homeDiagnostic({stage:"home-mount",active:active?.kind??"none",selected,cache:overviewPrime.has(source),ov:!!ov})},[])
   useEffect(()=>{homeDiagnostic({stage:"home-state",selected,foreground,cache:overviewPrime.has(source),ov:!!ov,pending:overviewPrimePending.has(source)})},[source,selected,foreground,!!ov])
-  useEffect(() => { setHistories(newHistory()); setOv(overviewPrime.get(source) ?? null); setSampleSource(source); setCpuOpen(false) }, [source])
+  useEffect(() => { const frame=overviewPrime.get(source);setHistories(frame?.histories??newHistory());setOv(frame?.overview??null);setSampleSource(source);setCpuOpen(false) }, [source])
   useEffect(()=>{
-    const receive=(key:string,o:Overview)=>{if(key===source){homeDiagnostic({stage:"home-receive",cache:true});setOv(o);setSampleSource(key);setErr("")}}
+    const receive=(key:string,frame:OverviewFrame)=>{if(key===source){homeDiagnostic({stage:"home-receive",cache:true});setOv(frame.overview);setHistories(frame.histories);setSampleSource(key);setErr("")}}
     overviewPrimeListeners.add(receive)
     const cached=overviewPrime.get(source);if(cached)receive(source,cached)
     return()=>{overviewPrimeListeners.delete(receive)}
@@ -229,39 +280,41 @@ function OverviewPage({ active, version, onSwitch, onClose, selected = true }: {
     if (!active || !live) return
     if (active.kind !== "openwrt") { setErr("主页仅支持 OpenWrt 路由器数据，请在设置添加 OpenWrt"); return }
     // Do not invalidate the launch request that loadOverview deduplicates with this reader.
-    if(!overviewPrimePending.has(source)){homeDiagnostic({stage:"sampling-reset",pending:false});resetOverviewSampling(active)}
-    // Rebase after a pause: a delta spanning the hidden interval is not a live
-    // sample. Keep the last same-source CPU display until the next valid delta.
-    const previousCpu = sampleSource === source ? ov?.wrt : undefined
-    let alive = true, refreshing = false, baselining = true
+    const rebasing = !overviewPrimePending.has(source)
+    if(rebasing){homeDiagnostic({stage:"sampling-reset",pending:false});resetOverviewSampling(active)}
+    // A paused interval is not a live sample. Restore the complete same-source
+    // display snapshot while taking the new baseline, then resume real deltas.
+    let alive = true, refreshing = false, baselining = rebasing
     async function refresh() {
-      if (!alive || refreshing) return
+      // The warmup publishes both samples to this reader. Do not race its
+      // second sample with a near-simultaneous page tick (zero CPU delta).
+      if (!alive || refreshing || overviewPrimePending.has(source)) return
       refreshing = true
       try {
         const o = await loadOverview(active!)
         if (alive && overviewSource(active!)===source) {
           homeDiagnostic({stage:"refresh-success"})
-          const cpus = o.wrt?.cpus ?? []
-          const keepCpu = baselining && previousCpu && o.wrt && o.wrt.uptime >= previousCpu.uptime && cpus.length > 0 && cpus.length === previousCpu.cpus?.length && cpus.every((c,i)=>c.usage===undefined && c.id===previousCpu.cpus?.[i]?.id)
+          const frame = saveOverviewFrame(source,o,baselining)
           baselining = false
           setSampleSource(source)
-          setOv(keepCpu ? {...o,wrt:{...o.wrt!,cpu:previousCpu.cpu,cpus:previousCpu.cpus}} : o)
+          setOv(frame.overview)
+          setHistories(frame.histories)
           setErr("")
-          setHistories(h=>{
-            const next = appendHistory(h,o.traffic.down,o.traffic.up,cpus)
-            // The baseline is not a new CPU measurement: neither append a held
-            // value nor clear existing points. Real unknown/reset samples still
-            // follow appendHistory's original discontinuity handling afterwards.
-            if (keepCpu) next.cpu = h.cpu
-            return next
-          })
         }
         else homeDiagnostic({stage:"refresh-discard"})
       } catch (e) { homeDiagnostic({stage:"refresh-failure",reason:homeFailure(e)},false);if (alive) setErr(msg(e)) }
       finally { refreshing = false }
     }
     void refresh(); const t = setInterval(refresh, 1000)
-    return () => { alive = false; clearInterval(t);homeDiagnostic({stage:"sampling-reset",pending:overviewPrimePending.has(source)});resetOverviewSampling(active!) }
+    return () => {
+      alive = false; clearInterval(t)
+      // The bounded foreground warmup owns its two-sample baseline. A hidden
+      // home receiving sample one must not erase it before sample two. Its scene
+      // listener still invalidates sampling immediately on background/inactive.
+      if (!overviewPrimePending.has(source)) {
+        homeDiagnostic({stage:"sampling-reset",pending:false});resetOverviewSampling(active!)
+      }
+    }
   }, [source, version, live])
   useEffect(() => {
     setHosts([])
@@ -750,14 +803,14 @@ function Root() {
     // recover transient failures (including an invalidated sampling epoch) here,
     // and also handle a controller that becomes available after run().
     homeDiagnostic({stage:"root-state",active:active?.kind??"none",foreground,cache:overviewPrime.has(homeSource),pending:overviewPrimePending.has(homeSource)})
-    if (!active || active.kind !== "openwrt" || !foreground || overviewPrime.has(homeSource)) return
+    if (!active || active.kind !== "openwrt" || !foreground || overviewPrimeReady.has(homeSource)) return
     let alive = true
     const retry = () => {
       if (!alive) return
-      if (overviewPrime.has(homeSource)) { clearInterval(timer); return }
+      if (overviewPrimeReady.has(homeSource)) { clearInterval(timer); return }
       homeDiagnostic({stage:"root-retry",foreground:true,pending:overviewPrimePending.has(homeSource)})
       void primeOverview(active)?.then(() => {
-        if (alive && overviewPrime.has(homeSource)) clearInterval(timer)
+        if (alive && overviewPrimeReady.has(homeSource)) clearInterval(timer)
       })
     }
     const timer = setInterval(retry, 1000)

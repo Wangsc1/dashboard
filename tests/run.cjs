@@ -737,7 +737,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) { const lazy = ['proxies','rules','connections'].includes(ids[i]) && ids[i] !== id; assert.equal(nodes(tree, types[i]).length, lazy ? 0 : 1); if (!lazy) assert.equal(nodes(tree, types[i])[0].props.selected, ids[i] === id) }
     }
-    assert.equal(api.VERSION, '1.5.213'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.6'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('独立导航栈保留业务owner和身份，只有选中页提供可见工具栏', () => {
     pref.savePreferences({ defaultPage: 'overview' })
@@ -895,7 +895,9 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     unmount()
   })
   await test('启动页非主页：主页未选中也先取一次首屏数据，取到后停止轮询；选中后正常轮询', async () => {
-    const router = api.listControllers().find(x => x.kind === 'openwrt'); assert.ok(router)
+    // Use a genuinely cold source: earlier tests now leave a complete display snapshot.
+    const base = api.listControllers().find(x => x.kind === 'openwrt'); assert.ok(base)
+    const router = {...base,id:'cold-unselected-home',url:'http://cold-unselected-home.invalid'}
     let uptime = 1
     responder = (_url, init) => {
       const body = JSON.parse(init.body)
@@ -1681,14 +1683,18 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     await nodes(tree, 'Button').find(n => n.props.systemImage === 'bolt.fill').props.action(); await flush()
     assert.equal(confirms.length, before); assert.ok(calls.length > 0); unmount()
   })
-  await test('策略组：切换立即更新选中、失败回滚；测速期间节点按钮不禁用；选中节点圆点保持延迟颜色', async () => {
+  await test('策略组：切换立即更新选中、失败回滚；测速期间节点按钮不禁用；延迟文字补位且保持颜色', async () => {
     pref.savePreferences({ nodeSort: 'default' })
     const g = { name: 'SwitchGroup', type: 'Selector', all: ['A', 'B'], now: 'A', delays: { A: 30, B: 400 } }
     const open = async () => { let t = render(pages.GroupSection, { c, g, onChanged() {} }, true); await flush(); nodes(t, 'Button').find(n => n.props.frame?.alignment === 'leading').props.action(); t = render(pages.GroupSection, { c, g, onChanged() {} }); await flush(); return t }
     const cards = t => nodes(t, 'Button').filter(n => n.props.children?.length && n.props.frame?.maxWidth === 'infinity' && !n.props.frame.alignment)
     let tree = await open()
     assert.ok(cards(tree).every(n => !n.props.disabled)); assert.ok(!nodes(tree, 'Button').find(n => n.props.systemImage === 'bolt.fill').props.disabled)
-    const selDot = nodes(cards(tree)[0], 'Circle')[0]; assert.equal(selDot.props.fill, api.delayColor(30))
+    assert.equal(nodes(tree, 'Circle').length, 0, 'group and node delay dots are removed, not hidden placeholders')
+    const delayRow = nodes(cards(tree)[0], 'HStack').find(row => text(row.props.children?.[0]) === '30ms')
+    assert.ok(delayRow); assert.equal(delayRow.props.children[0].type, 'Text', 'delay text occupies the former leading-dot position')
+    assert.equal(delayRow.props.children[0].props.foregroundStyle, api.delayColor(30))
+    assert.equal(delayRow.props.padding, undefined); assert.equal(delayRow.props.children[0].props.padding, undefined)
     let release; responder = () => ({ wait: new Promise(r => { release = r }), status: 204 })
     const pending = cards(tree)[1].props.action(); tree = render(pages.GroupSection, { c, g, onChanged() {} })
     assert.ok(text(cards(tree)[1]).includes('B')); assert.equal(nodes(cards(tree)[1], 'Image').length, 1)
@@ -1714,7 +1720,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     responder = u => ({ body: { delay: u.includes('/proxies/A/') ? 51 : 62 } })
     await nodes(tree, 'Button').find(n => n.props.systemImage === 'bolt.fill').props.action(); await flush(); tree = render(pages.GroupSection, props)
     assert.ok(text(tree).includes('51ms'))
-    for (const n of cards(tree)) { const dot = nodes(n, 'Circle').find(x => x.props.frame?.width === 6), label = nodes(n, 'Text').find(x => /ms$/.test(String(x.props.children))); assert.equal(label.props.foregroundStyle, dot.props.fill); assert.notEqual(label.props.foregroundStyle, 'white') }
+    for (const n of cards(tree)) { const label = nodes(n, 'Text').find(x => /ms$/.test(String(x.props.children))); assert.equal(nodes(n, 'Circle').length, 0); assert.equal(label.props.foregroundStyle, api.delayColor(parseInt(text(label), 10))); assert.notEqual(label.props.foregroundStyle, 'white') }
     unmount()
     tree = render(pages.GroupSection, props, true); await flush()
     nodes(tree, 'Button').find(n => n.props.frame?.alignment === 'leading').props.action(); tree = render(pages.GroupSection, props); await flush()
@@ -1954,7 +1960,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       const diagnostic = logs.filter(x => x.startsWith('[preferences-icon]'))
       for (const stage of ['change','accepted','proxies-render','group-render']) assert.ok(diagnostic.some(x => x.includes('stage=' + stage) && x.includes('enabled=false')))
       assert.ok(diagnostic.every(x => !x.includes('private.invalid') && !x.includes('private-group-name') && !x.includes('secret-')))
-      assert.ok(diagnostic.every(x => x.includes('build=1.5.213') && /instance=[a-z0-9]+/.test(x)))
+      assert.ok(diagnostic.every(x => x.includes('build=1.6') && /instance=[a-z0-9]+/.test(x)))
       assert.equal(new Set(diagnostic.map(x => x.match(/instance=([^ ]+)/)[1])).size, 1)
     } finally { context.console = originalConsole; unmount(); pref.savePreferences({ customIcons: true, testURL: 'https://www.gstatic.com/generate_204' }) }
   })

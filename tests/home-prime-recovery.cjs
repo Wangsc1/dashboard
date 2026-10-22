@@ -43,7 +43,7 @@ async function tick(){for(const timer of [...intervals.values()])await timer.fn(
   context.fetch=async(url,init)=>{const response=await original(url,init);if(first&&init.body.startsWith('[')){first=false;await wait}return response}
   app.primeOverview(c);await settle();const root=owner(app.Root);root.render({});await settle()
   api.resetOverviewSampling(c);release();await settle();const reads=batches
-  await tick();assert.equal(batches,reads+1,'invalidated launch must get a fresh sampling epoch')
+  await tick();assert.equal(batches,reads+2,'invalidated launch must warm a fresh two-sample epoch')
   const page=owner(app.OverviewPage);assert.equal(frame(page.render({active:c,version:0,selected:false,onSwitch(){}})).overview.wrt.model,'Recovery board')
   await settle();page.close();root.close();context.fetch=original;assert.equal(intervals.size,0);assert.equal(sceneListeners.size,0)
  })
