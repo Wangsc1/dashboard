@@ -16,10 +16,21 @@ function contrast(a,b){return (Math.max(lum(a),lum(b))+0.05)/(Math.min(lum(a),lu
  await test('RAM条仍按段计数',()=>{
    const ram=home.CapacityBars({fraction:0.04,tone:'#a179d1'});assert.equal(nodes(ram,'RoundedRectangle').length,24);assert.equal(nodes(ram,'RoundedRectangle').filter(n=>n.props.fill.opacity===0.85).length,1)
  })
- await test('磁盘原生连续细条：0/低于一段/非整百分比/满/未知/非法size，不造最小值',()=>{
-   for(const width of [120,336])for(const r of [0,0.001,0.012345,0.333333,1,1.5]){const b=nodes(geo(home.DiskCapacityBar({used:r*10000,size:10000}),width),'RoundedRectangle');assert.equal(b.length,2);assert.ok(Math.abs(b[1].props.frame.width-Math.min(1,r)*width)<1e-10);assert.equal(b[1].props.frame.height,8)}
-   for(const size of [undefined,0,-1,NaN,Infinity])assert.equal(nodes(geo(home.DiskCapacityBar({used:5,size}),336),'RoundedRectangle').length,1)
-   for(const used of [undefined,-1,NaN,Infinity])assert.equal(nodes(geo(home.DiskCapacityBar({used,size:100}),336),'RoundedRectangle').length,1)
+ await test('磁盘青色50段圆角条：24%为12段；零/部分段/满/未知保留真实比例',()=>{
+   for(const width of [25,120,336])for(const r of [0,0.001,0.012345,0.24,0.333333,1,1.5]){
+     const row=geo(home.DiskCapacityBar({used:r*10000,size:10000}),width)
+     assert.equal(row.type,'HStack');assert.equal(row.props.frame.height,10);assert.equal(row.props.children.length,50)
+     const b=nodes(row,'RoundedRectangle'),base=b.filter(n=>typeof n.props.fill==='object'),active=b.filter(n=>n.props.fill==='#00bdc8')
+     assert.equal(base.length,50);assert.ok(base.every(n=>n.props.fill.color==='#00bdc8'&&n.props.fill.opacity===0.12&&n.props.frame.height===10))
+     const fullWidth=base.reduce((n,b)=>n+b.props.frame.width,0),filled=active.reduce((n,b)=>n+b.props.frame.width,0)
+     assert.ok(Math.abs(filled/fullWidth-Math.min(1,r))<1e-10)
+     assert.ok(Math.abs(fullWidth+row.props.spacing*49-width)<1e-8)
+     if(r===0.24)assert.equal(active.length,12)
+     if(r===0)assert.equal(active.length,0)
+     for(const cell of row.props.children){const shapes=nodes(cell,'RoundedRectangle');if(shapes.length===2)assert.ok(shapes[1].props.frame.width<=shapes[0].props.frame.width)}
+   }
+   for(const size of [undefined,0,-1,NaN,Infinity]){const b=nodes(geo(home.DiskCapacityBar({used:5,size}),336),'RoundedRectangle');assert.equal(b.length,50);assert.ok(b.every(n=>typeof n.props.fill==='object'))}
+   for(const used of [undefined,-1,NaN,Infinity]){const b=nodes(geo(home.DiskCapacityBar({used,size:100}),336),'RoundedRectangle');assert.equal(b.length,50);assert.ok(b.every(n=>typeof n.props.fill==='object'))}
    const d=home.DiskCard({w:{disk:{used:123,size:10000,avail:9877,mount:'/',device:'/dev/root'}}});assert.equal(nodes(d,home.DiskCapacityBar).length,1);assert.equal(nodes(d,home.CapacityBars).length,0);assert.ok(text(d).includes('/dev/root'))
  })
  await test('负载日夜对应三色对比提高且不篡改高度，灰卡取样对比>=3',()=>{

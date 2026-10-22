@@ -84,12 +84,16 @@ export function LoadCard({w}:{w?:WrtInfo}) {
 export function DiskCapacityBar({used,size}:{used?:number;size?:number}) {
   const known=size!==undefined&&Number.isFinite(size)&&size>0&&used!==undefined&&Number.isFinite(used)&&used>=0
   const fraction=known?Math.min(1,used/size):undefined
-  return <GeometryReader modifiers={modifiers().frame({height:8}).frame({minWidth:0,maxWidth:"infinity"})}>{geometry=>{
-    const W=Math.max(1,geometry.size.width),fill=fraction===undefined?undefined:W*fraction
-    return <ZStack alignment="leading" frame={{width:W,height:8}}>
-      <RoundedRectangle cornerRadius={4} fill={{color:"#859de0",opacity:0.12}} frame={{width:W,height:8}}/>
-      {fill===undefined?null:<RoundedRectangle cornerRadius={Math.min(4,fill/2)} fill="#859de0" frame={{width:fill,height:8}}/>}
-    </ZStack>
+  return <GeometryReader modifiers={modifiers().frame({height:10}).frame({minWidth:0,maxWidth:"infinity"})}>{geometry=>{
+    const W=Math.max(1,geometry.size.width),count=50,gap=Math.min(2,W/(count*2)),cell=(W-gap*(count-1))/count,tone="#00bdc8"
+    return <HStack spacing={gap} frame={{width:W,height:10}}>{Array.from({length:count},(_,i)=>{
+      // A fractional final segment preserves the actual ratio instead of rounding up.
+      const fill=fraction===undefined?0:cell*Math.max(0,Math.min(1,fraction*count-i))
+      return <ZStack key={String(i)} alignment="leading" frame={{width:cell,height:10}}>
+        <RoundedRectangle cornerRadius={Math.min(2,cell/2)} fill={{color:tone,opacity:0.12}} frame={{width:cell,height:10}}/>
+        {fill>0?<RoundedRectangle cornerRadius={Math.min(2,fill/2)} fill={tone} frame={{width:fill,height:10}}/>:null}
+      </ZStack>
+    })}</HStack>
   }}</GeometryReader>
 }
 export function DiskCard({w}:{w?:WrtInfo}) {
