@@ -1,6 +1,6 @@
 import { NikkiManagement, NikkiSubscription, NikkiRule, NikkiFile, NikkiManagementError, NIKKI_RULE_TYPES, loadNikkiManagement, saveNikkiSubscription, deleteNikkiSubscription, updateNikkiSubscription, saveNikkiRule, deleteNikkiRule, setNikkiRulesEnabled, reorderNikkiRules, selectNikkiProfile, readNikkiFile, saveNikkiFile } from "./api"
 import { rootToolbar } from "./root-toolbar"
-import { AppEvents, Button, Divider, HStack, VStack, Text, Image, Circle, RoundedRectangle, Spacer, ScrollView, LazyVStack, NavigationStack, NavigationDestination, useObservable, NavigationLink, Menu, Picker, TextField, Toggle, Form, Section, Label, ProgressView, WebView, ZStack, modifiers, Safari, useState, useEffect } from "scripting"
+import { AppEvents, Button, Divider, HStack, VStack, Text, Image, Circle, RoundedRectangle, Spacer, ScrollView, LazyVStack, NavigationLink, Menu, Picker, TextField, Toggle, Form, Section, Label, ProgressView, WebView, ZStack, modifiers, Safari, useState, useEffect } from "scripting"
 import { Controller, Group, Conn, Rule, Provider, loadGroups, testGroup, selectProxy, loadProviders, updateProvider, loadRules, loadConnections, closeConnection, closeAllConnections, fmtBytes, fmtSpeed, fmtUptime, delayColor, loadRuntimeVersions, loadNikkiRuntime, NikkiRuntime, verifyCoreRestart, lastControllerMode, loadConfig, setMode as setControllerMode, nikkiService, nikkiServiceStatus, coreAction, CoreAction, queryDNS, webpage } from "./api"
 import { usePreferences, KernelConfigPage } from "./settings-ui"
 import { NODE_SORT_OPTIONS, savePreferences, cachedIcon, traceIconPreference, feedback } from "./preferences"
@@ -346,7 +346,7 @@ export function NikkiManagementPage({c,kind}:{c:Controller;kind:"profile"|"subsc
   // can be prebuilt/reused; identity must represent an opening, not only a component type.
   function openEdit(value:EditValue) {if(!data||work.busy)return;const snapshot="value" in value&&value.value?{...value,value:{...value.value}}:value;setEdit({...snapshot,entry:++navigation.entry,base:data} as EditTarget)}
   const entryKey=edit?source(c)+":"+edit.entry:"closed"
-  const content=edit ? edit.kind==="subscription"?<NikkiSubscriptionEditor key={entryKey} entryKey={entryKey} c={c} base={edit.base} value={edit.value} done={saved=>done(saved,edit.entry)}/>:edit.kind==="rule"?<NikkiRuleEditor key={entryKey} c={c} base={edit.base} value={edit.value} done={saved=>done(saved,edit.entry)}/>:edit.kind==="sort"?<NikkiRuleSort key={entryKey} c={c} base={edit.base} done={saved=>done(saved,edit.entry)}/>:<NikkiFileEditor key={entryKey} entryKey={entryKey} c={c} base={edit.base} file={edit.value} done={saved=>done(saved,edit.entry)}/> : <Text/>
+  const content=edit ? edit.kind==="subscription"?<NikkiSubscriptionEditor key={entryKey} entryKey={entryKey} c={c} base={edit.base} value={edit.value} done={saved=>done(saved,edit.entry)}/>:edit.kind==="rule"?<NikkiRuleEditor key={entryKey} c={c} base={edit.base} value={edit.value} done={saved=>done(saved,edit.entry)}/>:edit.kind==="sort"?<NikkiRuleSort key={entryKey} c={c} base={edit.base} done={saved=>done(saved,edit.entry)}/>:<NikkiFileEditor key={entryKey} entryKey={entryKey} c={c} base={edit.base} file={edit.value} done={saved=>{if(saved)refresh()}}/> : <Text/>
   async function removeSubscription(s:NikkiSubscription) {await work.run(()=>work.simpleConfirm("删除订阅",`确认要删除订阅「${s.name}」吗？`,"确认删除",async()=>{await deleteNikkiSubscription(work.owner,data!,s.id);if(work.current()){refresh();work.setNotice("订阅设置已删除；系统可能已自动重载")}}))}
   async function update(s:NikkiSubscription) {await work.run(async()=>{await updateNikkiSubscription(work.owner,s.id,data!);if(work.current())refresh()})}
   async function enable(f:NikkiFile) {if(data?.profile===f.key)return;await work.run(()=>work.commitConfirm(`启用「${f.name}」？将提交为 Nikki 选用配置，由系统触发重载；配置选择成功不代表内核已成功加载。`,async()=>{
@@ -355,7 +355,7 @@ export function NikkiManagementPage({c,kind}:{c:Controller;kind:"profile"|"subsc
     if(work.current())work.setNotice("配置选择已提交；系统可能已自动重载。请核实运行效果，未生效时可在服务管理单独重载")
   }))}
   const toolbar=!supported||work.changed?undefined:kind==="rule"?{topBarTrailing:<Menu accessibilityLabel="操作" label={<Image systemName="ellipsis"/>}><Button title="排序列表" disabled={!data||work.busy||data.rules.length<2} action={()=>openEdit({kind:"sort"})}/><Button title={data?.appendRules?"禁用规则":"启用规则"} disabled={!data||work.busy} action={()=>work.run(()=>work.commitConfirm(`将${data!.appendRules?"禁用":"启用"} Nikki 附加规则总开关。`,async()=>{await setNikkiRulesEnabled(work.owner,data!,!data!.appendRules);if(work.current()){refresh();work.setNotice("规则总开关已提交；系统可能已自动重载")}}))}/><Button title="添加规则" disabled={!data||work.busy} action={()=>openEdit({kind:"rule",value:null})}/></Menu>}:kind==="subscription"?{topBarTrailing:<Button title="添加订阅" systemImage="plus" labelStyle="iconOnly" disabled={!data||work.busy} action={()=>openEdit({kind:"subscription",value:null})}/>}:{topBarTrailing:<Button accessibilityLabel="刷新" disabled={work.busy} action={refresh}><Image systemName="arrow.triangle.2.circlepath"/></Button>}
-  return <ScrollView background="systemBackground" navigationTitle={title} navigationBarTitleDisplayMode="inline" toolbar={toolbar} onAppear={()=>{work.onAppear();setVisible(true)}} onDisappear={()=>{work.onDisappear();setVisible(false)}} navigationDestination={{isPresented:edit!==null&&edit.kind!=="file"&&!work.changed,onChanged:(v:boolean)=>{if(!v&&edit?.kind!=="file")done()},content:edit?.kind==="file"?<Text/>:content}} fullScreenCover={{isPresented:edit?.kind==="file"&&!work.changed,onChanged:(v:boolean)=>{if(!v)done()},content:edit?.kind==="file"?<NikkiFilePresentation key={entryKey} c={c} base={edit.base} file={edit.value} entryKey={entryKey} done={saved=>{if(saved)refresh()}} closed={()=>done(false,edit.entry)}/>:<Text/>}}>
+  return <ScrollView background="systemBackground" navigationTitle={title} navigationBarTitleDisplayMode="inline" toolbar={toolbar} onAppear={()=>{work.onAppear();setVisible(true)}} onDisappear={()=>{work.onDisappear();setVisible(false)}} navigationDestination={{isPresented:edit!==null&&!work.changed,onChanged:(v:boolean)=>{if(!v)done()},content}}>
     <VStack spacing={16} padding={16} frame={{maxWidth:"infinity"}}>
       {!supported?<Note>不可用：当前来源不是 OpenWrt 上的 Nikki，不会向其他插件发送管理请求。</Note>:work.changed?<Note error>来源已改变，请返回后重新进入；不会沿用上一来源的草稿。</Note>:<>
         {error?<><Note error>{error}</Note><Button title="重试" action={refresh}/></>:null}<Status work={work}/>
@@ -463,19 +463,8 @@ body{display:flex;flex-direction:column}#tools{display:flex;align-items:center;f
 #tools .caption{margin-left:auto;font:11px system-ui;color:var(--comment)}#editor{flex:1;min-height:0;overflow:hidden}.cm-editor{height:100%}.cm-scroller{overscroll-behavior:contain}
 </style></head><body><nav id="tools" aria-label="编辑工具"><button id="undo" title="撤销" aria-label="撤销">↶</button><button id="redo" title="重做" aria-label="重做">↷</button><button id="find" title="查找 / 替换" aria-label="查找 / 替换">⌕</button><button id="fold" title="折叠全部" aria-label="折叠全部">⊟</button><button id="unfold" title="展开全部" aria-label="展开全部">⊞</button><span class="caption">YAML</span></nav><main id="editor"></main><script>window.__nikkiGeneration=${generation};${NIKKI_EDITOR_JS}</script></body></html>`
 }
-// A real full-screen presentation outside the TabView's navigation hierarchy.
-// Seed a documented native path so both the system back button AND edge-swipe
-// pop a destination. Do not replace this with a modal cancel/save toolbar.
-export function NikkiFilePresentation({closed,...props}:{c:Controller;base:NikkiManagement;file:NikkiFile;done:(saved?:boolean)=>void;entryKey:string;closed:()=>void}) {
-  const path=useObservable<string[]>(["file"]),[exit]=useState({notified:false})
-  const closeIfPopped=()=>{if(path.value.length===0&&!exit.notified){exit.notified=true;closed()}}
-  // Native pop updates the documented observable path. Closing the cover must
-  // not depend on destination cleanup ordering, a WebView, or a pending save.
-  useEffect(()=>{path.subscribe(closeIfPopped);closeIfPopped();return()=>path.unsubscribe(closeIfPopped)},[path])
-  return <NavigationStack path={path} statusBarHidden={false} persistentSystemOverlays="visible">
-    <VStack navigationTitle="配置文件" navigationBarTitleDisplayMode="inline" background="systemBackground" frame={{maxWidth:"infinity",maxHeight:"infinity"}} onAppear={closeIfPopped} navigationDestination={<NavigationDestination>{()=> <NikkiFileEditor {...props} onExit={closeIfPopped}/>}</NavigationDestination>}/>
-  </NavigationStack>
-}
+// File editing uses the existing native push stack; hiding the tab bar here
+// preserves the full editor area without a downward modal dismissal.
 // Recovery is source/file scoped and memory-only. A canceled confirmation, failed
 // write or navigation teardown must not discard the last complete local document.
 const nikkiFileDrafts=new Map<string,{original:string;text:string}>()
@@ -605,7 +594,7 @@ export function NikkiFileEditor({c,base,file,done,entryKey="direct",onExit}:{c:C
   }
   const editorBackground=p.theme==="dark"?"#141820":p.theme==="light"?"#fff":{light:"#fff",dark:"#141820"}
   const toolbar={topBarTrailing:<Button accessibilityLabel="保存" buttonStyle="plain" disabled={!ready||!!loadError||original===null||text===original||work.busy||host.closing||work.changed} action={save}><Image systemName="checkmark.circle"/></Button>}
-  return <VStack alignment="leading" spacing={0} background={<RoundedRectangle cornerRadius={0} fill={editorBackground} ignoresSafeArea={{regions:"container",edges:"bottom"}}/>} frame={{maxWidth:"infinity",maxHeight:"infinity"}} navigationTitle={file.filename} navigationBarTitleDisplayMode="inline" toolbar={toolbar} onAppear={()=>{host.closing=false;host.exitTask=null;host.exitNotified=false;host.closedSignal=new Promise<void>(resolve=>{host.cancel=resolve});work.onAppear();setAppeared(true)}} onDisappear={()=>leaveFile()}>
+  return <VStack alignment="leading" spacing={0} tabBarVisibility="hidden" background={<RoundedRectangle cornerRadius={0} fill={editorBackground} ignoresSafeArea={{regions:"container",edges:"bottom"}}/>} frame={{maxWidth:"infinity",maxHeight:"infinity"}} navigationTitle={file.filename} navigationBarTitleDisplayMode="inline" toolbar={toolbar} onAppear={()=>{host.closing=false;host.exitTask=null;host.exitNotified=false;host.closedSignal=new Promise<void>(resolve=>{host.cancel=resolve});work.onAppear();setAppeared(true)}} onDisappear={()=>leaveFile()}>
     <Status work={work}/>{work.changed?<Note error>来源已改变，请返回后重新进入</Note>:null}
     <ZStack frame={{maxWidth:"infinity",maxHeight:"infinity",minHeight:0}}>
       {/* Keep the native host mounted from the first render, including before onAppear.
