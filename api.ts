@@ -2,7 +2,7 @@ import { TimingToken, timingToken, timing, timingReadContext, timingSpan } from 
 import { CpuSampler, CpuUsage, CpuMeta, parseCpuInfo, thermalCelsius } from "./openwrt-metrics"
 
 import { getPreferences, customHeaders, recordEvent, controllerHealth, feedback } from "./preferences"
-export const VERSION = "1.22"
+export const VERSION = "1.23"
 
 export type Kind = "clash" | "openwrt"
 export type Plugin = "openclash" | "nikki" | "mihomo"
@@ -670,7 +670,15 @@ export async function patchConfig(c: Controller, patch: Partial<ClashConfig>) {
   catch (e) { recordEvent("config", false); throw e }
 }
 export const LOG_LEVELS = ["silent", "error", "warning", "info", "debug"]
+// Canonical PATCH values are lowercase; Mihomo's GET /configs serializes TUNStack
+// as "gVisor"/"System"/"Mixed"/"Mips" (constant/tun.go String()), so display
+// matching must be case-insensitive while written values stay lowercase.
 export const TUN_STACKS: [string, string][] = [["gVisor", "gVisor"], ["system", "System"], ["mixed", "Mixed"], ["mips", "Mips"]]
+export function tunStackLabel(value: unknown): string | null {
+  if (typeof value !== "string") return null
+  const hit = TUN_STACKS.find(([canonical]) => canonical.toLowerCase() === value.toLowerCase())
+  return hit ? hit[0] : null
+}
 
 export function fmtBytes(n: number): string {
   if (!n || n < 0) return "0 B"

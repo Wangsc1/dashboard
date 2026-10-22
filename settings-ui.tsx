@@ -1,7 +1,7 @@
 import { useDetailPage, routerDetailsStatus } from "./router-details"
 import { cadenceSummary } from "./cadence-diagnostics"
 import { ScrollView, Button, Circle, GeometryReader, ZStack, RoundedRectangle, gradient, Form, HStack, Image, Menu, Picker, Section, Spacer, Text, TextField, Toggle, VStack, useEffect, useState } from "scripting"
-import { Controller, ClashConfig, LOG_LEVELS, TUN_STACKS, loadConfig, cachedKernelConfig, forgetKernelConfig, patchConfig, validateConfigPatch } from "./api"
+import { Controller, ClashConfig, LOG_LEVELS, TUN_STACKS, tunStackLabel, loadConfig, cachedKernelConfig, forgetKernelConfig, patchConfig, validateConfigPatch } from "./api"
 import { Preferences, AppLog, LogLevel, getPreferences, savePreferences, subscribePreferences, preferenceTrace, traceIconPreference, feedback, getLogs, clearLogs, exportLogs, logTime, getHeaderText, saveHeaders, clearImageCache } from "./preferences"
 
 import { makeBackup, restoreBackup, validateBackup } from "./cloud-backup"
@@ -319,8 +319,8 @@ export function KernelConfigPage({ c }: { c: Controller }) {
         <HStack spacing={12} padding={{ vertical: 12 }}>{icon("shield", "systemPurple")}{toggle("tun", "TUN 模式")}</HStack>
         {separator()}
         <HStack spacing={12} padding={{ vertical: 12 }}>{icon("rhombus", "systemIndigo")}<Text>TUN 堆栈</Text><Spacer />
-          <Menu disabled={busy || !provided("tun.stack")} label={<HStack spacing={6} frame={{ height: 31 }}><Text foregroundStyle="secondaryLabel">{TUN_STACKS.find(([value]) => value === (dirty["tun.stack"] ?? (cfg as any)?.tun?.stack))?.[1] ?? (busy ? "" : "未知")}</Text><Image systemName="chevron.up.chevron.down" font={12} foregroundStyle="secondaryLabel" /></HStack>}>
-            {TUN_STACKS.map(([value, label]) => <Button key={value} title={label + ((dirty["tun.stack"] ?? (cfg as any)?.tun?.stack) === value ? " ✓" : "")} action={() => change("tun.stack", value)} />)}
+          <Menu disabled={busy || !provided("tun.stack")} label={<HStack spacing={6} frame={{ height: 31 }}><Text foregroundStyle="secondaryLabel">{tunStackLabel(dirty["tun.stack"] ?? (cfg as any)?.tun?.stack) ? TUN_STACKS.find(([v]) => v === tunStackLabel(dirty["tun.stack"] ?? (cfg as any)?.tun?.stack))![1] : (busy ? "" : "未知")}</Text><Image systemName="chevron.up.chevron.down" font={12} foregroundStyle="secondaryLabel" /></HStack>}>
+            {TUN_STACKS.map(([value, label]) => <Button key={value} title={label + (tunStackLabel(dirty["tun.stack"] ?? (cfg as any)?.tun?.stack) === value ? " ✓" : "")} action={() => change("tun.stack", value)} />)}
           </Menu>
         </HStack>
       </>)}
