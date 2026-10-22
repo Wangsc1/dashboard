@@ -3,6 +3,7 @@ const fs=require('node:fs'),path=require('node:path'),vm=require('node:vm')
 const harness=fs.readFileSync(path.join(__dirname,'run.cjs'),'utf8').split(';(async () => {')[0]
 const checks=String.raw`
 const deep=(a,b)=>assert.equal(JSON.stringify(a),JSON.stringify(b))
+function parseRects(svg){return [...svg.matchAll(/<rect ([^>]+)\/>/g)].map(m=>Object.fromEntries([...m[1].matchAll(/([\w-]+)="([^"]*)"/g)].map(a=>[a[1],a[2]])))}
 const {CpuSampler,parseCpuStat,parseCpuInfo,thermalCelsius,newHistory,appendHistory}=metrics
 const stat0='cpu  100 0 20 880 0 0 0 0 0 0\ncpu0 50 0 10 440 0 0 0 0 0 0\ncpu2 40 0 10 450 0 0 0 0 0 0\ncpu12 10 0 0 490 0 0 0 0 0 0\n'
 const stat1='cpu  140 0 30 930 0 0 0 0 0 0\ncpu0 70 0 15 465 0 0 0 0 0 0\ncpu2 50 0 20 480 0 0 0 0 0 0\ncpu12 20 0 5 525 0 0 0 0 0 0\n'
@@ -74,9 +75,53 @@ function fixture(url,init){const req=JSON.parse(init.body),[,object,method,args]
    const one=render(home.GridPlot,{samples:[50],tone:'#3485eb',percent:true,running:false},true);assert.ok(one.props.code.includes('d=""'));assert.ok(!one.props.code.includes('L 0,'))
    const bars=home.CapacityBars({fraction:0.5,tone:'#a179d1'});assert.equal((bars.props.code.match(/<rect /g)||[]).length,24)
  })
+ await test('低负载0.09/0.06/0.02：每根条从底部连续填充真实高度，非亮段数/最小一像素',()=>{
+   const w={load:[0.09,0.06,0.02],cpus:[{id:'cpu'},...Array.from({length:16},(_,i)=>({id:'cpu'+i}))]},card=home.LoadCard({w}),bars=nodes(card.props.bars,home.LoadBars)
+   deep(nodes(card.props.footer,home.MetricFooterValue).map(n=>n.props.value),['0.09','0.06','0.02']);assert.equal(bars.length,3)
+   for(let i=0;i<3;i++){
+     assert.equal(bars[i].props.fraction,w.load[i]/16)
+     const svg=home.LoadBars(bars[i].props),rects=parseRects(svg.props.code),fg=rects.filter(r=>r.opacity==='0.85'),h=24*w.load[i]/16
+     assert.equal(rects.filter(r=>r.opacity==='0.12').length,24);assert.equal(fg.length,24)
+     for(const r of fg){assert.ok(Math.abs(Number(r.height)-h)<1e-12);assert.ok(Number(r.height)>0&&Number(r.height)<1);assert.equal(Number(r.y)+Number(r.height),26);assert.ok(Number(r.x)>=0&&Number(r.x)+Number(r.width)<=144);assert.ok(Number(r.rx)<=h/2)}
+     deep(svg.props.frame,{minWidth:0,maxWidth:'infinity',height:28})
+   }
+   const ram=parseRects(home.CapacityBars({fraction:0.04,tone:'#a179d1'}).props.code);assert.equal(ram.length,24);assert.equal(ram.filter(r=>r.opacity==='0.85').length,1);assert.ok(ram.every(r=>r.height==='24'))
+ })
+ await test('负载0/未知/超核数：未知不伪装0，柱高封顶但真实数字不截断',()=>{
+   const code=fraction=>home.LoadBars({fraction,tone:'#77c59a'}).props.code
+   const zero=parseRects(code(0)),unknown=parseRects(code(undefined)),over=parseRects(code(2))
+   assert.equal(zero.filter(r=>r.opacity==='0.85'&&r.height==='0').length,24);assert.equal(unknown.filter(r=>r.opacity==='0.85').length,0);assert.ok(code(undefined).includes('负载未知'));assert.ok(!code(0).includes('未知'))
+   assert.equal(over.length,48);assert.ok(over.every(r=>r.height==='24'));assert.ok(!code(2).includes('NaN'))
+   for(const n of [NaN,Infinity,-1])assert.ok(code(n).includes('负载未知'))
+   const card=home.LoadCard({w:{load:[0,32,undefined],cpus:[{id:'cpu'},...Array.from({length:16},(_,i)=>({id:'cpu'+i}))]}})
+   deep(nodes(card.props.footer,home.MetricFooterValue).map(n=>n.props.value),['0.00','32.00','--']);deep(nodes(card.props.bars,home.LoadBars).map(n=>n.props.fraction),[0,2,undefined])
+   const noCores=home.LoadCard({w:{load:[0.09,0.06,0.02]}});assert.ok(nodes(noCores.props.bars,home.LoadBars).every(n=>n.props.fraction===undefined));deep(nodes(noCores.props.footer,home.MetricFooterValue).map(n=>n.props.value),['0.09','0.06','0.02'])
+ })
+ await test('RAM/负载共同三槽等高约束、两列受限宽且双行底栏可随字体扩高',()=>{
+   const row=home.HomeDashboard({overview:null,histories:newHistory(),running:false,onCpu(){}}).props.children[2]
+   deep(row.props.fixedSize,{horizontal:false,vertical:true});assert.equal(row.props.spacing,16)
+   const ram=home.RamCard({w:{memTotal:16*1024**3,memFree:15*1024**3}}),load=home.LoadCard({w:{load:[0.09,0.06,0.02]}})
+   for(const card of [ram,load]){
+     assert.equal(card.type,home.CompactMetricCard)
+     const slots=home.CompactMetricCard(card.props);assert.equal(slots.type,home.HomeCard);assert.equal(slots.props.stretchCard,true);assert.equal(slots.props.children.length,3);assert.equal(slots.props.children[0].type,'HStack');assert.equal(nodes(slots.props.children[0],'Text')[0].props.font,16)
+     const native=home.HomeCard(slots.props),steps=native.props.modifiers.steps,frame=steps.find(s=>s[0]==='frame')[1]
+     deep(frame,{minWidth:0,maxWidth:'infinity',alignment:'leading',maxHeight:'infinity'});assert.ok(steps.findIndex(s=>s[0]==='frame')<steps.findIndex(s=>s[0]==='background'));assert.equal(frame.height,undefined)
+     for(const footer of nodes(card.props.footer,home.MetricFooterValue)){
+       const n=home.MetricFooterValue(footer.props);deep(n.props.frame,{minWidth:0,maxWidth:'infinity'});deep(n.props.fixedSize,{horizontal:false,vertical:true});assert.equal(n.props.spacing,3);deep(nodes(n,'Text').map(t=>t.props.font),[12,10]);assert.ok(nodes(n,'Text').every(t=>t.props.lineLimit===undefined))
+     }
+   }
+   assert.equal(ram.props.bars.type,home.CapacityBars);assert.equal(home.CapacityBars(ram.props.bars.props).props.frame.height,28);assert.ok(nodes(load.props.bars,home.LoadBars).every(n=>home.LoadBars(n.props).props.frame.height===28))
+   // Verifies native constraints, not actual iOS bounds or Dynamic Type rendering.
+ })
+ await test('主页/CPU详情与其他页面同款系统白底灰卡，移除渐变和阴影',()=>{
+   assert.equal(home.HOME_BG,'systemBackground');const card=home.HomeCard({children:[]}),bg=card.props.modifiers.steps.find(s=>s[0]==='background')[1];assert.equal(bg.props.fill,'secondarySystemBackground');assert.equal(card.props.foregroundStyle,'label');assert.equal(card.props.shadow,undefined)
+   const detail=home.CpuDetails({overview:null,histories:newHistory(),running:false,onDismiss(){}});assert.equal(nodes(detail,'ScrollView')[0].props.background,'systemBackground')
+   const source=fs.readFileSync(path.join(root,'home-ui.tsx'),'utf8');assert.ok(!source.includes('gradient('));assert.ok(!source.includes('shadow='));assert.ok(source.includes('#77c59a'));assert.ok(source.includes('#3485eb'))
+ })
  await test('sheet全部唯一逻辑核可滚动到达、无重复采样器，原生单X无自绘圆底',()=>{
    const overview={wrt:{release:'OpenWrt',uptime:100,arch:'x86_64',kernel:'6.6.80',model:'Board',cpus:[{id:'cpu',usage:10},...Array.from({length:17},(_,i)=>({id:'cpu'+i,usage:i}))],cpuMeta:{}}}
    let closed=0;const sheet=home.CpuDetails({overview,histories:newHistory(),running:false,onDismiss(){closed++}});assert.equal(sheet.type,'NavigationStack');deep(sheet.props.presentationDetents,['large']);assert.equal(nodes(sheet,'ScrollView').length,1);assert.equal(nodes(sheet,home.CoreCard).length,17);assert.equal(new Set(nodes(sheet,home.CoreCard).map(n=>n.props.cpu.id)).size,17)
+   for(const label of ['Uptime','Arch','Cpu','Kernel','Board']) {const n=nodes(sheet,'Text').find(n=>text(n)===label);assert.ok(n,label);assert.equal(n.props.foregroundStyle,'label')}
    const sc=nodes(sheet,'ScrollView')[0],x=sc.props.toolbar.topBarTrailing;assert.equal(x.props.systemImage,'xmark');assert.equal(nodes(x,'Circle').length,0);x.props.action();assert.equal(closed,1)
    const core=home.CoreCard({cpu:{id:'cpu2'},history:[],running:false});assert.ok(text(core).includes('-- MHz'));assert.ok(text(core).includes('-- KB'))
  })

@@ -1,16 +1,12 @@
-import { Button, HStack, VStack, Text, Image, RoundedRectangle, Spacer, ScrollView, LazyVStack, SVG, NavigationStack, modifiers, gradient, useState, useEffect } from "scripting"
+import { Button, HStack, VStack, Text, Image, RoundedRectangle, Spacer, ScrollView, LazyVStack, SVG, NavigationStack, modifiers, useState, useEffect } from "scripting"
 import { Overview, WrtInfo, fmtBytes, fmtSpeed, fmtUptime } from "./api"
 import { CpuUsage, OverviewHistory } from "./openwrt-metrics"
 import { useSmoothPlot } from "./chart-ui"
-export const HOME_BG = {
-  light:gradient("linear",{colors:["#f1f0f7","#e2cff6","#dce8f8"],startPoint:"top",endPoint:"bottom"}),
-  dark:gradient("linear",{colors:["#171820","#272032","#192631"],startPoint:"top",endPoint:"bottom"}),
-}
-const INK={light:"#20232b",dark:"#e3e3ec"},PANEL={light:"#ffffff",dark:"#272833"}
-export function HomeCard({children,onOpen}:{children?:any;onOpen?:()=>void}) {
+export const HOME_BG = "systemBackground"
+const INK="label",PANEL="secondarySystemBackground"
+export function HomeCard({children,onOpen,stretchCard=false}:{children?:any;onOpen?:()=>void;stretchCard?:boolean}) {
   return <VStack alignment="leading" spacing={12} foregroundStyle={INK} font={13} onTapGesture={onOpen}
-    modifiers={modifiers().frame({minWidth:0,maxWidth:"infinity",alignment:"leading"}).padding(16).background(<RoundedRectangle cornerRadius={14} fill={PANEL}/>)}
-    shadow={{color:"rgba(71,49,100,0.07)",radius:5,x:0,y:2}}>{children}</VStack>
+    modifiers={modifiers().frame({minWidth:0,maxWidth:"infinity",alignment:"leading",...(stretchCard?{maxHeight:"infinity" as const}:{})}).padding(16).background(<RoundedRectangle cornerRadius={14} fill={PANEL}/>)}>{children}</VStack>
 }
 export function MetricNumber({value,unit="",pointSize=16,tone="label",digits=0,running=true}:{running?:boolean;value?:number;unit?:string;pointSize?:number;tone?:any;digits?:number}) {
   const target=value===undefined||!Number.isFinite(value)?"--":value.toFixed(digits)
@@ -44,13 +40,35 @@ export function CapacityBars({fraction,tone}:{fraction?:number;tone:string}) {
   const code=`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 144 28" preserveAspectRatio="none">${Array.from({length:24},(_,i)=>`<rect x="${i*6}" y="2" width="3.5" height="24" rx="1.75" fill="${tone}" opacity="${i<n?0.85:0.12}"/>`).join('')}</svg>`
   return <SVG code={code} resizable frame={{maxWidth:"infinity",height:28}}/>
 }
+// RAM keeps count-based capacity segments; load uses continuous height in every bar.
+export function LoadBars({fraction,tone}:{fraction?:number;tone:string}) {
+  const known=fraction!==undefined&&Number.isFinite(fraction)&&fraction>=0
+  const height=known?24*Math.min(1,fraction):undefined
+  const code=`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 144 28" preserveAspectRatio="none"><title>${known?`归一化负载 ${fraction}`:'负载未知'}</title>${Array.from({length:24},(_,i)=>`<rect x="${i*6}" y="2" width="3.5" height="24" rx="1.75" fill="${tone}" opacity="0.12"/>${height===undefined?'':`<rect x="${i*6}" y="${26-height}" width="3.5" height="${height}" rx="${Math.min(1.75,height/2)}" fill="${tone}" opacity="0.85"/>`}`).join('')}</svg>`
+  return <SVG code={code} resizable frame={{minWidth:0,maxWidth:"infinity",height:28}}/>
+}
+// Identical header/chart/footer slots, with flexible intrinsic height for wrapping text.
+export function CompactMetricCard({heading,trailing,bars,footer}:{heading:string;trailing?:any;bars:any;footer:any}) {
+  return <HomeCard stretchCard><HStack spacing={4}><Text font={16} fontWeight="semibold">{heading}</Text><Spacer/>{trailing}</HStack>{bars}{footer}</HomeCard>
+}
+export function MetricFooterValue({value,caption,valueEdge="center"}:{value:string;caption:string;valueEdge?:"leading"|"center"|"trailing"}) {
+  return <VStack alignment={valueEdge} spacing={3} frame={{minWidth:0,maxWidth:"infinity"}} fixedSize={{horizontal:false,vertical:true}}>
+    <Text font={12} multilineTextAlignment={valueEdge==='leading'?'leading':valueEdge==='trailing'?'trailing':'center'}>{value}</Text>
+    <Text font={10} foregroundStyle="secondaryLabel">{caption}</Text>
+  </VStack>
+}
 export function RamCard({w,running=true}:{w?:WrtInfo;running?:boolean}) {
   const total=w?.memTotal&&w.memTotal>0?w.memTotal:undefined,used=total===undefined||w?.memFree===undefined?undefined:Math.max(0,total-w.memFree),fraction=total&&used!==undefined?used/total:undefined
-  return <HomeCard><HStack><Text font={16} fontWeight="semibold">Ram</Text><Spacer/><MetricNumber running={running} value={fraction===undefined?undefined:fraction*100} unit="%" tone="#a179d1"/></HStack><CapacityBars fraction={fraction} tone="#a179d1"/><HStack><VStack alignment="leading" spacing={3}><Text font={10} foregroundStyle="secondaryLabel">已用</Text><Text font={12}>{used===undefined?'--':fmtBytes(used)}</Text></VStack><Spacer/><VStack alignment="trailing" spacing={3}><Text font={10} foregroundStyle="secondaryLabel">总计</Text><Text font={12}>{total===undefined?'--':fmtBytes(total)}</Text></VStack></HStack></HomeCard>
+  return <CompactMetricCard heading="Ram" trailing={<MetricNumber running={running} value={fraction===undefined?undefined:fraction*100} unit="%" tone="#a179d1"/>}
+    bars={<CapacityBars fraction={fraction} tone="#a179d1"/>}
+    footer={<HStack spacing={8} alignment="top"><MetricFooterValue value={used===undefined?'--':fmtBytes(used)} caption="已用" valueEdge="leading"/><MetricFooterValue value={total===undefined?'--':fmtBytes(total)} caption="总计" valueEdge="trailing"/></HStack>}/>
 }
 export function LoadCard({w}:{w?:WrtInfo}) {
   const cores=w?.cpus?.filter(c=>c.id!=='cpu').length
-  return <HomeCard><Text font={16} fontWeight="semibold">负载</Text><HStack spacing={8}>{[0,1,2].map((i)=><VStack key={String(i)} spacing={5} frame={{minWidth:0,maxWidth:"infinity"}}><CapacityBars fraction={cores&&w?.load[i]!==undefined?w.load[i]/cores:undefined} tone={['#77c59a','#dcaf7d','#79aee3'][i]}/><Text font={12} fontWeight="semibold">{w?.load[i]===undefined?'--':w.load[i].toFixed(2)}</Text><Text font={9} foregroundStyle="secondaryLabel">{[1,5,15][i]}分钟</Text></VStack>)}</HStack></HomeCard>
+  const values=[0,1,2].map(i=>w?.load[i]),tones=['#77c59a','#dcaf7d','#79aee3']
+  return <CompactMetricCard heading="负载"
+    bars={<HStack spacing={8}>{values.map((value,i)=><LoadBars key={String(i)} fraction={cores&&value!==undefined?value/cores:undefined} tone={tones[i]}/>)}</HStack>}
+    footer={<HStack spacing={8} alignment="top">{values.map((value,i)=><MetricFooterValue key={String(i)} value={value===undefined||!Number.isFinite(value)?'--':value.toFixed(2)} caption={`${[1,5,15][i]}分钟`}/>)}</HStack>}/>
 }
 export function DiskCard({w}:{w?:WrtInfo}) {
   const d=w?.disk
@@ -58,12 +76,12 @@ export function DiskCard({w}:{w?:WrtInfo}) {
 }
 export function HomeDashboard({overview,histories,running,onCpu}:{overview:Overview|null;histories:OverviewHistory;running:boolean;onCpu:()=>void}) {
   const w=overview?.wrt
-  return <VStack spacing={16}><CpuCard w={w} history={histories.cpu.cpu??[]} running={running} onOpen={onCpu}/><HStack spacing={16} alignment="top"><TrafficCard heading="上传" rate={overview?.traffic.up} total={overview?.upTotal} history={histories.up} tone="#2dbf82" running={running}/><TrafficCard heading="下载" rate={overview?.traffic.down} total={overview?.downTotal} history={histories.down} tone="#27b1cf" running={running}/></HStack><HStack spacing={16} alignment="top"><RamCard w={w} running={running}/><LoadCard w={w}/></HStack><DiskCard w={w}/></VStack>
+  return <VStack spacing={16}><CpuCard w={w} history={histories.cpu.cpu??[]} running={running} onOpen={onCpu}/><HStack spacing={16} alignment="top"><TrafficCard heading="上传" rate={overview?.traffic.up} total={overview?.upTotal} history={histories.up} tone="#2dbf82" running={running}/><TrafficCard heading="下载" rate={overview?.traffic.down} total={overview?.downTotal} history={histories.down} tone="#27b1cf" running={running}/></HStack><HStack spacing={16} alignment="top" fixedSize={{horizontal:false,vertical:true}}><RamCard w={w} running={running}/><LoadCard w={w}/></HStack><DiskCard w={w}/></VStack>
 }
 export function CpuDetails({overview,histories,running,onDismiss}:{overview:Overview|null;histories:OverviewHistory;running:boolean;onDismiss:()=>void}) {
   const w=overview?.wrt,cores=w?.cpus?.filter(x=>x.id!=='cpu')??[],rows=Array.from({length:Math.ceil(cores.length/2)},(_,i)=>cores.slice(i*2,i*2+2))
   const info=[['Uptime',w?fmtUptime(w.uptime,true):'--'],['Arch',w?.arch||'--'],['Cpu',cores.length?String(cores.length):'--'],['Kernel',w?.kernel||'--'],['Board',w?.model||'--']]
-  return <NavigationStack presentationDetents={['large']} presentationDragIndicator="visible" presentationContentInteraction="scrolls"><ScrollView navigationTitle="CPU" navigationBarTitleDisplayMode="inline" background={{light:'#f2f1f7',dark:'#191a23'}} toolbar={{topBarTrailing:<Button title="" systemImage="xmark" action={onDismiss}/>}}><LazyVStack spacing={16} padding={{horizontal:16,top:12,bottom:24}}><HomeCard><Text font={15} fontWeight="semibold">{w?.release||'系统版本未提供'}</Text><VStack spacing={5}>{info.map(([title,value])=><HStack key={title}><Text font={12} foregroundStyle="secondaryLabel">{title}</Text><Spacer/><Text font={12} multilineTextAlignment="trailing">{value}</Text></HStack>)}</VStack></HomeCard><CpuCard w={w} history={histories.cpu.cpu??[]} running={running} detail/>{rows.map((row,i)=><HStack key={String(i)} spacing={16} alignment="top">{row.map(c=><CoreCard key={c.id} cpu={c} w={w} history={histories.cpu[c.id]??[]} running={running}/>)}{row.length===1?<Spacer frame={{minWidth:0,maxWidth:'infinity'}}/>:null}</HStack>)}{!cores.length?<Text font={12} foregroundStyle="secondaryLabel">/proc/stat未提供逻辑核数据或当前账号无读取权限。</Text>:null}<Text font={10} foregroundStyle="secondaryLabel">频率/缓存为内核cpuinfo报告；未报告显示--。缓存可能为共享缓存，非每线程独占。</Text></LazyVStack></ScrollView></NavigationStack>
+  return <NavigationStack presentationDetents={['large']} presentationDragIndicator="visible" presentationContentInteraction="scrolls"><ScrollView navigationTitle="CPU" navigationBarTitleDisplayMode="inline" background={HOME_BG} toolbar={{topBarTrailing:<Button title="" systemImage="xmark" action={onDismiss}/>}}><LazyVStack spacing={16} padding={{horizontal:16,top:12,bottom:24}}><HomeCard><Text font={15} fontWeight="semibold">{w?.release||'系统版本未提供'}</Text><VStack spacing={5}>{info.map(([title,value])=><HStack key={title}><Text font={12} foregroundStyle="label">{title}</Text><Spacer/><Text font={12} foregroundStyle="label" multilineTextAlignment="trailing">{value}</Text></HStack>)}</VStack></HomeCard><CpuCard w={w} history={histories.cpu.cpu??[]} running={running} detail/>{rows.map((row,i)=><HStack key={String(i)} spacing={16} alignment="top">{row.map(c=><CoreCard key={c.id} cpu={c} w={w} history={histories.cpu[c.id]??[]} running={running}/>)}{row.length===1?<Spacer frame={{minWidth:0,maxWidth:'infinity'}}/>:null}</HStack>)}{!cores.length?<Text font={12} foregroundStyle="secondaryLabel">/proc/stat未提供逻辑核数据或当前账号无读取权限。</Text>:null}<Text font={10} foregroundStyle="secondaryLabel">频率/缓存为内核cpuinfo报告；未报告显示--。缓存可能为共享缓存，非每线程独占。</Text></LazyVStack></ScrollView></NavigationStack>
 }
 export function CoreCard({cpu,w,history,running}:{cpu:CpuUsage;w?:WrtInfo;history:number[];running:boolean}) {
   const meta=w?.cpuMeta?.[cpu.id]
