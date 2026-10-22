@@ -14,14 +14,27 @@ context.WebViewController=class {
 }
 const plot=load('plot-view')
 const props={samples:[10,20],tone:'#3485eb',percent:true,running:true}
+async function mount(){const node=render(plot.MountedCanvasPlot,props,true);await flush();node.props.onAppear();await flush();return node}
 ;(async()=>{
  await test('主页和每核共用绘制组件，不存在详情专用动画实现',()=>{
   const front=nodes(home.CpuCard({history:[10,20],running:true}),home.GridPlot)[0]
   const detail=home.SampledCpuPlot({samples:[10,20],running:true})
   assert.equal(detail.type,home.GridPlot);assert.equal(home.GridPlot(front.props).type,plot.InlineCanvasPlot);assert.equal(home.GridPlot(detail.props).type,plot.InlineCanvasPlot)
  })
+ await test('先原生出现再加载；首帧携带样本；出现/注册顺序不敏感且只加载一次',async()=>{
+  for(const early of [true,false]){
+   const node=render(plot.MountedCanvasPlot,props,true),host=hosts.at(-1)
+   if(early)node.props.onAppear()
+   await flush()
+   if(!early){assert.equal(host.html,undefined);assert.equal(timeouts.size,0);node.props.onAppear();await flush()}
+   const html=host.html;assert.ok(html.includes('const initial={'));assert.ok(html.includes('\"samples\":[10,20]'))
+   node.props.onAppear();await flush();assert.equal(host.html,html)
+   host.handlers.plotReady();await flush();assert.equal(host.sent.length,0,'initial paint needs no evaluateJavaScript round trip')
+   unmount();assert.equal(host.disposed,1);assert.equal(timeouts.size,0)
+  }
+ })
  await test('准备好前合并采样；桥接串行；最新值接续；running=false同步',async()=>{
-  render(plot.MountedCanvasPlot,props,true);await flush();const host=hosts.at(-1);assert.ok(host.html.includes('requestAnimationFrame'));assert.equal(host.sent.length,0)
+  await mount();const host=hosts.at(-1);assert.ok(host.html.includes('requestAnimationFrame'));assert.equal(host.sent.length,0)
   render(plot.MountedCanvasPlot,{...props,samples:[10,20,30]});await flush();host.handlers.plotReady();await flush();assert.equal(host.sent.length,1);assert.ok(host.sent[0].includes('[10,20,30]'))
   render(plot.MountedCanvasPlot,{...props,samples:[10,20,30,40]});await flush();render(plot.MountedCanvasPlot,{...props,samples:[10,20,30,40,50]});await flush();assert.equal(host.sent.length,1)
   host.resolve(true);await flush();assert.equal(host.sent.length,2);assert.ok(host.sent[1].includes('[10,20,30,40,50]'));host.resolve(true);await flush()
@@ -29,8 +42,8 @@ const props={samples:[10,20],tone:'#3485eb',percent:true,running:true}
  })
  await test('卸载拒绝迟到ready、挂起调用完成与后续采样；错误可见',async()=>{
   render(plot.MountedCanvasPlot,props,true);await flush();let host=hosts.at(-1);unmount();host.handlers.plotReady();await flush();assert.equal(host.sent.length,0);assert.equal(host.disposed,1)
-  render(plot.MountedCanvasPlot,props,true);await flush();host=hosts.at(-1);host.handlers.plotReady();await flush();render(plot.MountedCanvasPlot,{...props,samples:[1,2,3]});await flush();unmount();host.resolve(true);await flush();assert.equal(host.sent.length,1);assert.equal(host.disposed,1)
-  render(plot.MountedCanvasPlot,props,true);await flush();host=hosts.at(-1);host.handlers.plotReady();await flush();host.reject(Error('bridge failed'));await flush();const out=render(plot.MountedCanvasPlot,props);assert.ok(text(out).includes('曲线绘制层加载失败'));unmount()
+  await mount();host=hosts.at(-1);host.handlers.plotReady();await flush();render(plot.MountedCanvasPlot,{...props,samples:[1,2,3]});await flush();unmount();host.resolve(true);await flush();assert.equal(host.sent.length,1);assert.equal(host.disposed,1)
+  await mount();host=hosts.at(-1);host.handlers.plotReady();await flush();render(plot.MountedCanvasPlot,{...props,samples:[10,30]});await flush();host.reject(Error('bridge failed'));await flush();const out=render(plot.MountedCanvasPlot,props);assert.ok(text(out).includes('曲线绘制层加载失败'));unmount()
  })
  await test('显示槽消失时销毁子绘制层，不启动原生逐帧timer',()=>{
   let tree=render(plot.InlineCanvasPlot,props,true);assert.equal(nodes(tree,plot.MountedCanvasPlot).length,0);tree.props.onAppear();tree=render(plot.InlineCanvasPlot,props);assert.equal(nodes(tree,plot.MountedCanvasPlot).length,1);tree.props.onDisappear();tree=render(plot.InlineCanvasPlot,props);assert.equal(nodes(tree,plot.MountedCanvasPlot).length,0);unmount();assert.equal(intervals.size,0)

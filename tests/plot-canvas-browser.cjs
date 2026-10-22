@@ -50,6 +50,13 @@ const {chromium,webkit}=require(process.env.PLAYWRIGHT_PATH||'/tmp/neko-editor-b
    assert.equal(explicitResume.shown.at(-1).y,60);assert.equal(explicitResume.stats.liveLoops,0)
    // Actual canvas pixels exist, not merely a recorded drawing call.
    const pixels=await page.evaluate(()=>{const c=document.querySelector('canvas'),d=c.getContext('2d').getImageData(0,0,c.width,c.height).data;let n=0;for(let i=3;i<d.length;i+=4)if(d[i])n++;return n});assert.ok(pixels>0)
+   // A newly mounted document paints its inline data before the ready callback,
+   // with no native update/evaluate call needed for the first curve.
+   const initial={seq:101,samples:[10,30,20],running:true,tone:'#3485eb',percent:true}
+   const firstDoc=mod.exports.plotCanvasHTML(initial).replace('<script>',bridge+'<script>')
+   await page.setContent(firstDoc);await page.waitForFunction(()=>window.readyCalls===1&&window.plotCanvas?.inspect().seq===101)
+   const first=await page.evaluate(()=>{const c=document.querySelector('canvas'),d=c.getContext('2d').getImageData(0,0,c.width,c.height).data;return {state:window.plotCanvas.inspect(),pixels:d.some((v,i)=>i%4===3&&v>0)}})
+   assert.deepEqual(first.state.history,initial.samples);assert.equal(first.state.shown.at(-1).y,20);assert.equal(first.state.stats.liveLoops,0);assert.ok(first.pixels)
    // 32 isolated chart documents use the exact same runtime. Native lazy appearance
    // determines how many are mounted on iPhone, which cannot be proven here.
    await page.setContent('<body></body>');await page.evaluate(doc=>{for(let i=0;i<32;i++){const f=document.createElement('iframe');f.style='width:140px;height:76px';f.srcdoc=doc;document.body.append(f)}},doc)

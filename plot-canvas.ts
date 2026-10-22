@@ -1,5 +1,5 @@
 // Inline-only chart runtime. No fetch, URLs, credentials or per-frame native bridge calls.
-export function plotCanvasHTML() {
+export function plotCanvasHTML(initial?:{seq:number;samples:number[];tone:string;area?:boolean;running:boolean;percent:boolean;background?:string}) {
   return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'none'; img-src 'none'"><style>html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#f2f2f7} @media(prefers-color-scheme:dark){html,body{background:#1c1c1e}}canvas{display:block;width:100%;height:100%;pointer-events:none}</style></head><body><canvas></canvas><script>
 (function(){
 'use strict';
@@ -37,6 +37,8 @@ window.plotCanvas={
  history=values;scaleFrom=scale;start=performance.now();duration=1000;raf=requestAnimationFrame(frame);stats.liveLoops=1;return true;
  },pause(){active=false;stop()},inspect(){return {seq,stats:{...stats},shown:shown.map(p=>({...p})),history:history.slice(),scale}}};
  new ResizeObserver(paint).observe(canvas);document.addEventListener('visibilitychange',()=>{if(document.hidden){active=false;stop()}});window.addEventListener('pagehide',stop);
+ // The first frame uses inline samples; it does not wait for a second native bridge round trip.
+ const initial=${JSON.stringify(initial??null).replace(/</g,'\\u003c')};if(initial)window.plotCanvas.update(initial);
  Promise.resolve(window.webkit.messageHandlers.plotReady.postMessage(null)).catch(()=>{});
 })();
 </script></body></html>`
