@@ -1,62 +1,139 @@
-// Retained proxy-mode behaviour only: cache, prefetch and GLOBAL visibility. No ProxyModeControl.
+// All native owners, network, Storage and Keychain are mocked; never switch a real device.
 const fs=require('node:fs'),path=require('node:path'),vm=require('node:vm')
 const harness=fs.readFileSync(path.join(__dirname,'run.cjs'),'utf8').split(';(async () => {')[0]
 const checks=String.raw`
 let activeOwner=null
 scripting.useState=v=>{const o=activeOwner,i=o.cursor++;if(!(i in o.slots))o.slots[i]=typeof v==='function'?v():v;return [o.slots[i],v=>{o.slots[i]=typeof v==='function'?v(o.slots[i]):v}]}
 scripting.useEffect=(fn,deps=[])=>{const o=activeOwner,i=o.cursor++,old=o.slots[i];if(!old||deps.some((v,j)=>v!==old[j])){o.slots[i]=deps;o.effects.push(()=>{o.cleanups.get(i)?.();const cleanup=fn();if(typeof cleanup==='function')o.cleanups.set(i,cleanup)})}}
-function owner(fn){return {fn,slots:[],cursor:0,effects:[],cleanups:new Map(),props:null,render(props=this.props){this.props=props;this.cursor=0;activeOwner=this;try{return this.fn(props)}finally{activeOwner=null}},async flush(){this.effects.splice(0).forEach(f=>f());await settle()},dispose(){this.cleanups.forEach(f=>f());this.cleanups.clear()}}}
+function owner(fn){return {fn,slots:[],cursor:0,effects:[],cleanups:new Map(),props:null,render(props=this.props){this.props=props;this.cursor=0;activeOwner=this;try{return this.fn(props)}finally{activeOwner=null}},async flush(){const es=this.effects.splice(0);es.forEach(f=>f());await settle()},dispose(){this.cleanups.forEach(f=>f())}}}
 async function settle(){for(let i=0;i<140;i++)await Promise.resolve()}
+function deferred(){let resolve;const promise=new Promise(r=>resolve=r);return {promise,resolve}}
 let a,b,serial=0
+// The production cache is intentionally module-level, so every scenario gets distinct source keys.
 function fresh(){serial++;a={id:'proxy-mode-a-'+serial,name:'Mock A',kind:'clash',url:'http://proxy-mode-a-'+serial+'.invalid'};b={...a,id:'proxy-mode-b-'+serial,name:'Mock B',url:'http://proxy-mode-b-'+serial+'.invalid'}}
-const PROXIES={PROXY:{type:'Selector',all:['N'],now:'N'},GLOBAL:{type:'Selector',all:['PROXY'],now:'PROXY'},Hidden:{type:'Selector',all:['N'],now:'N',hidden:true},N:{type:'Shadowsocks'}}
-const mk=(mode,failProxies=false)=>url=>{if(url.includes('/providers/'))return {body:{providers:{}}};if(url.endsWith('/proxies'))return failProxies?{status:503}:{body:{proxies:PROXIES}};if(url.endsWith('/configs'))return {body:{mode}};return {body:{}}}
-const groups=tree=>nodes(tree,pages.GroupSection).map(n=>n.props.g.name)
-const patches=()=>calls.filter(x=>x.init.method==='PATCH')
-async function loadPage(page,props,mode,reset=false){responder=mk(mode);const tree=page.render(props,reset);await page.flush();return page.render(props)}
+const props=c=>({c,enabled:true,version:0})
+function picker(tree){const xs=nodes(tree,'Picker');assert.equal(xs.length,1);return xs[0]}
+function unsel(tree){const p=picker(tree);assert.equal(p.props.value,'__none__');assert.equal(p.props.disabled,true);assert.deepEqual(nodes(p,'Text').map(n=>n.props.tag),['rule','direct','global']);assert.deepEqual(nodes(p,'Text').map(text),['规则模式','直连模式','全局模式']);assert.equal(nodes(tree,'ProgressView').length,0);assert.ok(!text(tree).includes('正在读取'))}
+function proxyCacheMode(c){return pages.proxyModeCacheForTest?.(c)}
+function patches(){return calls.filter(c=>c.init.method==='PATCH')}
 ;(async()=>{
- await test('代理页不再渲染代理模式区块：标题/Picker/错误与重试全部不存在，其余区块不变',async()=>{
-  fresh();calls.length=0;pref.savePreferences({showGlobal:false,showHidden:false});responder=mk('global');pages.prefetchProxies(a);await settle()
-  const page=owner(pages.ProxiesPage);page.render({active:a,version:0,selected:true});await page.flush();let tree=page.render()
-  assert.ok(!text(tree).includes('代理模式'));assert.ok(!nodes(tree,'Picker').some(n=>n.props.title==='代理模式'));assert.ok(!nodes(tree,'Picker').some(n=>n.props.pickerStyle==='segmented'));assert.ok(!nodes(tree,'Button').some(n=>n.props.title==='重试读取代理模式'));assert.ok(!nodes(tree,'Text').some(n=>n.props.foregroundStyle==='systemRed'));assert.ok(!nodes(tree,pages.ProxyModeControl).length)
-  for(const heading of ['策略组','代理来源'])assert.equal(nodes(tree,'Text').find(t=>text(t)===heading)?.props.font,20)
-  assert.ok(nodes(tree,'Picker').some(n=>n.props.title==='节点排序')||nodes(trailing(tree.props.toolbar),'Picker').some(n=>n.props.title==='节点排序'));assert.equal(nodes(tree,pages.GroupSection).length,2);assert.equal(patches().length,0);page.dispose()
- })
- await test('prefetch fills mode cache once per source, first ProxiesPage frame uses it for GLOBAL; no duplicate read',async()=>{
-  fresh();calls.length=0;let reads=0,failProxies=false;responder=url=>{if(url.endsWith('/configs')){reads++;return {body:{mode:'global'}}}if(url.includes('/providers/'))return {body:{providers:{}}};return failProxies?{status:503}:{body:{proxies:PROXIES}}}
-  pages.prefetchProxies(a);const concurrent=pages.prefetchProxies(a);await settle();assert.equal(reads,1);assert.ok(concurrent===undefined)
-  calls.length=0;const page=owner(pages.ProxiesPage);page.render({active:a,version:0,selected:true});await page.flush();let tree=page.render();assert.equal(reads,1);assert.ok(groups(tree).includes('GLOBAL'))
-  page.dispose();calls.length=0;fresh();responder=mk('rule');pages.prefetchProxies(a);await settle();const again=owner(pages.ProxiesPage);again.render({active:a,version:0,selected:true});await again.flush();tree=again.render();assert.ok(!groups(tree).includes('GLOBAL'));again.dispose()
- })
- await test('cache is source scoped and Storage snapshot restores it for the same source only',async()=>{
-  fresh();const page=owner(pages.ProxiesPage);responder=mk('global');pages.prefetchProxies(a);await settle();page.render({active:a,version:0,selected:true},true);await page.flush();page.render()
-  assert.deepEqual(store.get('dashboard_mode_snapshot_v1'),{source:JSON.stringify(a),mode:'global'})
-  let tree=page.render({active:b,version:0,selected:true});await page.flush();tree=page.render();assert.ok(!groups(tree).includes('GLOBAL'));assert.ok(!store.get('dashboard_mode_snapshot_v1')?.source?.includes(b.id));page.dispose()
-  fresh();store.set('dashboard_mode_snapshot_v1',{source:JSON.stringify(b),mode:'global'});const restoredB=owner(pages.ProxiesPage)
-  let bTree=restoredB.render({active:b,version:0,selected:true},true);await restoredB.flush();bTree=restoredB.render();assert.ok(groups(bTree).includes('GLOBAL'));restoredB.dispose()
-  const restoredA=owner(pages.ProxiesPage)
-  let aTree=restoredA.render({active:a,version:0,selected:true},true);await restoredA.flush();aTree=restoredA.render();assert.ok(!groups(aTree).includes('GLOBAL'));restoredA.dispose()
- })
- await test('GLOBAL follows cache changes across page re-entry; unrecognised mode and failed read never show it',async()=>{
-  fresh()
-  for(const mode of ['global','rule','global','direct']){responder=mk(mode);pages.prefetchProxies(a);await settle();const page=owner(pages.ProxiesPage);page.render({active:a,version:0,selected:true});await page.flush();let tree=page.render();await page.flush();tree=page.render();assert.equal(groups(tree).includes('GLOBAL'),mode==='global',mode);page.dispose()}
-  responder=mk('mystery');pages.prefetchProxies(a);await settle();const mp=owner(pages.ProxiesPage);mp.render({active:a,version:0,selected:true});await mp.flush();const mtree=mp.render();await mp.flush();assert.ok(!groups(mp.render()).includes('GLOBAL'));mp.dispose()
-  responder=mk('global');pages.prefetchProxies(a);await settle();const gp=owner(pages.ProxiesPage);gp.render({active:a,version:0,selected:true});await gp.flush();await gp.flush();assert.ok(groups(gp.render()).includes('GLOBAL'));gp.dispose()
-  responder=url=>url.endsWith('/configs')?{status:500}:mk('global')(url);pages.prefetchProxies(a);await settle();const fp=owner(pages.ProxiesPage);fp.render({active:a,version:0,selected:true});await fp.flush();await fp.flush();assert.ok(groups(fp.render()).includes('GLOBAL'),'failed read keeps last known cache');fp.dispose()
-  responder=mk('rule');pages.prefetchProxies(a);await settle();const rp=owner(pages.ProxiesPage);rp.render({active:a,version:0,selected:true});await rp.flush();await rp.flush();assert.ok(!groups(rp.render()).includes('GLOBAL'),'later successful read updates');rp.dispose()
- })
- await test('More page setMode still works and its accepted mode drives the next ProxiesPage GLOBAL state',async()=>{
-  fresh();calls.length=0;responder=url=>url.endsWith('/configs')?(url.includes('/configs')?{body:{mode:'rule'}}:{}):{body:{}}
-  const more=owner(pages.MorePage),n={...a,id:'more-mode-link',name:'Link',kind:'clash',url:'http://more-mode-link.invalid'}
-  responder=url=>url.endsWith('/configs')?{body:{mode:'rule'}}:{body:{}}
-  let tree=more.render({active:n,selected:true,onChanged(){}},true);await more.flush();tree=more.render();assert.ok(text(tree).includes('规则模式'))
-  responder=(url,init)=>init.method==='PATCH'?(assert.deepEqual(JSON.parse(init.body),{mode:'global'}),{status:204}):{body:{mode:'global'}}
-  await api.setMode(n,'global');pages.prefetchProxies(n);await settle();assert.deepEqual(store.get('dashboard_mode_snapshot_v1'),{source:JSON.stringify(n),mode:'global'})
-  responder=mk('global');const page=owner(pages.ProxiesPage);let ptree=page.render({active:n,version:0,selected:true},true);await page.flush();ptree=page.render();await page.flush();ptree=page.render();assert.ok(groups(ptree).includes('GLOBAL'))
-  responder=url=>url.endsWith('/configs')?{body:{mode:'direct'}}:{body:{}};await api.setMode(n,'direct');pages.prefetchProxies(n);await settle();assert.deepEqual(store.get('dashboard_mode_snapshot_v1'),{source:JSON.stringify(n),mode:'direct'})
-  responder=mk('direct');const reload=owner(pages.ProxiesPage);ptree=reload.render({active:n,version:0,selected:true},true);await reload.flush();ptree=reload.render();await reload.flush();ptree=reload.render();assert.ok(!groups(ptree).includes('GLOBAL'));page.dispose();reload.dispose();more.dispose()
- })
- console.log('All '+count+' proxy mode retention groups passed (mock only; no native/device validation).')
+  await test('启动预取代理模式，首次显示即有已读取选中值；旧模式快照也能首帧恢复',async()=>{fresh();
+    responder=url=>({body:url.endsWith('/configs')?{mode:'direct'}:url.includes('/providers/')?{providers:{}}:{proxies:{}}})
+    pages.prefetchProxies(a);await settle()
+    const o=owner(pages.ProxyModeControl);let tree=o.render(props(a));assert.equal(picker(tree).props.value,'direct');assert.equal(picker(tree).props.disabled,false);o.dispose()
+    fresh();store.set('dashboard_mode_snapshot_v1',{source:JSON.stringify(a),mode:'global'})
+    const cached=owner(pages.ProxyModeControl);tree=cached.render(props(a));assert.equal(picker(tree).props.value,'global');cached.dispose()
+    const other=owner(pages.ProxyModeControl);unsel(other.render(props(b)));other.dispose()
+  })
+  await test('headings/order match providers; menu removes only Global visibility and batch update; provider refresh and preferences remain',async()=>{fresh();
+    calls.length=0;pref.savePreferences({showGlobal:false});const saved=pref.getPreferences().showGlobal
+    responder=url=>({body:url.includes('/providers/')?{providers:{remote:{vehicleType:'http',proxies:['A']}}}:url.endsWith('/proxies')?{proxies:{PROXY:{type:'Selector',all:['A'],now:'A'},GLOBAL:{type:'Selector',all:['A'],now:'A'},A:{type:'Shadowsocks'}}}:{mode:'rule'}})
+    const page=owner(pages.ProxiesPage);page.render({active:a,version:0,selected:true});await page.flush();let tree=page.render();const modeNode=nodes(tree,pages.ProxyModeControl)[0];assert.equal(modeNode.props.enabled,true);assert.equal(modeNode.props.c,a)
+    const mode=owner(modeNode.type);let control=mode.render(modeNode.props);unsel(control);await mode.flush();control=mode.render();assert.equal(picker(control).props.value,'rule')
+    const headings=nodes(tree,'Text').filter(t=>['策略组','代理来源'].includes(text(t)));assert.deepEqual(headings.map(text),['策略组','代理来源']);const heading=nodes(control,'Text').find(t=>text(t)==='代理模式');for(const h of [...headings,heading]){assert.equal(h.props.font,20);assert.equal(h.props.fontWeight,'bold');assert.deepEqual(clone(h.props.padding),{top:6})}
+    const order=[];function walk(n){if(!n||typeof n!=='object')return;if(n.type===pages.ProxyModeControl)order.push('mode');if(n.type===pages.GroupSection)order.push('group');if(n.type==='Text'&&text(n)==='策略组')order.push('heading');for(const child of n.props?.children??[])walk(child)}walk(tree);assert.deepEqual(order.slice(0,3),['mode','heading','group']);assert.equal(nodes(tree,pages.GroupSection).length,1);assert.equal(nodes(tree,'LazyVStack')[0].props.spacing,12)
+    const menu=trailing(tree.props.toolbar);assert.ok(!nodes(menu,'Toggle').some(t=>/global/i.test(t.props.title)));assert.ok(!nodes(menu,'Button').some(t=>t.props.title==='全部更新'));assert.deepEqual(nodes(menu,'Toggle').map(t=>t.props.title),['展示全部代理组','显示代理来源','显示隐藏组','显示图标','自动断开旧连接']);assert.ok(nodes(menu,'Picker').some(p=>p.props.title==='节点排序'));assert.equal(nodes(menu,'Toggle').at(-1).props.title,'自动断开旧连接');assert.equal(nodes(menu,'Picker').length+nodes(menu,'Toggle').length+nodes(menu,'Button').length,6);assert.equal(pref.getPreferences().showGlobal,saved)
+    const provider=nodes(tree,pages.ProviderCard)[0];assert.ok(provider);const po=owner(provider.type);const card=po.render(provider.props);assert.ok(nodes(card,'Button').some(btn=>nodes(btn,'Image').some(i=>i.props.systemName==='arrow.triangle.2.circlepath')));po.dispose();assert.equal(patches().length,0)
+    // Existing showGlobal=true still shows GLOBAL; removing the menu never rewrites the preference.
+    pref.savePreferences({showGlobal:true});tree=page.render();await page.flush();tree=page.render();assert.ok(nodes(tree,pages.GroupSection).some(n=>n.props.g.name==='GLOBAL'));assert.equal(pref.getPreferences().showGlobal,true)
+    tree.props.onDisappear();tree=page.render({...page.props,selected:false});assert.equal(nodes(tree,pages.ProxyModeControl)[0].props.enabled,false);mode.dispose();page.dispose()
+  })
+  await test('loading has no false rule selection; actual modes use exact rule/direct/global segmented order',async()=>{fresh();
+    for(const actual of ['rule','direct','global']){fresh();const wait=deferred();calls.length=0;responder=()=>({wait:wait.promise,body:{mode:actual}});const o=owner(pages.ProxyModeControl);let tree=o.render(props(a));unsel(tree);await o.flush();unsel(o.render());wait.resolve();await settle();const p=picker(o.render());assert.equal(p.props.pickerStyle,'segmented');assert.equal(p.props.value,actual);assert.deepEqual(nodes(p,'Text').map(t=>t.props.tag),['rule','direct','global']);assert.deepEqual(nodes(p,'Text').map(text),['规则模式','直连模式','全局模式']);assert.equal(p.props.disabled,false);assert.equal(calls.length,1);assert.equal(calls[0].init.method,'GET');assert.equal(patches().length,0);o.dispose()}
+  })
+  await test('missing/unknown/error modes have no fake selection; retry is read-only',async()=>{fresh();
+    for(const response of [{body:{}},{body:{mode:'unknown'}},{body:{mode:''}},{status:403}]){fresh();calls.length=0;responder=()=>response;const o=owner(pages.ProxyModeControl);o.render(props(a));await o.flush();let tree=o.render();unsel(tree);assert.ok(text(tree).includes(response.status?'读取失败':'未提供可识别'));responder=()=>({body:{mode:'direct'}});await button(tree,'重试读取代理模式').props.action();assert.equal(picker(o.render()).props.value,'direct');assert.equal(patches().length,0);o.dispose()}
+  })
+  await test('switch serializes immediate clicks, PATCHes only mode, confirms by GET; version change cannot strand busy read',async()=>{fresh();
+    const patch=deferred(),confirm=deferred();let actual='rule',readingConfirm=false;calls.length=0;responder=(_url,init)=>{if(init.method==='PATCH'){assert.deepEqual(JSON.parse(init.body),{mode:'direct'});actual='direct';readingConfirm=true;return {wait:patch.promise,status:204}}return {wait:readingConfirm?confirm.promise:undefined,body:{mode:actual}}}
+    const o=owner(pages.ProxyModeControl);o.render(props(a));await o.flush();let tree=o.render(),p=picker(tree);await p.props.onChanged('rule');await p.props.onChanged('invalid');assert.equal(patches().length,0);const change=p.props.onChanged('direct');await p.props.onChanged('global');await settle();assert.equal(patches().length,1);tree=o.render();assert.equal(picker(tree).props.disabled,false);assert.equal(picker(tree).props.value,'direct');patch.resolve();await settle();tree=o.render({...props(a),version:1});await o.flush();assert.equal(picker(tree).props.value,'direct');assert.equal(picker(tree).props.disabled,false);confirm.resolve();await change;tree=o.render();assert.equal(picker(tree).props.value,'direct');assert.equal(picker(tree).props.disabled,false);assert.equal(nodes(tree,'ProgressView').length,0);assert.deepEqual(calls.map(c=>c.init.method),['GET','PATCH','GET']);o.dispose()
+  })
+  await test('failed or lost write restores freshly read actual mode; failed verification clears selection; mismatch is explicit',async()=>{fresh();
+    for(const scenario of ['rejected','lost-response','verification-failed','mismatch']){fresh();let actual='global',after=false;calls.length=0;responder=(_url,init)=>{if(init.method==='PATCH'){after=true;if(scenario==='lost-response')actual='direct';return {status:scenario==='mismatch'||scenario==='verification-failed'?204:500}}if(after&&scenario==='verification-failed')return {status:503};return {body:{mode:actual}}}
+      const o=owner(pages.ProxyModeControl);o.render(props(a));await o.flush();await picker(o.render()).props.onChanged('direct');let tree=o.render();assert.equal(patches().length,1);if(scenario==='verification-failed'){unsel(tree);assert.ok(text(tree).includes('当前模式读取失败'));responder=()=>({body:{mode:'direct'}});await button(tree,'重试读取代理模式').props.action();assert.equal(picker(o.render()).props.value,'direct')}else{assert.equal(picker(tree).props.value,scenario==='lost-response'?'direct':'global');assert.ok(text(tree).includes(scenario==='mismatch'?'与请求不一致':'切换失败'))}o.dispose()}
+  })
+  await test('source/auth changes reject stale callbacks and responses; accepted write stays pinned to original controller',async()=>{fresh();
+    const oldRead=deferred();calls.length=0;responder=url=>({wait:url.startsWith(a.url)?oldRead.promise:undefined,body:{mode:url.startsWith(a.url)?'rule':'global'}});const o=owner(pages.ProxyModeControl);o.render(props(a));await o.flush();o.render(props(b));await o.flush();let tree=o.render();assert.equal(picker(tree).props.value,'global');oldRead.resolve();await settle();assert.equal(picker(o.render()).props.value,'global');const stale=picker(tree).props.onChanged
+    const edited={...b,username:'changed-user'};o.render(props(edited));await stale('direct');assert.equal(patches().length,0);await o.flush();assert.equal(picker(o.render()).props.value,'global');o.dispose()
+    const patch=deferred();calls.length=0;responder=(url,init)=>init.method==='PATCH'?{wait:patch.promise,status:204}:{body:{mode:url.startsWith(a.url)?'rule':'global'}};const pending=owner(pages.ProxyModeControl);pending.render(props(a));await pending.flush();const old=picker(pending.render()).props.onChanged,change=old('direct');await settle();assert.equal(patches().length,1);pending.render(props(b));await pending.flush();await old('global');patch.resolve();await change;assert.equal(picker(pending.render()).props.value,'global');assert.equal(patches().length,1);assert.ok(patches()[0].url.startsWith(a.url));assert.ok(!patches().some(c=>c.url.startsWith(b.url)));pending.dispose()
+  })
+  await test('hidden/unmounted owners cannot initiate changes; reappearance reads actual mode again',async()=>{fresh();
+    calls.length=0;let actual='rule';responder=()=>({body:{mode:actual}});const o=owner(pages.ProxyModeControl);o.render({...props(a),enabled:false});await o.flush();assert.equal(calls.length,0);o.render(props(a));await o.flush();let stale=picker(o.render()).props.onChanged;o.render({...props(a),enabled:false});await stale('direct');await o.flush();assert.equal(patches().length,0);actual='direct';o.render(props(a));await o.flush();assert.equal(picker(o.render()).props.value,'direct');stale=picker(o.render()).props.onChanged;o.dispose();await stale('global');assert.equal(patches().length,0)
+  })
+  await test('known mode survives hide/show: first frame has Picker and no loading text; silent refresh updates/keeps/clears truthfully',async()=>{
+    let actual='direct',fail=false;calls.length=0;responder=()=>fail?{status:503}:{body:{mode:actual}}
+    const o=owner(pages.ProxyModeControl);o.render(props(a));await o.flush();assert.equal(picker(o.render()).props.value,'direct')
+    o.render({...props(a),enabled:false});let tree=o.render();assert.equal(picker(tree).props.value,'direct');assert.equal(picker(tree).props.disabled,true);assert.ok(!text(tree).includes('正在读取'));calls.length=0
+    actual='global';let read=deferred();responder=()=>({wait:read.promise,body:{mode:actual}});tree=o.render(props(a));assert.equal(picker(tree).props.value,'direct');assert.equal(picker(tree).props.disabled,false);assert.equal(nodes(tree,'ProgressView').length,0);assert.ok(!text(tree).includes('正在读取'));await o.flush();tree=o.render();assert.equal(picker(tree).props.value,'direct');assert.ok(!text(tree).includes('正在读取'));assert.equal(calls.length,1);assert.equal(calls[0].init.method,'GET');read.resolve();await settle();assert.equal(picker(o.render()).props.value,'global')
+    o.render({...props(a),enabled:false});o.render(props(a));fail=true;responder=()=>({status:503});await o.flush();tree=o.render();assert.equal(picker(tree).props.value,'global');assert.ok(!text(tree).includes('读取失败'));assert.ok(!text(tree).includes('正在读取'));assert.equal(patches().length,0)
+    fail=false;actual='mystery';responder=()=>({body:{mode:actual}});o.render({...props(a),enabled:false});o.render(props(a));await o.flush();tree=o.render();unsel(tree);assert.ok(text(tree).includes('未提供可识别'));o.dispose()
+    const again=owner(pages.ProxyModeControl);responder=()=>({wait:new Promise(()=>{}),body:{mode:'rule'}});unsel(again.render(props(a)));again.dispose()
+  })
+  await test('cache is source scoped and write/readback keeps it truthful; new owner starts from the source cache',async()=>{
+    responder=url=>({body:{mode:url.startsWith(a.url)?'rule':'global'}});const oa=owner(pages.ProxyModeControl);oa.render(props(a));await oa.flush();assert.equal(picker(oa.render()).props.value,'rule');oa.dispose()
+    const ob=owner(pages.ProxyModeControl);let tree=ob.render(props(b));unsel(tree);await ob.flush();assert.equal(picker(ob.render()).props.value,'global')
+    const cachedA=owner(pages.ProxyModeControl);assert.equal(picker(cachedA.render(props(a))).props.value,'rule');assert.ok(!text(cachedA.render()).includes('正在读取'));const edited={...a,username:'other'};const editedTree=cachedA.render(props(edited));assert.equal(picker(editedTree).props.value,'rule');cachedA.dispose()
+    // Rejected write: cache follows the read-back instead of the requested value.
+    let actual='rule',failPatch=true;responder=(_url,init)=>init.method==='PATCH'?{status:failPatch?500:204}:{body:{mode:actual}};const o=owner(pages.ProxyModeControl);o.render(props(a));await o.flush();await picker(o.render()).props.onChanged('direct');assert.equal(picker(o.render()).props.value,'rule');o.dispose()
+    responder=()=>({wait:new Promise(()=>{}),body:{mode:'rule'}});const afterFail=owner(pages.ProxyModeControl);assert.equal(picker(afterFail.render(props(a))).props.value,'rule');afterFail.dispose()
+    // Lost response: actual changed to direct, so cache is direct.
+    failPatch=true;actual='global';responder=(_url,init)=>{if(init.method==='PATCH'){actual='direct';return {status:500}}return {body:{mode:actual}}};const lost=owner(pages.ProxyModeControl);lost.render(props(a));await lost.flush();await picker(lost.render()).props.onChanged('direct');assert.equal(picker(lost.render()).props.value,'direct');lost.dispose();const reopened=owner(pages.ProxyModeControl);assert.equal(picker(reopened.render(props(a))).props.value,'direct');reopened.dispose()
+    // Failed verification clears cache; success path caches the mode actually read.
+    let verifyFail=false;responder=(_url,init)=>init.method==='PATCH'?(verifyFail=true,{status:204}):verifyFail?{status:503}:{body:{mode:'direct'}};const unknown=owner(pages.ProxyModeControl);unknown.render(props(a));await unknown.flush();await picker(unknown.render()).props.onChanged('global');unsel(unknown.render());unknown.dispose();responder=()=>({wait:new Promise(()=>{}),body:{}});unsel(owner(pages.ProxyModeControl).render(props(a)))
+  })
+  await test('pending write is not overwritten by stale quiet refresh and cannot repopulate another source',async()=>{
+    calls.length=0;const patch=deferred();let actual='rule';responder=(url,init)=>init.method==='PATCH'?{wait:patch.promise,status:204}:{body:{mode:url.startsWith(a.url)?actual:'global'}};const o=owner(pages.ProxyModeControl);o.render(props(a));await o.flush();const change=picker(o.render()).props.onChanged('direct');await settle();let tree=o.render();assert.equal(picker(tree).props.disabled,false);assert.ok(!text(tree).includes('正在切换并核验'));assert.ok(!text(tree).includes('正在读取'));assert.equal(nodes(tree,'ProgressView').length,0);assert.equal(patches().length,1);const sentUrl=patches()[0].url;calls.length=0;o.render({...props(a),version:1});await o.flush();assert.equal(calls.length,0);o.render(props(b));await o.flush();assert.equal(picker(o.render()).props.value,'global');actual='direct';patch.resolve();await change;assert.equal(picker(o.render()).props.value,'global');assert.ok(sentUrl.startsWith(a.url));assert.ok(!patches().some(c=>c.url.startsWith(b.url)));o.dispose()
+  })
+  await test('confirmed global mode shows GLOBAL regardless of old showGlobal=false; leaves global, unknown, failure and other sources hide it',async()=>{
+    pref.savePreferences({showGlobal:false,showHidden:false});const mk=(mode,fail=false)=>url=>fail&&!url.includes('/proxies')&&!url.includes('/providers/')?{status:503}:({body:url.includes('/providers/')?{providers:{}}:url.endsWith('/proxies')?{proxies:{PROXY:{type:'Selector',all:['N'],now:'N'},GLOBAL:{type:'Selector',all:['PROXY'],now:'PROXY'},Hidden:{type:'Selector',all:['N'],now:'N',hidden:true},N:{type:'Shadowsocks'}}}:{mode}})
+    const names=tree=>nodes(tree,pages.GroupSection).map(n=>n.props.g.name)
+    const mounted=[]
+    async function load(page,props){page.render(props);await page.flush();let tree=page.render();const control=owner(pages.ProxyModeControl);control.render(nodes(tree,pages.ProxyModeControl)[0].props);mounted.push(control);await control.flush();control.render();await control.flush();page.render();await page.flush();tree=page.render();await page.flush();return page.render()}
+    let page=owner(pages.ProxiesPage),props={active:a,version:0,selected:true};responder=mk('global');let tree=await load(page,props);assert.deepEqual(names(tree),['PROXY','GLOBAL']);assert.ok(!names(tree).includes('Hidden'));assert.equal(pref.getPreferences().showGlobal,false);assert.ok(!nodes(trailing(tree.props.toolbar),'Toggle').some(t=>/global/i.test(t.props.title)))
+    // Same source later reads rule/direct: refreshed groups and immediate render filter remove GLOBAL.
+    for(const mode of ['rule','direct']){responder=mk(mode);const control=nodes(tree,pages.ProxyModeControl)[0];control.props.onMode(mode);tree=page.render();assert.ok(!names(tree).includes('GLOBAL'));await page.flush();await page.flush();tree=page.render();assert.ok(!names(tree).includes('GLOBAL'));assert.equal(patches().length,0);control.props.onMode('global');tree=page.render();await page.flush();await page.flush();tree=page.render();assert.ok(names(tree).includes('GLOBAL'))}
+    // Unknown mode/failure hide it; a later source cannot inherit the previous source's global state.
+    nodes(tree,pages.ProxyModeControl)[0].props.onMode(null);tree=page.render();assert.ok(!names(tree).includes('GLOBAL'));page.dispose()
+    fresh();responder=mk('global');page=owner(pages.ProxiesPage);tree=await load(page,{active:a,version:0,selected:true});assert.ok(names(tree).includes('GLOBAL'));responder=mk('rule');page.render({active:b,version:0,selected:true});await page.flush();tree=page.render();const controlB=owner(pages.ProxyModeControl);controlB.render(nodes(tree,pages.ProxyModeControl)[0].props);mounted.push(controlB);await controlB.flush();controlB.render();await controlB.flush();page.render();await page.flush();tree=page.render();await page.flush();tree=page.render();assert.ok(!names(tree).includes('GLOBAL'));page.dispose()
+    fresh();responder=mk('mystery');page=owner(pages.ProxiesPage);tree=await load(page,{active:a,version:0,selected:true});assert.ok(!names(tree).includes('GLOBAL'));page.dispose()
+    fresh();responder=mk('rule',false);pref.savePreferences({showHidden:true});page=owner(pages.ProxiesPage);tree=await load(page,{active:a,version:0,selected:true});assert.deepEqual(names(tree),['PROXY','Hidden']);pref.savePreferences({showHidden:false,showGlobal:false});mounted.forEach(m=>m.dispose())
+  })
+  await test('verified switch to/from global refreshes GLOBAL; failed write follows read-back and never grants it',async()=>{
+    pref.savePreferences({showGlobal:false,showHidden:false});let actual='rule',patchStatus=204;responder=(url,init)=>{if(init?.method==='PATCH'){if(patchStatus===204)actual=JSON.parse(init.body).mode;return {status:patchStatus}}if(url.includes('/providers/'))return {body:{providers:{}}};if(url.endsWith('/proxies'))return {body:{proxies:{PROXY:{type:'Selector',all:['N'],now:'N'},GLOBAL:{type:'Selector',all:['PROXY'],now:'PROXY'},N:{type:'Shadowsocks'}}}};return {body:{mode:actual}}}
+    const names=tree=>nodes(tree,pages.GroupSection).map(n=>n.props.g.name),page=owner(pages.ProxiesPage),props={active:a,version:0,selected:true};page.render(props);await page.flush();await page.flush();let tree=page.render();assert.deepEqual(names(tree),['PROXY'])
+    const mode=owner(pages.ProxyModeControl);mode.render(nodes(tree,pages.ProxyModeControl)[0].props);await mode.flush();await picker(mode.render()).props.onChanged('global');mode.render();await mode.flush();page.render();await page.flush();tree=page.render();await page.flush();await page.flush();tree=page.render();assert.deepEqual(names(tree),['PROXY','GLOBAL']);assert.ok(!text(mode.render()).includes('正在切换'))
+    patchStatus=500;await picker(mode.render()).props.onChanged('direct');assert.equal(picker(mode.render()).props.value,'global');patchStatus=204;await picker(mode.render()).props.onChanged('direct');mode.render();await mode.flush();page.render();await page.flush();tree=page.render();await page.flush();tree=page.render();assert.deepEqual(names(tree),['PROXY']);mode.dispose();page.dispose()
+  })
+  await test('mock render frames: switching keeps one Picker and identical layout skeleton for success, rejection, mismatch and failed verification',async()=>{
+    const skeleton=tree=>{const root=tree;return JSON.stringify({type:root.type,spacing:root.props.spacing,kids:root.props.children.map(k=>k.type==='HStack'?'heading':k.type)})}
+    for(const scenario of ['success','rejected','mismatch','verify-failed','lost-response']){fresh();let actual='rule',after=false,patch=deferred(),confirm=deferred();responder=(_url,init)=>{if(init.method==='PATCH'){after=true;if(scenario==='lost-response')actual='direct';else if(scenario==='success')actual='direct';return {wait:patch.promise,status:scenario==='rejected'?500:204}}if(after&&scenario==='verify-failed')return {wait:confirm.promise,status:503};return {wait:after?confirm.promise:undefined,body:{mode:actual}}}
+      const o=owner(pages.ProxyModeControl);o.render(props(a));await o.flush();const frames=[o.render()],initial=skeleton(frames[0]);assert.equal(picker(frames[0]).props.value,'rule')
+      const change=picker(frames[0]).props.onChanged('direct');await settle();frames.push(o.render());assert.equal(picker(frames.at(-1)).props.value,'direct');assert.equal(picker(frames.at(-1)).props.disabled,false);assert.ok(!text(frames.at(-1)).includes('正在'));assert.equal(nodes(frames.at(-1),'ProgressView').length,0);assert.equal(proxyCacheMode(a),'rule')
+      patch.resolve();await settle();frames.push(o.render());if(scenario==='verify-failed'){unsel(frames.at(-1));assert.equal(proxyCacheMode(a),undefined)}else{assert.equal(picker(frames.at(-1)).props.value,'direct');assert.equal(picker(frames.at(-1)).props.disabled,false);assert.equal(proxyCacheMode(a),'rule')}
+      confirm.resolve();await change;frames.push(o.render())
+      for(const frame of frames.slice(0,scenario==='verify-failed'?2:3)){assert.equal(nodes(frame,'Picker').length,1);assert.equal(skeleton(frame),initial)}
+      const last=frames.at(-1);if(scenario==='success'||scenario==='lost-response'){assert.equal(picker(last).props.value,'direct');assert.equal(proxyCacheMode(a),'direct');assert.equal(picker(last).props.disabled,false)}
+      else if(scenario==='rejected'){assert.equal(picker(last).props.value,'rule');assert.ok(text(last).includes('切换失败'));assert.equal(proxyCacheMode(a),'rule')}
+      else if(scenario==='mismatch'){assert.equal(picker(last).props.value,'rule');assert.ok(text(last).includes('不一致'));assert.equal(proxyCacheMode(a),'rule')}
+      else{unsel(last);assert.ok(text(last).includes('读取失败'));assert.equal(proxyCacheMode(a),undefined)}
+      o.dispose()}
+  })
+  await test('GLOBAL appears/disappears from confirmed mode without clearing groups, reloading list state or shifting anchors',async()=>{
+    pref.savePreferences({showGlobal:false,showHidden:false});let actual='rule',proxyCalls=0,patch=deferred();responder=(url,init)=>{if(init?.method==='PATCH'){return {wait:patch.promise,status:204}}if(url.includes('/providers/'))return {body:{providers:{}}};if(url.endsWith('/proxies')){proxyCalls++;return {body:{proxies:{PROXY:{type:'Selector',all:['N'],now:'N'},GLOBAL:{type:'Selector',all:['PROXY'],now:'PROXY'},N:{type:'Shadowsocks'}}}}}return {body:{mode:actual}}}
+    const names=tree=>nodes(tree,pages.GroupSection).map(n=>n.props.g.name),page=owner(pages.ProxiesPage);page.render({active:a,version:0,selected:true});await page.flush();let tree=page.render();const mode=owner(pages.ProxyModeControl);mode.render(nodes(tree,pages.ProxyModeControl)[0].props);await mode.flush();mode.render();await mode.flush();page.render();await page.flush();tree=page.render();assert.deepEqual(names(tree),['PROXY']);const before=nodes(tree,pages.GroupSection)[0],modeHeading=tree.props.children?.length
+    const change=picker(mode.render()).props.onChanged('global');await settle();tree=page.render();assert.deepEqual(names(tree),['PROXY']);assert.equal(nodes(tree,pages.ProxyModeControl).length,1);patch.resolve();actual='global';await change;mode.render();await mode.flush();page.render();await page.flush();tree=page.render();await page.flush();tree=page.render();assert.deepEqual(names(tree),['PROXY','GLOBAL']);assert.equal(nodes(tree,pages.GroupSection)[0].props.key,before.props.key);assert.ok(proxyCalls>=2)
+    // The list is refreshed in-place: no empty/loading state appears between the two renders.
+    patch=deferred();actual='global';const away=picker(mode.render()).props.onChanged('rule');await settle();patch.resolve();actual='rule';await away;mode.render();await mode.flush();page.render();let sawEmpty=false;await page.flush();await page.flush();tree=page.render();sawEmpty||=!text(tree).includes('策略组');assert.ok(!sawEmpty);assert.ok(!text(tree).includes('未读取到策略组'));assert.deepEqual(names(tree),['PROXY']);mode.dispose();page.dispose()
+  })
+  await test('first entry without cache: frame 1 already shows three disabled unselected segments, no loading text; same Picker position after read/failure; click is inert before read',async()=>{
+    fresh();calls.length=0;const wait=deferred();responder=(_u,init)=>({wait:wait.promise,body:{mode:'global'}})
+    const o=owner(pages.ProxyModeControl),first=o.render(props(a));unsel(first);const idx=t=>t.props.children.findIndex(k=>k.type==='Picker')
+    await picker(first).props.onChanged('direct');assert.equal(patches().length,0)
+    await o.flush();unsel(o.render());wait.resolve();await settle();let tree=o.render();assert.equal(picker(tree).props.value,'global');assert.equal(picker(tree).props.disabled,false);assert.equal(idx(tree),idx(first));assert.equal(nodes(tree,'ProgressView').length,0)
+    fresh();responder=()=>({status:503});const f=owner(pages.ProxyModeControl);unsel(f.render(props(a)));await f.flush();tree=f.render();unsel(tree);assert.ok(text(tree).includes('读取失败'));assert.ok(nodes(tree,'Button').some(b=>b.props.title==='重试读取代理模式'));assert.equal(idx(tree),idx(first));await picker(tree).props.onChanged('rule');assert.equal(patches().length,0)
+    responder=()=>({body:{mode:'direct'}});await nodes(tree,'Button').find(b=>b.props.title==='重试读取代理模式').props.action();await settle();tree=f.render();assert.equal(picker(tree).props.value,'direct');assert.equal(picker(tree).props.disabled,false);assert.equal(patches().length,0);o.dispose();f.dispose()
+  })
+  console.log('All '+count+' proxy mode groups passed (mock only; no native/device validation).')
 })().catch(e=>{console.error(e);process.exitCode=1})
 `
 vm.runInNewContext(harness+checks,{require,__dirname,console,process},{filename:__filename})

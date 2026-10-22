@@ -269,13 +269,6 @@ export function KernelConfigPage({ c }: { c: Controller }) {
     : <HStack frame={{minHeight:31,maxHeight:31,maxWidth:"infinity"}}><Text>{title}</Text><Spacer /><Text font={14} foregroundStyle="secondaryLabel">未提供</Text></HStack>
   return <ScrollView navigationTitle="代理配置" navigationBarTitleDisplayMode="inline" background="systemBackground">
     <VStack alignment="leading" spacing={10} padding={{ horizontal: 20, vertical: 16 }} frame={{maxWidth:"infinity",alignment:"leading"}}>
-      {heading("代理模式")}
-      {card(([ ["rule", "规则模式"], ["global", "全局模式"], ["direct", "直连模式"] ]).map(([value, title], i) => <VStack key={value} spacing={0}>
-        {i ? separator() : null}
-        <Button disabled={busy || !provided("mode")} buttonStyle="plain" action={() => change("mode", value)}>
-          <HStack padding={{ vertical: 15 }}><Text>{title}</Text><Spacer /><ZStack frame={{width:20,height:20}}>{(dirty.mode ?? cfg?.mode) === value ? <Image systemName="checkmark" font={18} foregroundStyle="systemBlue" /> : null}</ZStack></HStack>
-        </Button>
-      </VStack>))}
       {heading("端口配置")}
       {card(([ ["mixed-port", "混合端口"], ["port", "HTTP 端口"], ["socks-port", "SOCKS5 端口"], ["redir-port", "透明代理端口"], ["tproxy-port", "TProxy 端口"] ]).map(([key, title], i) => <VStack key={key} spacing={0}>
         {i ? separator() : null}<HStack padding={{ vertical: 10 }}><Text>{title}</Text><Spacer />{field(key, title)}</HStack>

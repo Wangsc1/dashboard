@@ -1,7 +1,7 @@
 import { NikkiManagement, NikkiSubscription, NikkiRule, NikkiFile, NikkiManagementError, NIKKI_RULE_TYPES, loadNikkiManagement, saveNikkiSubscription, deleteNikkiSubscription, updateNikkiSubscription, saveNikkiRule, deleteNikkiRule, setNikkiRulesEnabled, reorderNikkiRules, selectNikkiProfile, readNikkiFile, saveNikkiFile } from "./api"
 import { rootToolbar } from "./root-toolbar"
 import { AppEvents, Button, Divider, HStack, VStack, Text, Image, Circle, RoundedRectangle, Spacer, ScrollView, LazyVStack, NavigationLink, Menu, Picker, TextField, Toggle, Form, Section, Label, ProgressView, WebView, ZStack, modifiers, Safari, useState, useEffect } from "scripting"
-import { Controller, Group, Conn, Rule, Provider, loadGroups, testGroup, selectProxy, loadProviders, updateProvider, loadRules, loadConnections, closeConnection, closeAllConnections, fmtBytes, fmtSpeed, fmtUptime, delayColor, loadRuntimeVersions, checkCoreUpdate, loadNikkiRuntime, NikkiRuntime, verifyCoreRestart, upgradeCoreAndVerify, lastControllerMode, loadConfig, nikkiService, nikkiServiceStatus, coreAction, CoreAction, queryDNS, webpage } from "./api"
+import { Controller, Group, Conn, Rule, Provider, loadGroups, testGroup, selectProxy, loadProviders, updateProvider, loadRules, loadConnections, closeConnection, closeAllConnections, fmtBytes, fmtSpeed, fmtUptime, delayColor, loadRuntimeVersions, checkCoreUpdate, loadNikkiRuntime, NikkiRuntime, verifyCoreRestart, upgradeCoreAndVerify, lastControllerMode, loadConfig, setMode as setControllerMode, nikkiService, nikkiServiceStatus, coreAction, CoreAction, queryDNS, webpage } from "./api"
 import { usePreferences, KernelConfigPage, updatePreference, Choice, ThresholdRange, Range, TestURLField } from "./settings-ui"
 import { NODE_SORT_OPTIONS, savePreferences, cachedIcon, readCachedIcon, traceIconPreference, feedback } from "./preferences"
 import { selectable, sortedNodes, historyFor, filterConnections, clientLabels, saveClientLabel, sourceKey, confirmed } from "./dashboard-model"
@@ -83,17 +83,69 @@ export function GroupSection({c,g,onChanged,expanded=false}:{c:Controller;g:Grou
   </Card>
 }
 const PROXY_MODE_OPTIONS = [["rule","规则模式"],["direct","直连模式"],["global","全局模式"]] as const
+const PROXY_MODE_NONE="__none__"
 // Memory-only last confirmed core mode per source; never persisted or shared across sources.
 const proxyModeCache=new Map<string,string>()
-function cachedProxyModeFor(c:Controller){
+function cachedProxyMode(c:Controller){
  const key=sourceKey(c),known=proxyModeCache.get(key);if(known)return known
  try{const x=Storage.get<any>("dashboard_mode_snapshot_v1");if(x?.source===JSON.stringify(c)&&PROXY_MODE_OPTIONS.some(([v])=>v===x.mode)){proxyModeCache.set(key,x.mode);return x.mode}}catch{}
  return null
 }
-function cachedProxyMode(c:Controller){return cachedProxyModeFor(c)}
 function rememberProxyMode(c:Controller,mode:string){proxyModeCache.set(sourceKey(c),mode);try{Storage.set("dashboard_mode_snapshot_v1",{source:JSON.stringify(c),mode})}catch{}}
+function forgetProxyMode(c:Controller){proxyModeCache.delete(sourceKey(c));try{const x=Storage.get<any>("dashboard_mode_snapshot_v1");if(x?.source===JSON.stringify(c))Storage.set("dashboard_mode_snapshot_v1",null)}catch{}}
 const modePrefetch=new Set<string>()
 function prefetchProxyMode(c:Controller){const key=sourceKey(c);cachedProxyMode(c);if(modePrefetch.has(key))return;modePrefetch.add(key);void loadConfig(c).then(cfg=>{if(PROXY_MODE_OPTIONS.some(([v])=>v===cfg.mode))rememberProxyMode(c,cfg.mode!)}).catch(()=>{}).finally(()=>modePrefetch.delete(key))}
+
+export const proxyModeCacheForTest=(c:Controller)=>proxyModeCache.get(sourceKey(c))
+export function ProxyModeControl({c,enabled,version,onMode}:{c:Controller;enabled:boolean;version:number;onMode?:(mode:string|null)=>void}) {
+  type Session = {source:string;cacheKey:string;controller:Controller;alive:boolean;visible:boolean;mode:string|null;pending:string|null;loading:boolean;busy:boolean;error:string;read:number}
+  const [holder]=useState<{current:Session|null}>({current:null}),[,redraw]=useState(0)
+  const source=JSON.stringify(c)
+  if(holder.current?.source!==source){const cacheKey=sourceKey(c),known=cachedProxyMode(c);holder.current={source,cacheKey,controller:{...c},alive:true,visible:enabled,mode:known,pending:null,loading:enabled&&!known,busy:false,error:"",read:0}}
+  const session=holder.current!
+  if(session.visible!==enabled){session.visible=enabled;session.read++;if(!session.busy){session.mode=proxyModeCache.get(session.cacheKey)??null;session.loading=enabled&&!session.mode}}
+  const current=()=>session.alive&&session.visible&&holder.current===session
+  const paint=()=>{if(current())redraw(n=>n+1)}
+  // initial: unknown until read. silent: keep a known value and hide failures.
+  // verify: keep the Picker mounted while confirming a write, but clear if it cannot be confirmed.
+  async function readMode(message="",retainMessage=false,kind:"initial"|"silent"|"verify"="initial") {
+    if(!current())return
+    const read=++session.read,keepVisible=kind==="verify"||(kind==="silent"&&!!session.mode),quiet=kind==="silent"&&!!session.mode
+    if(!keepVisible){session.mode=null;forgetProxyMode(session.controller);session.loading=true;session.error="";paint()}
+    try {
+      const cfg=await loadConfig(session.controller)
+      if(!current()||read!==session.read)return
+      if(PROXY_MODE_OPTIONS.some(([value])=>value===cfg.mode)){session.mode=cfg.mode!;rememberProxyMode(session.controller,cfg.mode!);session.error=retainMessage?message:""}
+      else{session.mode=null;forgetProxyMode(session.controller);session.error=message?`${message}；内核未提供可识别的当前模式。`:"内核未提供可识别的代理模式，暂不能切换。"}
+    } catch {
+      if(current()&&read===session.read&&!quiet){session.mode=null;forgetProxyMode(session.controller);session.error=message?`${message}；当前模式读取失败，请重试读取。`:"代理模式读取失败，请检查连接与权限后重试。"}
+    } finally {if(current()&&read===session.read){session.loading=false;paint()}}
+  }
+  // Report only read-back confirmed modes; unknown/loading/failed states report null.
+  useEffect(()=>{if(current())onMode?.(session.mode)},[session,session.mode,enabled])
+  useEffect(()=>()=>{session.alive=false;session.read++},[session])
+  useEffect(()=>{if(enabled&&!session.busy)void readMode("",false,"silent")},[session,enabled,version])
+  async function change(value:string) {
+    if(!current()||session.busy||session.loading||!session.mode||value===session.mode||!PROXY_MODE_OPTIONS.some(([mode])=>mode===value))return
+    // Lock synchronously; stale callbacks cannot queue a second PATCH or use a new source.
+    // Keep the confirmed value/cache and Picker mounted; only the displayed target is optimistic.
+    session.busy=true;session.pending=value;session.error="";paint()
+    try {
+      try {await setControllerMode(session.controller,value)}
+      catch {await readMode("代理模式切换失败，已尝试重新读取当前模式",true,"verify");return}
+      await readMode("切换请求已发送",false,"verify")
+      if(current()&&session.mode===value)session.error=""
+      else if(current()&&session.mode)session.error="内核当前模式与请求不一致，已显示实际模式。"
+    } finally {session.busy=false;session.pending=null;paint()}
+  }
+  return <VStack alignment="leading" spacing={10} frame={{maxWidth:"infinity"}}>
+    <HStack><Text font={20} fontWeight="bold" padding={{top:6}}>代理模式</Text><Spacer/></HStack>
+    {/* Always mounted so layout never jumps; unknown mode uses a tag that matches no segment (no highlight) and is disabled. */}
+    <Picker title="代理模式" pickerStyle="segmented" value={session.pending??session.mode??PROXY_MODE_NONE} disabled={!enabled||(session.loading&&!session.mode)||!session.mode} onChanged={change}>{PROXY_MODE_OPTIONS.map(([value,title])=><Text key={value} tag={value}>{title}</Text>)}</Picker>
+    {session.error?<Text font={12} foregroundStyle="systemRed">{session.error}</Text>:null}
+    {!session.loading&&!session.busy&&!session.mode?<Button title="重试读取代理模式" disabled={!enabled} action={()=>readMode()}/>:null}
+  </VStack>
+}
 export function ProxyTestSettings() {
   const p = usePreferences(["testTimeout"])
   return <>
@@ -103,7 +155,6 @@ export function ProxyTestSettings() {
     <Card><VStack alignment="leading" spacing={0} padding={{vertical:6}} frame={{maxWidth:"infinity",alignment:"leading"}}><TestURLField /></VStack><Divider /><Range title="超时时间" min={1000} max={10000} step={100} value={p.testTimeout} suffix=" ms" onChanged={n => updatePreference({ testTimeout: n })} /></Card>
   </>
 }
-
 const proxyCache=new Map<string,{groups:Group[];providers:Provider[]}>()
 const PROXY_SNAPSHOT_KEY="dashboard_proxy_snapshot_v1"
 let proxySnapshotText=""
@@ -116,7 +167,8 @@ function hydrateProxyCache(key:string){
   const known=proxyCache.get(key);if(known||!key)return known
   try{const raw=Storage.get<any>(PROXY_SNAPSHOT_KEY);if(raw?.key===key&&Array.isArray(raw.groups)){const value={groups:raw.groups as Group[],providers:Array.isArray(raw.providers)?raw.providers as Provider[]:[]};proxyCache.set(key,value);return value}}catch{}
   return undefined
-}const proxyPrefetch=new Set<string>(),proxyPrefetched=new Set<string>()
+}
+const proxyPrefetch=new Set<string>(),proxyPrefetched=new Set<string>()
 // Start loading as early as possible (before the first screen) and fill the cache; failures stay silent and the page loads normally.
 export function prefetchProxies(active:Controller|null){
   if(!active)return;prefetchProxyMode(active);const key=sourceKey(active);hydrateProxyCache(key);if(proxyPrefetched.has(key)||proxyPrefetch.has(key))return;proxyPrefetch.add(key)
@@ -125,17 +177,15 @@ export function prefetchProxies(active:Controller|null){
   }).finally(()=>{proxyPrefetch.delete(key)})
 }
 export function ProxiesPage({active,version,onClose,selected=true}:{active:Controller|null;version:number;onClose?:()=>void;selected?:boolean}) {
-  const p=usePreferences(),cacheKey=active?sourceKey(active):"",cached=hydrateProxyCache(cacheKey),[groups,setGroups]=useState<Group[]>(cached?.groups??[]),[providers,setProviders]=useState<Provider[]>(cached?.providers??[]),[loaded,setLoaded]=useState(!!cached),[err,setErr]=useState(""),[tick,setTick]=useState(0),[expanded,setExpanded]=useState(false),[showProviders,setShowProviders]=useState(true),[limit,setLimit]=useState(40),[visible,setVisible]=useState(selected),[confirmedMode,setConfirmedMode]=useState<{key:string;mode:string|null}>(()=>({key:cacheKey,mode:active?cachedProxyModeFor(active):null})),globalMode=confirmedMode.key===cacheKey&&confirmedMode.mode==="global"
+  const p=usePreferences(),cacheKey=active?sourceKey(active):"",cached=hydrateProxyCache(cacheKey),[groups,setGroups]=useState<Group[]>(cached?.groups??[]),[providers,setProviders]=useState<Provider[]>(cached?.providers??[]),[loaded,setLoaded]=useState(!!cached),[err,setErr]=useState(""),[tick,setTick]=useState(0),[expanded,setExpanded]=useState(false),[showProviders,setShowProviders]=useState(true),[limit,setLimit]=useState(40),[visible,setVisible]=useState(selected),[confirmedMode,setConfirmedMode]=useState<{key:string;mode:string|null}>(()=>({key:cacheKey,mode:proxyModeCache.get(cacheKey)??null})),globalMode=confirmedMode.key===cacheKey&&confirmedMode.mode==="global"
   traceIconPreference("proxies-render", p.customIcons)
   useEffect(()=>{const c=hydrateProxyCache(cacheKey);setGroups(c?.groups??[]);setProviders(c?.providers??[]);setLoaded(!!c)},[cacheKey])
-  // The mode switcher UI is gone; GLOBAL visibility still follows the prefetch/mode cache on every entry.
-  useEffect(()=>{if(!active)return;const known=cachedProxyModeFor(active);setConfirmedMode({key:cacheKey,mode:known})},[cacheKey,visible,version])
   useEffect(()=>{if(!active||!visible)return;let alive=true;setErr("");loadGroups(active,{includeGlobal:globalMode}).then(x=>{if(alive){setGroups(x);setLoaded(true);setErr("");setProxyCache(cacheKey,{groups:x,providers:proxyCache.get(cacheKey)?.providers??[]})}}).catch(()=>{if(alive)setErr(safeError())});return()=>{alive=false}},[active&&sourceKey(active),version,tick,p.showHidden,p.showGlobal,globalMode,p.nestedDelay,visible])
   useEffect(()=>{if(!active||!showProviders||!visible)return;let alive=true;loadProviders(active,"proxies").then(x=>{if(alive){setProviders(x);setProxyCache(cacheKey,{groups:proxyCache.get(cacheKey)?.groups??[],providers:x})}}).catch(()=>{if(alive)setErr("代理来源读取不可用：当前内核不支持或权限不足；显示的0是已加载数量，不代表远端总数。")});return()=>{alive=false}},[active&&sourceKey(active),tick,showProviders,visible])
   const remote=providers.filter(x=>x.vehicleType.toLowerCase()==="http")
   const shownGroups=groups.filter(g=>g.name!=="GLOBAL"||p.showGlobal||globalMode)
   const menu=<Menu label={<Image systemName="ellipsis.circle"/>}><Picker title="节点排序" pickerStyle="menu" value={p.nodeSort} onChanged={(v:string)=>savePreferences({nodeSort:v as any})}>{NODE_SORT_OPTIONS.map(([key, label]) => <Text key={key} tag={key}>{label}</Text>)}</Picker><Toggle title="展示全部代理组" value={expanded} onChanged={setExpanded}/><Toggle title="显示代理来源" value={showProviders} onChanged={setShowProviders}/><Toggle title="显示隐藏组" value={p.showHidden} onChanged={(v:boolean)=>savePreferences({showHidden:v})}/><Toggle key="customIcons" title="显示图标" value={p.customIcons} onChanged={(v:boolean)=>updatePreference({customIcons:v})}/><Toggle key="disconnectOnSwitch" title="自动断开旧连接" value={p.disconnectOnSwitch} onChanged={(v:boolean)=>updatePreference({disconnectOnSwitch:v})}/></Menu>
-  return Shell({title:active?.name??"代理",toolbar:rootToolbar("proxies",onClose,menu),onAppear:()=>setVisible(true),onDisappear:()=>setVisible(false),children:<>{!active?<Empty/>:<><HStack><Text font={20} fontWeight="bold" padding={{top:6}}>策略组</Text><Spacer/></HStack>{err?<Hint>{err}</Hint>:null}{!err&&loaded&&shownGroups.length===0?<Hint>未读取到策略组</Hint>:null}{shownGroups.slice(0,limit).map(g=><GroupSection key={g.name} c={active} g={g} expanded={expanded} onChanged={()=>setTick(t=>t+1)}/>)}<Pages hideCount limit={limit} total={shownGroups.length} more={()=>setLimit(limit+40)}/>{showProviders?<><HStack><Text font={20} fontWeight="bold" padding={{top:6}}>代理来源</Text><Spacer/></HStack>{remote.slice(0,limit).map(p=><ProviderCard key={p.name} c={active} p={p} kind="proxies" onChanged={()=>setTick(t=>t+1)}/>)}<Pages hideCount limit={limit} total={remote.length} more={()=>setLimit(limit+40)}/></>:null}</>}<ProxyTestSettings /></>})
+  return Shell({title:active?.name??"代理",toolbar:rootToolbar("proxies",onClose,menu),onAppear:()=>setVisible(true),onDisappear:()=>setVisible(false),children:<>{!active?<Empty/>:<><ProxyModeControl key={JSON.stringify(active)} c={active} enabled={selected&&visible} version={version} onMode={mode=>setConfirmedMode({key:cacheKey,mode})}/><HStack><Text font={20} fontWeight="bold" padding={{top:6}}>策略组</Text><Spacer/></HStack>{err?<Hint>{err}</Hint>:null}{!err&&loaded&&shownGroups.length===0?<Hint>未读取到策略组</Hint>:null}{shownGroups.slice(0,limit).map(g=><GroupSection key={g.name} c={active} g={g} expanded={expanded} onChanged={()=>setTick(t=>t+1)}/>)}<Pages hideCount limit={limit} total={shownGroups.length} more={()=>setLimit(limit+40)}/>{showProviders?<><HStack><Text font={20} fontWeight="bold" padding={{top:6}}>代理来源</Text><Spacer/></HStack>{remote.slice(0,limit).map(p=><ProviderCard key={p.name} c={active} p={p} kind="proxies" onChanged={()=>setTick(t=>t+1)}/>)}<Pages hideCount limit={limit} total={remote.length} more={()=>setLimit(limit+40)}/></>:null}</>}<ProxyTestSettings /></>})
 }
 function ruleColor(type:string) { return /AND|OR|NOT|MATCH/.test(type)?"systemRed":/PROCESS/i.test(type)?"systemPurple":/IP|GEOIP/i.test(type)?"systemGreen":"systemBlue" }
 // Last-seen rules / connections are kept on this device and loaded at launch, so the first frame is not empty while the live request runs.

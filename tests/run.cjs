@@ -464,10 +464,10 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     responder = () => ({ wait, body: { mode: 'rule', port: 80, 'socks-port': 1080, 'mixed-port': 7890, 'redir-port': 0, 'tproxy-port': 0, 'allow-lan': false, ipv6: true, 'bind-address': '*', tun: { enable: false }, 'log-level': 'info' } })
     const check = tree => {
       assert.ok(nodes(tree, 'TextField').every(n => n.props.frame.height === 22))
-      assert.equal(nodes(tree, 'ZStack').filter(n => n.props.frame?.width === 20 && n.props.frame?.height === 20).length, 3)
+      assert.equal(nodes(tree, 'ZStack').filter(n => n.props.frame?.width === 20 && n.props.frame?.height === 20).length, 0)
       assert.equal(nodes(tree, 'VStack').filter(n => n.props.frame?.minHeight === 20).length, 1)
       const cards = nodes(tree, 'VStack').filter(n => n.props.background?.props?.cornerRadius === 16)
-      assert.equal(cards.length, 5); assert.ok(cards.every(n => n.props.frame.maxWidth === 'infinity'))
+      assert.equal(cards.length, 4); assert.ok(cards.every(n => n.props.frame.maxWidth === 'infinity'))
     }
     let tree = render(ui.KernelConfigPage, { c }, true); check(tree)
     assert.equal(nodes(tree, 'Toggle').length, 0)
@@ -506,6 +506,19 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     assert.equal(calls.length, 1)
     for (const address of ['*', '0.0.0.0', '::', '127.0.0.1']) assert.equal(api.validateConfigPatch({ 'bind-address': address })['bind-address'], address)
   })
+  await test('代理配置不再渲染代理模式分组：无标题、无三选项按钮且mode不可从这里写入；其余分组与保存不受影响', async () => {
+    const cfg = { mode: 'rule', 'mixed-port': 7890, 'allow-lan': false, 'log-level': 'info' }
+    responder = () => ({ body: cfg }); calls.length = 0
+    render(ui.KernelConfigPage, { c }, true); await flush(); let tree = render(ui.KernelConfigPage, { c })
+    assert.ok(!text(tree).includes('代理模式')); assert.ok(!nodes(tree, 'Button').some(n => ['规则模式', '全局模式', '直连模式'].includes(text(n))))
+    assert.deepEqual(nodes(tree, 'TextField').map(n => n.props.title), ['混合端口', 'HTTP 端口', 'SOCKS5 端口', '透明代理端口', 'TProxy 端口', '绑定地址'])
+    assert.deepEqual(nodes(tree, 'Toggle').map(n => n.props.title), ['允许局域网连接'])
+    nodes(tree, 'Toggle')[0].props.onChanged(true); await flush()
+    assert.deepEqual(JSON.parse(calls.at(-1).init.body), { 'allow-lan': true }); assert.ok(!calls.map(x => { try { return JSON.parse(x.init.body || '{}') } catch { return {} } }).some(b => 'mode' in b))
+    tree = render(ui.KernelConfigPage, { c }); assert.equal(nodes(tree, 'Toggle')[0].props.value, true)
+    const remaining = ['端口配置', '网络设置', 'TUN 模式', '日志']; for (const heading of remaining) assert.ok(text(tree).includes(heading), heading)
+    unmount()
+  })
   await test('代理配置布局灰卡片、彩色线框与模式/网络/TUN/中文日志即时保存', async () => {
     const cfg = { mode: 'rule', port: 80, 'socks-port': 1080, 'mixed-port': 7890, 'redir-port': 0, 'tproxy-port': 65535, 'allow-lan': false, ipv6: true, 'bind-address': '*', tun: { enable: false, stack: 'mixed', mtu: 9000 }, 'log-level': 'info' }
     responder = () => ({ body: cfg }); calls.length = 0; const before = confirms.length
@@ -519,10 +532,9 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     }
     assert.ok(nodes(tree, 'TextField').every(n => n.props.background.style.light === '#E5E5EA'))
     const cards = nodes(tree, 'VStack').filter(n => n.props.background?.props?.cornerRadius === 16)
-    assert.equal(cards.length, 5); assert.ok(cards.every(n => n.props.background.props.fill.light === '#F2F2F7' && n.props.background.props.fill.dark === '#1C1C1E'))
-    assert.equal(nodes(button(tree, '规则模式'), 'Image')[0].props.foregroundStyle, 'systemBlue')
+    assert.equal(cards.length, 4); assert.ok(cards.every(n => n.props.background.props.fill.light === '#F2F2F7' && n.props.background.props.fill.dark === '#1C1C1E'))
+    assert.ok(!nodes(tree, 'Button').some(n => ['规则模式', '全局模式', '直连模式'].includes(text(n))))
     const actions = [
-      [() => button(tree, '全局模式').props.action(), { mode: 'global' }],
       [() => nodes(tree, 'Toggle').find(n => n.props.title === 'IPv6').props.onChanged(false), { ipv6: false }],
       [() => nodes(tree, 'Toggle').find(n => n.props.title === '允许局域网连接').props.onChanged(true), { 'allow-lan': true }],
       [() => nodes(tree, 'Toggle').find(n => n.props.title === 'TUN 模式').props.onChanged(true), { tun: { enable: true } }],
@@ -530,7 +542,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     ]
     for (const [action, patch] of actions) { action(); await flush(); assert.deepEqual(JSON.parse(calls.at(-1).init.body), patch); tree = render(ui.KernelConfigPage, { c }) }
     assert.deepEqual(clone(hooks[0].current.cfg.tun), { enable: true, stack: 'mixed', mtu: 9000 })
-    assert.equal(confirms.length, before); assert.equal(calls.length, 6); unmount()
+    assert.equal(confirms.length, before); assert.equal(calls.length, 5); unmount()
   })
   await test('代理配置缺失字段无假默认：缺失开关显示未提供、输入禁用、不可写回', async () => {
     for (const cfg of [{}, { tun: { stack: 'system' } }]) {
@@ -538,10 +550,10 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       render(ui.KernelConfigPage, { c }, true); await flush(); let tree = render(ui.KernelConfigPage, { c })
       assert.equal(nodes(tree, 'Toggle').length, 0); assert.match(text(tree), /未提供/)
       assert.ok(nodes(tree, 'TextField').every(n => n.props.value === '' && n.props.disabled))
-      for (const title of ['规则模式', '全局模式', '直连模式']) assert.equal(button(tree, title).props.disabled, true)
+      assert.ok(!nodes(tree, 'Button').some(n => ['规则模式', '全局模式', '直连模式'].includes(text(n))))
       assert.equal(nodes(tree, 'Menu')[0].props.disabled, true)
       assert.equal(nodes(tree, 'Image').filter(n => n.props.systemName === 'checkmark').length, 0)
-      const field = nodes(tree, 'TextField')[0]; field.props.onChanged('1234'); field.props.onBlur(); button(tree, '规则模式').props.action(); button(nodes(tree, 'Menu')[0], '调试').props.action()
+      const field = nodes(tree, 'TextField')[0]; field.props.onChanged('1234'); field.props.onBlur(); button(nodes(tree, 'Menu')[0], '调试').props.action()
       await flush(); assert.equal(calls.length, 1)
     }
     unmount()
@@ -575,13 +587,12 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     let release; const wait = new Promise(resolve => { release = resolve }); let patches = 0
     responder = (_u, init) => init.method === 'PATCH' ? (++patches === 1 ? { wait } : {}) : { body: { mode: 'rule', ipv6: false, port: 80, tun: { enable: false, mtu: 9000 } } }
     calls.length = 0; render(ui.KernelConfigPage, { c }, true); await flush(); let tree = render(ui.KernelConfigPage, { c })
-    button(tree, '全局模式').props.action(); button(tree, '直连模式').props.action(); button(tree, '规则模式').props.action()
     nodes(tree, 'Toggle').find(n => n.props.title === 'IPv6').props.onChanged(true)
     await flush(); assert.equal(calls.filter(n => n.init.method === 'PATCH').length, 1)
     tree = render(ui.KernelConfigPage, { c }); assert.equal(nodes(tree, 'Toggle')[0].props.disabled, false)
     release(); await flush(); tree = render(ui.KernelConfigPage, { c })
     const writes = calls.filter(n => n.init.method === 'PATCH').map(n => JSON.parse(n.init.body))
-    assert.deepEqual(writes, [{ mode: 'global' }, { mode: 'rule', ipv6: true }]); assert.equal(hooks[0].current.cfg.mode, 'rule')
+    assert.deepEqual(writes, [{ ipv6: true }]); assert.equal(hooks[0].current.cfg.mode, 'rule')
     const pending = new Promise(resolve => { release = resolve }); responder = () => ({ wait: pending })
     const port = nodes(tree, 'TextField').find(n => n.props.title === 'HTTP 端口')
     port.props.onChanged('81'); port.props.onBlur(); port.props.onChanged('82'); release(); await flush(); tree = render(ui.KernelConfigPage, { c })
@@ -593,9 +604,6 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     responder = (_u, init) => init.method === 'PATCH' ? { status: 500 } : { body: { mode: 'rule', tun: { enable: false, stack: 'system' } } }
     calls.length = 0; const before = confirms.length
     render(ui.KernelConfigPage, { c }, true); await flush(); let tree = render(ui.KernelConfigPage, { c })
-    button(tree, '全局模式').props.action(); await flush(); tree = render(ui.KernelConfigPage, { c })
-    assert.match(text(tree), /保存失败/); assert.equal(nodes(button(tree, '全局模式'), 'Image')[0].props.systemName, 'checkmark')
-    responder = () => ({}); button(tree, '全局模式').props.action(); await flush(); tree = render(ui.KernelConfigPage, { c }); assert.ok(!text(tree).includes('保存失败'))
     let release; const wait = new Promise(resolve => { release = resolve }); let first = true
     responder = () => { if (first) { first = false; return { wait } } return {} }
     const toggle = nodes(tree, 'Toggle')[0]
@@ -613,12 +621,12 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     let tree = render(ui.KernelConfigPage, { c: other }); assert.equal(nodes(tree, 'TextField').find(n => n.props.title === 'HTTP 端口').props.value, '90')
     waiting = new Promise(resolve => { release = resolve }); responder = (_u, init) => init.method === 'PATCH' ? { wait: waiting } : { body: { mode: 'rule', port: 80 } }
     render(ui.KernelConfigPage, { c }, true); await flush(); const old = render(ui.KernelConfigPage, { c })
-    button(old, '全局模式').props.action(); button(old, '直连模式').props.action(); await flush()
+    nodes(old, 'TextField').find(n => n.props.title === 'HTTP 端口').props.onChanged('81'); await flush()
     const count = calls.length; render(ui.KernelConfigPage, { c: other }); await flush()
-    button(old, '规则模式').props.action(); const field = nodes(old, 'TextField').find(n => n.props.title === 'HTTP 端口'); field.props.onChanged('123'); field.props.onSubmit()
+    nodes(old, 'TextField').find(n => n.props.title === 'HTTP 端口').props.onChanged('82'); nodes(old, 'TextField').find(n => n.props.title === 'HTTP 端口').props.onSubmit()
     release(); await flush(); assert.equal(calls.length, count + 1)
     assert.equal(hooks[0].current.cfg.mode, 'rule'); assert.equal(hooks[0].current.cfg.port, 80)
-    const latest = render(ui.KernelConfigPage, { c: other }), before = calls.length; unmount(); button(latest, '全局模式').props.action(); await flush(); assert.equal(calls.length, before)
+    const latest = render(ui.KernelConfigPage, { c: other }), before = calls.length; unmount(); nodes(latest, 'TextField')[0].props.onChanged('55'); nodes(latest, 'TextField')[0].props.onSubmit(); await flush(); assert.equal(calls.length, before)
     responder = () => ({ status: 500 }); render(ui.KernelConfigPage, { c }, true); await flush(); tree = render(ui.KernelConfigPage, { c }); assert.match(text(tree), /读取内核配置失败/); assert.ok(nodes(tree, 'TextField').every(n => n.props.disabled)); unmount()
   })
   await test('设置子页Form统一原生白底，隐藏分组滚动背景且保留主题适配', () => {
@@ -740,7 +748,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) { const lazy = ['proxies','rules','connections'].includes(ids[i]) && ids[i] !== id; assert.equal(nodes(tree, types[i]).length, lazy ? 0 : 1); if (!lazy) assert.equal(nodes(tree, types[i])[0].props.selected, ids[i] === id) }
     }
-    assert.equal(api.VERSION, '1.12'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.13'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('独立导航栈保留业务owner和身份，只有选中页提供可见工具栏', () => {
     pref.savePreferences({ defaultPage: 'overview' })
@@ -1841,7 +1849,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       const diagnostic = logs.filter(x => x.startsWith('[preferences-icon]'))
       for (const stage of ['change','accepted','proxies-render','group-render']) assert.ok(diagnostic.some(x => x.includes('stage=' + stage) && x.includes('enabled=false')))
       assert.ok(diagnostic.every(x => !x.includes('private.invalid') && !x.includes('private-group-name') && !x.includes('secret-')))
-      assert.ok(diagnostic.every(x => x.includes('build=1.12') && /instance=[a-z0-9]+/.test(x)))
+      assert.ok(diagnostic.every(x => x.includes('build=1.13') && /instance=[a-z0-9]+/.test(x)))
       assert.equal(new Set(diagnostic.map(x => x.match(/instance=([^ ]+)/)[1])).size, 1)
     } finally { context.console = originalConsole; unmount(); pref.savePreferences({ customIcons: true, testURL: 'https://www.gstatic.com/generate_204' }) }
   })
