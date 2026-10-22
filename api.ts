@@ -1,7 +1,7 @@
 import { CpuSampler, CpuUsage, CpuMeta, parseCpuInfo, thermalCelsius } from "./openwrt-metrics"
 
 import { getPreferences, customHeaders, recordEvent, controllerHealth, feedback } from "./preferences"
-export const VERSION = "1.9"
+export const VERSION = "1.10"
 
 export type Kind = "clash" | "openwrt"
 export type Plugin = "openclash" | "nikki" | "mihomo"
@@ -680,6 +680,44 @@ export async function updateProvider(c: Controller, kind: "proxies" | "rules", n
 function requireNikki(c: Controller) { if (c.kind !== "openwrt" || c.plugin !== "nikki") throw new Error("仅支持 Nikki 的 LuCI RPC；当前来源不是 Nikki") }
 export async function nikkiInfo(c: Controller): Promise<{ app: string; core: string }> { requireNikki(c); const j = await ubus(c,"luci.nikki","version"); return { app: String(j.app || "未提供"), core: String(j.core || "未提供") } }
 export async function coreVersion(c: Controller) { return String((await http(await cc(c),"/version")).version || "未提供") }
+// Official updater uses Prerelease-Alpha for alpha builds, latest release otherwise.
+// Unknown/custom builds are deliberately not treated as upgradeable. Public requests
+// never use http()/customHeaders(), controller URLs, or controller credentials.
+const coreUpdatePending = new Map<string, Promise<boolean | null>>()
+export async function checkCoreUpdate(version: string): Promise<boolean | null> {
+  if (!/^alpha-[0-9a-f]{7,40}$/.test(version) && !/^v?\d+\.\d+\.\d+$/.test(version)) return null
+  const pending = coreUpdatePending.get(version)
+  if (pending) return pending
+  const request = readCoreUpdate(version).catch(() => null)
+  coreUpdatePending.set(version, request)
+  try { return await request } finally { if (coreUpdatePending.get(version) === request) coreUpdatePending.delete(version) }
+}
+async function readCoreUpdate(version: string): Promise<boolean | null> {
+  const alpha = version.startsWith("alpha-")
+  const response = await fetch(alpha
+    ? "https://github.com/MetaCubeX/mihomo/releases/download/Prerelease-Alpha/version.txt"
+    : "https://github.com/MetaCubeX/mihomo/releases/latest/download/version.txt",
+    { headers: {}, timeout: getPreferences().requestTimeout })
+  if (!response.ok) return null
+  const latest = (await response.text()).trim()
+  if (alpha) {
+    if (!/^alpha-[0-9a-f]{7,40}$/.test(latest)) return null
+    if (latest === version) return false
+    // Different hashes alone do not prove newer: require official commit ancestry.
+    const comparison = await fetch(`https://api.github.com/repos/MetaCubeX/mihomo/compare/${version.slice(6)}...${latest.slice(6)}`,
+      { headers: { Accept: "application/vnd.github+json" }, timeout: getPreferences().requestTimeout })
+    if (!comparison.ok) return null
+    const result = JSON.parse(await comparison.text())
+    if (result.status === "ahead" && result.ahead_by > 0 && result.behind_by === 0) return true
+    if (result.status === "identical" || result.status === "behind") return false
+    return null
+  }
+  const parse = (s: string) => /^v?\d+\.\d+\.\d+$/.test(s) ? s.replace(/^v/, "").split(".").map(Number) : null
+  const current = parse(version), target = parse(latest)
+  if (!current || !target || [...current, ...target].some(n => !Number.isSafeInteger(n))) return null
+  for (let i = 0; i < 3; i++) if (target[i] !== current[i]) return target[i] > current[i]
+  return false
+}
 // Prefer the live core API, with Nikki's local version as a read-only fallback.
 // Resolve both results together so a slower missing value cannot overwrite a valid version.
 export async function loadRuntimeVersions(c: Controller, onUpdate?: (value:{core:string;app:string;failed:boolean})=>void): Promise<{core:string;app:string;failed:boolean}> {
