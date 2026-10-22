@@ -2,7 +2,7 @@ import { TimingToken, timingToken, timing, timingReadContext, timingSpan } from 
 import { CpuSampler, CpuUsage, CpuMeta, parseCpuInfo, thermalCelsius } from "./openwrt-metrics"
 
 import { getPreferences, customHeaders, recordEvent, controllerHealth, feedback } from "./preferences"
-export const VERSION = "1.26"
+export const VERSION = "1.27"
 
 export type Kind = "clash" | "openwrt"
 export type Plugin = "openclash" | "nikki" | "mihomo"
@@ -220,7 +220,7 @@ function pickWan(dump: any): { name: string; device: string } {
   const w = list.find(hasDefault) ?? list.find(i => i.interface === "wan") ?? list.find(i => i.interface !== "loopback" && i.up)
   return { name: String(w?.interface ?? ""), device: String(w?.l3_device ?? w?.device ?? "") }
 }
-const MAX_RATE = 1.26e9
+const MAX_RATE = 1.27e9
 export interface DiskUsage { size:number; used:number; avail:number; mount?:string; device?:string }
 const slowCache: Record<string, { at: number; board: any; dump: any; arch?:string; thermal:string[]; disk:DiskUsage|null }> = {}
 const cpuSamplers: Record<string,CpuSampler>={}
