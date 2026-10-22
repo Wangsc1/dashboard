@@ -1,7 +1,7 @@
-import { HStack, VStack, Text, Image, RoundedRectangle, Spacer, ScrollView, LazyVStack, SVG, ZStack, Animation, Device, NavigationStack, modifiers, useState, useEffect, useMemo, GeometryReader, useColorScheme } from "scripting"
+import { HStack, VStack, Text, Image, RoundedRectangle, Spacer, ScrollView, LazyVStack, SVG, ZStack, Device, NavigationStack, modifiers, useState, useEffect, useMemo, GeometryReader, useColorScheme } from "scripting"
 import { Overview, WrtInfo, fmtBytes, fmtSpeed, fmtUptime } from "./api"
 import { CpuUsage, OverviewHistory } from "./openwrt-metrics"
-import { CHART_HISTORY, scrollPoints, smoothPath } from "./chart"
+import { CHART_HISTORY, animateChart, scrollPoints, smoothPath } from "./chart"
 export const HOME_BG = "systemBackground"
 const INK="label",PANEL="secondarySystemBackground"
 export function HomeCard({children,onOpen}:{children?:any;onOpen?:()=>void}) {
@@ -17,40 +17,51 @@ export function MetricNumber({value,unit="",pointSize=16,tone="label",digits=0,r
   },[target,unit,running])
   return <Text font={pointSize} fontWeight="semibold" foregroundStyle={tone} lineLimit={1} minimumScaleFactor={0.65}>{`${shown}${unit}`}</Text>
 }
-// Non-Charts plot (SVG, the approach that displayed on the device through 1.5.161/1.5.166).
-// SLIDE_PLOTS: smooth sliding via ONE native `animation={{animation,value}}` on the offset of a
-// pre-rasterised data layer (no timers, no per-frame setState; 2 renders per new sample). If sliding
-// misbehaves on device set it to false to get the plain 1 s step plot of 1.5.166.
-// The newest sample is always at the right of a fixed 60-point window; no fake zeros.
-export const SLIDE_PLOTS=true
+// One SVG, same rendering boundary as 1.5.166. The existing shared 50ms scheduler supplies
+// elapsed time to LOCAL curve state only. Offscreen/paused/unmounted curves unsubscribe.
 const SCREEN_W:number|undefined=(Device as any)?.screen?.width
-const SLIDE_OK=typeof SCREEN_W==="number"&&SCREEN_W>0&&SCREEN_W<=600
-// Card inner widths: page padding 16 + card padding 16 per side; two columns are separated by 16.
-export const PLOT_FULL_W:number|undefined=SLIDE_OK?SCREEN_W-64:undefined
-export const PLOT_HALF_W:number|undefined=SLIDE_OK?(SCREEN_W-48)/2-32:undefined
+const SIZED=typeof SCREEN_W==="number"&&SCREEN_W>112&&SCREEN_W<=600
+export const PLOT_FULL_W:number|undefined=SIZED?SCREEN_W-64:undefined
+export const PLOT_HALF_W:number|undefined=SIZED?(SCREEN_W-48)/2-32:undefined
 export const PLOT_STROKE=1.5
 export function GridPlot({samples,tone,plotHeight=96,area=false,running=true,percent=false,plotWidth}:{samples:number[];tone:string;plotHeight?:number;area?:boolean;running?:boolean;percent?:boolean;plotWidth?:number}) {
-  const [track]=useState({samples,seq:0}),[armed,setArmed]=useState(0)
-  if(track.samples!==samples){track.samples=samples;track.seq++}
-  useEffect(()=>{setArmed(track.seq)},[samples,running])
-  const slide=SLIDE_PLOTS&&plotWidth!==undefined&&plotWidth>0,W=slide?plotWidth as number:336,H=plotHeight,step=W/(CHART_HISTORY-1)
-  const values=samples.slice(-(slide?CHART_HISTORY+1:CHART_HISTORY)).filter(Number.isFinite),scale=percent?100:Math.max(1024,...values)
-  const points=scrollPoints(values,values,0,W),line=values.length<2?"":smoothPath(points,H,scale,2),first=points[0],last=points[points.length-1]
-  const grid=[...Array.from({length:8},(_,i)=>`<path d="M ${i*W/7},0 V ${H}"/>`),...Array.from({length:5},(_,i)=>`<path d="M 0,${i*H/4} H ${W}"/>`)].join("")
-  const gridSvg=`<g stroke="#9295a3" stroke-opacity="0.22" stroke-width="0.6" stroke-dasharray="3 3" fill="none">${grid}</g>`
-  const fill=area&&line&&first&&last?`<path d="${line} L ${last.x},${H} L ${first.x},${H} Z" fill="${tone}" fill-opacity="0.10"/>`:""
-  const stroke=line?`<path d="${line}" fill="none" stroke="${tone}" stroke-width="${PLOT_STROKE}" stroke-linecap="round"/>`:""
-  if(!slide){
-    const code=`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">${gridSvg}${fill}${stroke}</svg>`
-    return <SVG code={code} resizable frame={{maxWidth:"infinity",height:plotHeight}}/>
+  const [visible,setVisible]=useState(false)
+  const values=useMemo(()=>samples.slice(-CHART_HISTORY).filter(Number.isFinite),[samples])
+  const enabled=running&&visible
+  const [track]=useState({previous:values,current:values,enabled,at:Date.now(),duration:1000,animating:false})
+  const [tick,setTick]=useState(Date.now())
+  // Prepare endpoints BEFORE rendering the new sample, so its first frame is progress=0,
+  // never an intermediate target-frame jump before an effect runs. No state setter here.
+  if(track.current!==values||track.enabled!==enabled){
+    const now=Date.now(),changed=track.current!==values
+    const reset=!enabled||!track.enabled||!values.length||values.length<track.current.length
+    track.previous=reset?values:track.current
+    track.current=values;track.enabled=enabled
+    track.duration=Math.max(500,Math.min(1500,now-track.at||1000))
+    track.at=now;track.animating=changed&&!reset&&values.length>=2
   }
-  const gridCode=`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">${gridSvg}</svg>`
-  const dataCode=`<svg xmlns="http://www.w3.org/2000/svg" viewBox="${-step} 0 ${W+step} ${H}" preserveAspectRatio="none">${fill}${stroke}</svg>`
-  const pending=running&&armed!==track.seq
-  return <ZStack alignment="leading" frame={{width:W,height:H}} clipped>
-    <SVG code={gridCode} resizable frame={{width:W,height:H}}/>
-    <SVG code={dataCode} resizable frame={{width:W+step,height:H}} offset={{x:pending?0:-step,y:0}} animation={{animation:Animation.linear(1),value:armed}}/>
-  </ZStack>
+  useEffect(()=>{
+    setTick(Date.now())
+    if(!track.animating)return
+    return animateChart(at=>{setTick(at);return at<track.at+track.duration})
+  },[values,enabled])
+  const W=plotWidth!==undefined&&Number.isFinite(plotWidth)&&plotWidth>0?plotWidth:336,H=plotHeight
+  const staticSvg=useMemo(()=>{
+    const grid=[...Array.from({length:8},(_,i)=>`<path d="M ${i*W/7},0 V ${H}"/>`),...Array.from({length:5},(_,i)=>`<path d="M 0,${i*H/4} H ${W}"/>`)].join("")
+    return {head:`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"><g stroke="#9295a3" stroke-opacity="0.22" stroke-width="0.6" stroke-dasharray="3 3" fill="none">${grid}</g>`,tail:"</svg>"}
+  },[W,H])
+  const scales=useMemo(()=>({from:percent?100:Math.max(1024,...track.previous),to:percent?100:Math.max(1024,...values)}),[values,track.previous,enabled,percent])
+  const p=!enabled||track.current!==values?1:Math.max(0,Math.min(1,(tick-track.at)/track.duration))
+  // previous retains the outgoing sample even when source history has already trimmed to 60.
+  const code=useMemo(()=>{
+    const current=track.current===values?track.current:values,previous=track.current===values?track.previous:values
+    const points=scrollPoints(previous,current,p,W),scale=scales.from+(scales.to-scales.from)*p
+    const line=values.length<2?"":smoothPath(points,H,scale,2),first=points[0],last=points[points.length-1]
+    const fill=area&&line&&first&&last?`<path d="${line} L ${last.x},${H} L ${first.x},${H} Z" fill="${tone}" fill-opacity="0.10"/>`:""
+    const stroke=line?`<path d="${line}" fill="none" stroke="${tone}" stroke-width="${PLOT_STROKE}" stroke-linecap="round"/>`:""
+    return staticSvg.head+fill+stroke+staticSvg.tail
+  },[values,track.previous,track.current,p,staticSvg,tone,area,scales])
+  return <SVG code={code} resizable frame={plotWidth!==undefined?{width:W,height:H}:{height:H}} onAppear={()=>setVisible(true)} onDisappear={()=>setVisible(false)}/>
 }
 export function CpuBreakdown({cpu,running}:{cpu?:CpuUsage;running:boolean}) {
   return <HStack spacing={0} alignment="bottom"><HStack spacing={22}>{([['SYS',cpu?.system],['USER',cpu?.user],['STEAL',cpu?.steal]] as const).map(([title,value])=><VStack key={title} alignment="leading" spacing={3}><Text font={10} fontWeight="semibold" foregroundStyle="secondaryLabel" lineLimit={1}>{title}</Text><MetricNumber value={value} digits={1} pointSize={14} running={running}/></VStack>)}</HStack><Spacer/><HStack alignment="lastTextBaseline" spacing={2}><MetricNumber running={running} value={cpu?.usage} digits={1} pointSize={22} tone="#3485eb"/><Text font={11} foregroundStyle="#3485eb">%</Text></HStack></HStack>
@@ -132,17 +143,12 @@ export function CpuDetails({overview,histories,running}:{overview:Overview|null;
   const info=[['Uptime',w?fmtUptime(w.uptime,true):'--'],['Arch',w?.arch||'--'],['Cpu',cores.length?String(cores.length):'--'],['Kernel',w?.kernel||'--'],['Board',w?.model||'--']]
   return <NavigationStack presentationDetents={['large']} presentationDragIndicator="visible" presentationContentInteraction="scrolls"><ScrollView navigationTitle="CPU" navigationBarTitleDisplayMode="inline" background={HOME_BG}><LazyVStack spacing={16} padding={{horizontal:16,top:12,bottom:24}}><HomeCard><Text font={15} fontWeight="semibold">{w?.release||'系统版本未提供'}</Text><VStack spacing={5}>{info.map(([title,value])=><HStack key={title}><Text font={12} foregroundStyle="label">{title}</Text><Spacer/><Text font={12} foregroundStyle="label" multilineTextAlignment="trailing">{value}</Text></HStack>)}</VStack></HomeCard><DetailCpuSummary w={w} history={histories.cpu.cpu??[]} running={running}/>{rows.map((row,i)=><CoreRow key={String(i)} cpus={row} w={w} histories={histories} running={running}/>)}{!cores.length?<Text font={12} foregroundStyle="secondaryLabel">/proc/stat未提供逻辑核数据或当前账号无读取权限。</Text>:null}</LazyVStack></ScrollView></NavigationStack>
 }
-// Scroll cost: every sample replaces every core history, so a full list would re-render (and re-rasterise
-// an SVG for) all cores each second. Each LazyVStack row tracks its own visibility; an off-screen row keeps
-// its last snapshot (stable element tree, no rebuild) and catches up when it scrolls back. Data stays exact.
+// No whole-card/element snapshots: metadata and numeric values always use latest inputs.
+// Each GridPlot independently controls its animation subscription through SVG visibility.
 export function CoreRow({cpus,w,histories,running}:{cpus:CpuUsage[];w?:WrtInfo;histories:OverviewHistory;running:boolean}) {
-  const [visible,setVisible]=useState(true),[snap]=useState({h:histories,w})
-  if(visible){snap.h=histories;snap.w=w}
-  const shown=snap.h,shownW=snap.w,live=running&&visible
-  const cards=useMemo(()=>cpus.map(c=><CoreCard key={c.id} cpu={c} w={shownW} history={shown.cpu[c.id]??[]} running={live}/>),[shown,shownW,live,cpus.map(c=>c.id).join(",")])
-  return <HStack spacing={16} alignment="top" onAppear={()=>setVisible(true)} onDisappear={()=>setVisible(false)}>{cards}{cpus.length===1?<Spacer frame={{minWidth:0,maxWidth:'infinity'}}/>:null}</HStack>
+  return <HStack spacing={16} alignment="top">{cpus.map(c=><CoreCard key={c.id} cpu={c} w={w} history={histories.cpu[c.id]??[]} running={running}/>)}{cpus.length===1?<Spacer frame={{minWidth:0,maxWidth:'infinity'}}/>:null}</HStack>
 }
-// Per-core plots use the same SVG GridPlot (no timers).
+// Per-core plots share GridPlot and the single scheduler; no per-core timer.
 export function SampledCpuPlot({samples,running=false}:{samples:number[];running?:boolean}) {
   return <GridPlot samples={samples} tone="#2dbf82" percent plotHeight={76} running={running} plotWidth={PLOT_HALF_W}/>
 }

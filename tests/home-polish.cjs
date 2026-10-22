@@ -1,4 +1,4 @@
-// Official native Charts/shape tree contracts; not native appearance or FPS.
+// Single-SVG/shape tree contracts; not native appearance or FPS.
 const fs=require('node:fs'),vm=require('node:vm')
 const harness=fs.readFileSync(__dirname+'/run.cjs','utf8').split(';(async () => {')[0]
 const checks=String.raw`
@@ -11,7 +11,7 @@ function contrast(a,b){return (Math.max(lum(a),lum(b))+0.05)/(Math.min(lum(a),lu
    const h={up:[10,20],down:[20,30],cpu:{cpu:[10,20],...Object.fromEntries(Array.from({length:16},(_,i)=>['cpu'+i,[10,20]]))}},o={traffic:{up:10,down:20},wrt:{cpus:[{id:'cpu'},...Array.from({length:16},(_,i)=>({id:'cpu'+i}))],load:[0.09,0.06,0.02],memTotal:100,memFree:50,disk:{used:1,size:100,avail:99},cpuMeta:{}}}
    const main=expand(home.HomeDashboard({overview:o,histories:h,running:false,onCpu(){}})),detail=expand(home.CpuDetails({overview:o,histories:h,running:false}))
    for(const n of [main,detail]){assert.equal(nodes(n,'WebView').length,0);for(const c of ['Chart','LineChart','AreaChart'])assert.equal(nodes(n,c).length,0)}
-   assert.equal(nodes(main,'SVG').length,6);assert.equal(nodes(detail,'SVG').length,34);assert.ok(nodes(main,'RoundedRectangle').length>0);unmount();assert.equal(intervals.size,0)
+   assert.equal(nodes(main,'SVG').length,3);assert.equal(nodes(detail,'SVG').length,17);assert.ok(nodes(main,'RoundedRectangle').length>0);unmount();assert.equal(intervals.size,0)
  })
  await test('RAM条仍按段计数',()=>{
    const ram=home.CapacityBars({fraction:0.04,tone:'#a179d1'});assert.equal(nodes(ram,'RoundedRectangle').length,24);assert.equal(nodes(ram,'RoundedRectangle').filter(n=>n.props.fill.opacity===0.85).length,1)

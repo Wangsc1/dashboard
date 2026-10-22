@@ -24,42 +24,48 @@ function slot(n,height){
   assert.equal(n.props.fixedSize,undefined)
 }
 ;(async()=>{
- await test('home-ui AST: JSX及modifiers链无固定/弹性混合frame，反例确实会失败',()=>{
-   const source=fs.readFileSync(path.join(root,'home-ui.tsx'),'utf8');const mixed=mixedFrames(source);// the only allowed mix is the SVG plot frame, verbatim from 1.5.161 which displayed on the device
-   assert.equal(mixed.length,1);assert.ok(source.split('\n')[mixed[0]-1].includes('<SVG code={code} resizable frame={{maxWidth:"infinity",height:plotHeight}}/>'))
-   // The four pre-fix shapes, plus a mixed chain. Guards against a no-op scanner.
-   assert.equal(mixedFrames('<><Chart frame={{minWidth:0,maxWidth:"infinity",height:plotHeight}}/><GeometryReader frame={{minWidth:0,maxWidth:"infinity",height:28}}/><GeometryReader frame={{minWidth:0,maxWidth:"infinity",height:28}}/><GeometryReader frame={{minWidth:0,maxWidth:"infinity",height:8}}/><VStack modifiers={modifiers().frame({height:28,maxWidth:"infinity"})}/></>').length,5)
-   assert.equal(mixedFrames('<VStack modifiers={modifiers().frame({height:28}).frame({minWidth:0,maxWidth:"infinity"})}/>').length,0)
-   assert.ok(!source.includes('maxHeight:"infinity"'),'home path must not regain unbounded vertical card stretch')
+ await test('home-ui AST: 无混合frame；单SVG始终保留高度/网格，无Chart/双阶段offset动画',async()=>{
+   const source=fs.readFileSync(path.join(root,'home-ui.tsx'),'utf8');deep(mixedFrames(source),[])
+   assert.equal(mixedFrames('<VStack frame={{height:28,maxWidth:"infinity"}}/>').length,1)
+   const plotSource=source.slice(source.indexOf('export function GridPlot'),source.indexOf('export function CpuBreakdown'))
+   for(const bad of ['<ZStack','offset=','clipped','Animation.','armed','setInterval','new Date','<Chart'])assert.ok(!plotSource.includes(bad),bad)
+   assert.ok(plotSource.includes('useMemo(()=>{'))
+   for(const plotWidth of [undefined,329,140.5])for(const height of [96,66,76])for(const samples of [[],[2],[1,2],[NaN,Infinity],Array(60).fill(100)]){
+     const out=render(home.GridPlot,{samples,tone:'#3485eb',plotHeight:height,running:true,plotWidth},true);await flush()
+     assert.equal(out.type,'SVG');deep(out.props.frame,plotWidth===undefined?{height}:{width:plotWidth,height})
+     assert.equal(out.props.animation,undefined);assert.equal(out.props.offset,undefined);assert.equal(out.props.modifiers,undefined)
+     assert.ok(out.props.code.includes('stroke-dasharray="3 3"'));assert.ok(!out.props.code.includes('NaN'));assert.ok(!out.props.code.includes('Infinity'))
+     assert.equal(intervals.size,0,'offscreen curve never subscribes')
+   }unmount()
  })
- await test('契约(非实机): GridPlot无Chart/Date/计时器/禁用动画，固定高度，窗口右对齐，线宽一致',()=>{
-   for(const plotWidth of [undefined,393-64,(393-48)/2-32])for(const height of [96,66,76])for(const area of [false,true])for(const samples of [[],[5],[1,2],[0,0,0],Array(60).fill(100),Array.from({length:80},(_,i)=>i*1024)]){
-     const out=render(home.GridPlot,{samples,tone:'#3485eb',plotHeight:height,area,percent:samples.length!==80,running:true,plotWidth},true)
-     assert.equal(intervals.size,0)
-     for(const x of ['Chart','LineChart','AreaChart','GeometryReader'])assert.equal(nodes(out,x).length,0)
-     const svgs=out.type==='SVG'?[out]:nodes(out,'SVG');assert.ok(svgs.length>=1)
-     const data=svgs.at(-1).props.code;assert.ok(!data.includes('NaN')&&!data.includes('Infinity'))
-     if(plotWidth===undefined){assert.equal(out.type,'SVG');deep(out.props.frame,{maxWidth:'infinity',height})}
-     else{assert.equal(out.type,'ZStack');assert.equal(out.props.clipped,true);deep(out.props.frame,{width:plotWidth,height});assert.equal(svgs.length,2)
-       const mover=svgs[1],step=plotWidth/59;assert.equal(mover.props.frame.width,plotWidth+step);assert.equal(typeof mover.props.animation.value,'number');assert.equal(mover.props.rotationEffect,undefined)
-       assert.ok(data.includes('viewBox="'+(-step)+' 0 '));assert.equal(svgs[0].props.frame.width,plotWidth)}
-     const line=/<path d="(M [^"]+)" fill="none" stroke="#3485eb"/.exec(data)
-     if(samples.length<2)assert.equal(line,null)
-     else{assert.ok(data.includes('stroke-width="1.5"'));assert.equal(data.includes('fill-opacity="0.10"'),area)
-       const xs=[...line[1].matchAll(/ ([\d.]+),[\d.-]+/g)].map(m=>Number(m[1])),w=plotWidth??336;assert.ok(Math.abs(xs.at(-1)-w)<0.02)}
-   }
-   unmount()
-   const source=fs.readFileSync(path.join(root,'home-ui.tsx'),'utf8');for(const banned of ['<Chart','LineChart','AreaChart','new Date','CHART_ANIMATION','withAnimation','rotationEffect','Transition.move'])assert.ok(!source.includes(banned),banned)
-   assert.equal(home.PLOT_STROKE,1.5);assert.ok(source.includes('stroke-width="\x24{PLOT_STROKE}"'))
+ await test('共享调度: 所有订阅仅一个50ms timer，最后取消/到期即停止，无独立timer',()=>{
+   const chart=load('chart');let a=0,b=0
+   const offA=chart.animateChart(()=>{a++;return true}),offB=chart.animateChart(()=>{b++;return true})
+   assert.equal(intervals.size,1);assert.ok([...intervals.values()][0].ms>=34)
+   for(const t of intervals.values())t.fn();assert.equal(a,1);assert.equal(b,1)
+   offA();assert.equal(intervals.size,1);offB();assert.equal(intervals.size,0)
+   chart.animateChart(()=>false);for(const t of [...intervals.values()])t.fn();assert.equal(intervals.size,0)
  })
- await test('契约(非实机): 滑动 — 新样本到来时偏移从0经原生animation到-一格；无定时器',async()=>{
-   const W=329,props={samples:[1,2,3],tone:'blue',percent:true,running:true,plotWidth:W},mover=o=>nodes(o,'SVG')[1]
-   let out=render(home.GridPlot,props,true);assert.equal(mover(out).props.offset.x,-W/59) // mount: no slide
-   await flush();out=render(home.GridPlot,props);assert.equal(mover(out).props.offset.x,-W/59);const v0=mover(out).props.animation.value
-   const next={...props,samples:[1,2,3,4]};out=render(home.GridPlot,next);assert.equal(mover(out).props.offset.x,0)
-   await flush();out=render(home.GridPlot,next);assert.equal(mover(out).props.offset.x,-W/59);assert.notEqual(mover(out).props.animation.value,v0)
-   assert.equal(intervals.size,0);unmount()
-   const idle={...props,running:false};render(home.GridPlot,idle,true);await flush();assert.equal(mover(render(home.GridPlot,idle)).props.offset.x,-W/59);assert.equal(intervals.size,0);unmount()
+ await test('局部平滑: 可见后新样本连续左移、满60点保留previous，无伪造第61源点；停用/屏外/卸载取消',async()=>{
+   const line=o=>/<path d="(M [^"]+)" fill="none" stroke="#3485eb"/.exec(o.props.code)?.[1]
+   const start=o=>Number(/M ([\d.-]+),/.exec(line(o))[1])
+   let props={samples:Array.from({length:60},(_,i)=>i),tone:'#3485eb',percent:true,running:true,plotWidth:329,area:true}
+   let out=render(home.GridPlot,props,true);await flush();out.props.onAppear();out=render(home.GridPlot,props);await flush()
+   assert.equal(intervals.size,0,'becoming visible catches up without animating stale history')
+   const previousCode=out.props.code,grid=o=>o.props.code.split('</g>')[0]
+   now+=1000;props={...props,samples:[...props.samples.slice(1),60]};out=render(home.GridPlot,props);await flush();out=render(home.GridPlot,props)
+   assert.equal(intervals.size,1);assert.ok(Math.abs(start(out))<0.02)
+   const staticGrid=grid(out),first=line(out)
+   now+=500;for(const t of [...intervals.values()])t.fn();out=render(home.GridPlot,props);assert.ok(Math.abs(start(out)+329/59/2)<0.02);assert.notEqual(line(out),first);assert.equal(grid(out),staticGrid)
+   now+=500;for(const t of [...intervals.values()])t.fn();out=render(home.GridPlot,props);assert.equal(intervals.size,0);assert.ok(Math.abs(start(out)+329/59)<0.02)
+   const stable=render(home.GridPlot,props);assert.equal(stable.props.code,out.props.code)
+   now+=1000;props={...props,samples:[...props.samples.slice(1),61]};render(home.GridPlot,props);await flush();assert.equal(intervals.size,1)
+   out=render(home.GridPlot,props);out.props.onDisappear();render(home.GridPlot,props);await flush();assert.equal(intervals.size,0)
+   now+=1000;props={...props,samples:[...props.samples.slice(1),62]};render(home.GridPlot,props);await flush();assert.equal(intervals.size,0)
+   out=render(home.GridPlot,props);out.props.onAppear();render(home.GridPlot,props);await flush()
+   now+=1000;props={...props,samples:[...props.samples.slice(1),63]};render(home.GridPlot,props);await flush();assert.equal(intervals.size,1)
+   render(home.GridPlot,{...props,running:false});await flush();assert.equal(intervals.size,0)
+   render(home.GridPlot,props);await flush();now+=1000;props={...props,samples:[...props.samples.slice(1),64]};render(home.GridPlot,props);await flush();assert.equal(intervals.size,1);unmount();assert.equal(intervals.size,0)
  })
  await test('契约(非实机): 负载条 GeometryReader 外有单次固定24pt容器，空值保留灰底条',()=>{
    for(const f of [undefined,NaN,-1,0,0.001,1,2]){
@@ -70,16 +76,17 @@ function slot(n,height){
      for(const r of rects)assert.ok(r.props.frame.height<=24&&r.props.frame.height>0&&r.props.frame.width>0)
    }
  })
- await test('契约(非实机): 详情页 LazyVStack+每行可见性：屏外行冻结快照、可见行取最新，无关闭按钮',()=>{
-   const mk=n=>({cpu:{cpu:[1,2],...Object.fromEntries(Array.from({length:4},(_,i)=>['cpu'+i,[n,n+1]]))}}),cpus=[{id:'cpu0'},{id:'cpu1'}]
-   const tree=home.CpuDetails({overview:{wrt:{cpus:[{id:'cpu'},...Array.from({length:4},(_,i)=>({id:'cpu'+i}))],cpuMeta:{}}},histories:mk(1),running:true})
-   assert.equal(nodes(tree,'ScrollView').length,1);assert.equal(nodes(tree,'LazyVStack').length,1);assert.equal(nodes(tree,home.CoreRow).length,2);assert.equal(nodes(tree,'Button').length,0)
-   const h1=mk(1),h2=mk(50),props={cpus,w:{cpuMeta:{}},histories:h1,running:true}
-   let row=render(home.CoreRow,props,true);const hist=r=>nodes(r,home.CoreCard).map(c=>c.props.history[0])
-   assert.deepEqual(hist(row),[1,1]);assert.ok(nodes(row,home.CoreCard).every(c=>c.props.running===true))
-   row.props.onDisappear();row=render(home.CoreRow,{...props,histories:h2});assert.deepEqual(hist(row),[1,1]);assert.ok(nodes(row,home.CoreCard).every(c=>c.props.running===false))
-   const frozen=row.props.children[0];row=render(home.CoreRow,{...props,histories:mk(70)});assert.equal(row.props.children[0],frozen) // identical elements: nothing to rebuild
-   row.props.onAppear();row=render(home.CoreRow,{...props,histories:h2});assert.deepEqual(hist(row),[50,50]);unmount()
+ await test('详情页保留LazyVStack与全部核心；无整卡快照/memo，数值/元数据每次使用最新',()=>{
+   const mk=n=>({cpu:{cpu:[1,2],...Object.fromEntries(Array.from({length:32},(_,i)=>['cpu'+i,[n,n+1]]))}})
+   const cpus=Array.from({length:32},(_,i)=>({id:'cpu'+i,usage:i}))
+   const tree=home.CpuDetails({overview:{wrt:{cpus:[{id:'cpu'},...cpus],cpuMeta:{}}},histories:mk(1),running:true})
+   assert.equal(nodes(tree,'LazyVStack').length,1);assert.equal(nodes(tree,'ScrollView').length,1);assert.equal(nodes(tree,'Button').length,0)
+   const rs=nodes(tree,home.CoreRow);assert.equal(rs.length,16);assert.equal(rs.flatMap(r=>r.props.cpus).length,32)
+   let r=home.CoreRow({cpus:cpus.slice(0,2),w:{cpuMeta:{}},histories:mk(1),running:true});assert.equal(nodes(r,home.CoreCard)[0].props.history[0],1)
+   r=home.CoreRow({cpus:[{id:'cpu0',usage:99}],w:{cpuMeta:{cpu0:{mhz:2222}}},histories:mk(50),running:true})
+   const card=nodes(r,home.CoreCard)[0];assert.equal(card.props.history[0],50);assert.equal(card.props.cpu.usage,99);assert.equal(card.props.w.cpuMeta.cpu0.mhz,2222)
+   const source=fs.readFileSync(path.join(root,'home-ui.tsx'),'utf8'),row=source.slice(source.indexOf('export function CoreRow'),source.indexOf('// Per-core plots'))
+   assert.ok(!row.includes('useMemo'));assert.ok(!row.includes('useState'));assert.ok(!row.includes('snap'))
  })
  await test('契约(非实机): RAM条不用GeometryReader，24根等宽柔性条、单一固定24pt行高、2pt间距',()=>{
    for(const fraction of [undefined,0,0.001,0.5,1,2,NaN])for(const [name,build] of [['ram',()=>home.CapacityBars({fraction,tone:'blue'})]]){
