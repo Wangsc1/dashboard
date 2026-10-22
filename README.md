@@ -26,6 +26,11 @@
 
 原生 Tab API 面向 iOS 18+；外观与手势由系统及 Scripting 版本决定。仓库配置了 `remoteResource`，实际导入和更新以 Scripting 的处理结果为准。配置编辑器的 CodeMirror/Lezer/YAML 静态 bundle 已嵌入现有 `dashboard-pages.tsx`；在线更新仍只需原有运行文件，不需 CDN、额外资源下载或在手机安装 npm 包。`editor/` 为构建源码、锁定依赖及许可证，非运行依赖。
 
+## 1.5.190 更新
+
+- 修复从后台、其他标签及设置页返回主页时 CPU 数值和曲线重新开始：同来源恢复首个基线帧保留上次有效数值与历史，不补点，下一次真实差分继续追加。
+- 保持后台停采、单轮询与来源隔离；重启、读数缺失和核拓扑改变仍按原规则处理。新增 7 组恢复路径集成回归，原生 iOS 实际表现仍需设备验收。
+
 ## 1.5.189 更新
 
 - 保守优化：保持现有界面、导航、保存与远端确认行为，不做大规模结构改写。
@@ -273,6 +278,7 @@ CPU 详情是原生大尺寸可下拉关闭 sheet（拖动指示器，无右上 
 ```sh
 node tests/run.cjs
 node tests/conservative-optimization.cjs
+node tests/cpu-resume.cjs
 node tests/nikki-management.cjs
 node tests/nikki-editors.cjs
 node tests/nikki-file-lifecycle.cjs

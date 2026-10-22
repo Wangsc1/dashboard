@@ -184,13 +184,31 @@ function OverviewPage({ active, version, onSwitch, onClose, selected = true }: {
     if (!active || !showCharts) return
     if (active.kind !== "openwrt") { setErr("主页仅支持 OpenWrt 路由器数据，请在设置添加 OpenWrt"); return }
     resetOverviewSampling(active)
-    let alive = true, refreshing = false
+    // Rebase after a pause: a delta spanning the hidden interval is not a live
+    // sample. Keep the last same-source CPU display until the next valid delta.
+    const previousCpu = sampleSource === source ? ov?.wrt : undefined
+    let alive = true, refreshing = false, baselining = true
     async function refresh() {
       if (!alive || refreshing) return
       refreshing = true
       try {
         const o = await loadOverview(active!)
-        if (alive && overviewSource(active!)===source) { setSampleSource(source);setOv(o);setErr("");setHistories(h=>appendHistory(h,o.traffic.down,o.traffic.up,o.wrt?.cpus??[])) }
+        if (alive && overviewSource(active!)===source) {
+          const cpus = o.wrt?.cpus ?? []
+          const keepCpu = baselining && previousCpu && o.wrt && o.wrt.uptime >= previousCpu.uptime && cpus.length > 0 && cpus.length === previousCpu.cpus?.length && cpus.every((c,i)=>c.usage===undefined && c.id===previousCpu.cpus?.[i]?.id)
+          baselining = false
+          setSampleSource(source)
+          setOv(keepCpu ? {...o,wrt:{...o.wrt!,cpu:previousCpu.cpu,cpus:previousCpu.cpus}} : o)
+          setErr("")
+          setHistories(h=>{
+            const next = appendHistory(h,o.traffic.down,o.traffic.up,cpus)
+            // The baseline is not a new CPU measurement: neither append a held
+            // value nor clear existing points. Real unknown/reset samples still
+            // follow appendHistory's original discontinuity handling afterwards.
+            if (keepCpu) next.cpu = h.cpu
+            return next
+          })
+        }
       } catch (e) { if (alive) setErr(msg(e)) }
       finally { refreshing = false }
     }
