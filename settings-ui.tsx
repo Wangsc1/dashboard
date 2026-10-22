@@ -338,7 +338,6 @@ export function GlobalConfigPage({ active }: { active: Controller | null }) {
     <Section header={<Text>延迟阈值设置</Text>}><ThresholdRange /></Section>
     <Section header={<Text>连接超时</Text>}><Range title="连接超时时间" divider min={1} max={30} value={p.requestTimeout} suffix=" s" onChanged={n => update({ requestTimeout: n })} /></Section>
     <Section header={<Text>测速设置</Text>}><TestURLField /><Range title="超时时间" min={1000} max={10000} step={100} value={p.testTimeout} suffix=" ms" onChanged={n => update({ testTimeout: n })} /></Section>
-    <Section header={<Text>运行日志</Text>}><Range title="最大记录条数" min={100} max={2000} step={100} value={p.logLimit} onChanged={n => update({ logLimit: n })} />{toggle("detailedAPI", "记录详细 API 请求")}</Section>
   </Form>
 }
 function CloudSettingsPage() {
@@ -366,6 +365,7 @@ function CloudSettingsPage() {
 }
 const LEVELS: [LogLevel, string, string][] = [["info", "信息", "systemBlue"], ["success", "成功", "systemGreen"], ["warning", "警告", "systemOrange"], ["error", "错误", "systemRed"]]
 export function LogsPage() {
+  const p = usePreferences(["logLimit", "detailedAPI"])
   const [logs, setLogs] = useState<AppLog[]>(getLogs()), [query, setQuery] = useState(""), [search, setSearch] = useState(false), [levels, setLevels] = useState<LogLevel[]>(LEVELS.map(x => x[0]))
   useEffect(() => { const t = setInterval(() => setLogs(getLogs()), 2000); return () => clearInterval(t) }, [])
   const shown = logs.filter(l => levels.includes(l.level) && (!query || (l.title + l.detail + l.category).toLowerCase().includes(query.toLowerCase()))).slice().reverse()
@@ -377,6 +377,7 @@ export function LogsPage() {
     <Button title="复制全部" systemImage="doc.on.doc" action={async () => { try { await Pasteboard.setString(exportLogs()); await Dialog.alert({ message: "已复制全部日志（不受筛选影响）" }) } catch { await Dialog.alert({ message: "复制失败" }) } }} />
     <Button title="清空日志" systemImage="trash" action={clear} />
   </Menu> }}>
+    <Section header={<Text>运行日志设置</Text>}><Range title="最大记录条数" min={100} max={2000} step={100} value={p.logLimit} onChanged={n => update({ logLimit: n })} /><Toggle title="记录详细 API 请求" value={p.detailedAPI} onChanged={(v: boolean) => update({ detailedAPI: v })} /></Section>
     <Section><Text foregroundStyle="secondaryLabel">{`${logs.length} 条日志 · 当前 ${shown.length} 条`}</Text>{search ? <TextField title="搜索日志" value={query} onChanged={setQuery} /> : null}</Section>
     <Section>{shown.map(l => <VStack key={l.id} alignment="leading" spacing={4}><HStack spacing={6}><Circle fill={LEVELS.find(x => x[0] === l.level)?.[2] ?? "systemBlue"} frame={{ width: 6, height: 6 }} /><Text font={12} foregroundStyle="secondaryLabel">{logTime(l.at)}</Text><Spacer /><Text font={11} foregroundStyle="secondaryLabel">{l.category}</Text></HStack><Text>{l.title + (l.count > 1 ? ` ×${l.count}` : "")}</Text>{l.detail ? <Text font={12} foregroundStyle="secondaryLabel">{l.detail}</Text> : null}</VStack>)}{!shown.length ? <Text foregroundStyle="secondaryLabel">暂无符合条件的应用日志</Text> : null}</Section>
   </Form>

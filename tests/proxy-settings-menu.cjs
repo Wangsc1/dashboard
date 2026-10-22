@@ -12,7 +12,7 @@ const same=(a,b)=>assert.equal(JSON.stringify(a),JSON.stringify(b))
   context.Storage.set=(...args)=>{writes++;return original(...args)}
   try{
    const tree=render(ui.GlobalConfigPage,{active:null},true);await flush()
-   same(nodes(tree,'Section').map(n=>text(n.props.header)),['缓存管理','控制器管理','交互体验','延迟阈值设置','连接超时','测速设置','运行日志'])
+   same(nodes(tree,'Section').map(n=>text(n.props.header)),['缓存管理','控制器管理','交互体验','延迟阈值设置','连接超时','测速设置'])
    assert.ok(!nodes(tree,'Toggle').some(n=>['showHidden','customIcons','disconnectOnSwitch'].includes(n.props.key)))
    for(const title of ['显示隐藏代理组','自定义代理组图标','自动断开旧连接'])assert.ok(!text(tree).includes(title))
    assert.ok(!nodes(tree,'Toggle').some(n=>n.props.key==='nestedDelay'));assert.ok(button(tree,'清除图片缓存'))
