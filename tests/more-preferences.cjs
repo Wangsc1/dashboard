@@ -12,21 +12,21 @@ const same=(a,b)=>assert.equal(JSON.stringify(a),JSON.stringify(b))
 const themeOptions=[['system','跟随系统'],['light','浅色'],['dark','深色']],pageOptions=[['overview','主页'],['proxies','代理'],['rules','规则'],['connections','连接'],['more','更多']]
 function rawNodes(tree,name){const out=[];function walk(n){if(!n||typeof n!=='object')return;if(n.type?.name===name)out.push(n);for(const child of n.props?.children??[])walk(child)}walk(tree);return out}
 ;(async()=>{
- await test('theme/start settings appear first in More with original native pickers/options, including without controller; no duplicate global entries',async()=>{
+ await test('theme/start settings appear first in More on one row (left/right aligned) with original native pickers/options, including without controller; no duplicate global entries',async()=>{
   pref.savePreferences({theme:'dark',defaultPage:'rules',showHidden:true,groupIcons:{Fixture:'globe'}})
   const prior=pref.getPreferences(),stored=clone(store.get(key)),original=context.Storage.set;let writes=0
   context.Storage.set=(...args)=>{writes++;return original(...args)}
   try{
    for(const active of [null,{id:'more-fixture',name:'Fixture',kind:'clash',url:'http://more-fixture.invalid'}]){
     const page=owner(pages.MorePage),tree=page.render({...props,active,selected:false});await page.flush()
-    same(rawNodes(tree,'MoreHeading').map(text),active?['主题','启动设置','运行信息','核心配置','快捷管理','服务管理','核心操作','DNS 工具']:['主题','启动设置'])
+    same(rawNodes(tree,'MoreHeading').map(text),active?['主题及启动','运行信息','核心配置','快捷管理','服务管理','核心操作','DNS 工具']:['主题及启动'])
     const content=tree.props.children[0].props.children[0].props.children
-    same(content.slice(0,4).map(n=>n.type.name),['MoreHeading','MorePanel','MoreHeading','MorePanel'])
+    same(content.slice(0,2).map(n=>n.type.name),['MoreHeading','MorePanel']);const one=x=>[].concat(x);const row=one(content[1].props.children)[0];assert.equal(row.props.spacing,12);const cells=one(row.props.children);assert.equal(cells.length,2);same(cells.map(c=>c.props.frame.alignment),['leading','trailing']);same(cells.map(c=>one(c.props.children)[0].props.title),['外观模式','默认打开界面'])
     same(nodes(tree,ui.Choice).map(n=>n.props.title),['外观模式','默认打开界面'])
     for(const [title,options,value] of [['外观模式',themeOptions,'dark'],['默认打开界面',pageOptions,'rules']]){
      const node=choice(tree,title),native=ui.Choice(node.props);assert.equal(native.type,'Picker');assert.equal(native.props.pickerStyle,'menu');assert.equal(native.props.value,value);same(native.props.children.map(n=>[n.props.tag,text(n)]),options)
     }
-    for(const panel of rawNodes(tree,'MorePanel').slice(0,2)){assert.equal(panel.props.contentInset,16);assert.equal(panel.props.padding,undefined);const native=panel.type(panel.props);assert.equal(native.type,'VStack');assert.equal(native.props.modifiers.steps[0][0],'padding');assert.equal(native.props.modifiers.steps[0][1],16)}
+    for(const panel of rawNodes(tree,'MorePanel').slice(0,1)){assert.equal(panel.props.contentInset,16);assert.equal(panel.props.padding,undefined);const native=panel.type(panel.props);assert.equal(native.type,'VStack');assert.equal(native.props.modifiers.steps[0][0],'padding');assert.equal(native.props.modifiers.steps[0][1],16)}
     assert.equal(tree.props.toolbar.topBarTrailing,undefined);assert.equal(tree.props.navigationTitle,active?.name??'更多');if(active){assert.ok(text(tree).includes('运行信息'));assert.ok(nodes(tree,'NavigationLink').length>=5)}
     page.close()
    }

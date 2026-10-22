@@ -680,7 +680,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) { const lazy = ['proxies','rules','connections'].includes(ids[i]) && ids[i] !== id; assert.equal(nodes(tree, types[i]).length, lazy ? 0 : 1); if (!lazy) assert.equal(nodes(tree, types[i])[0].props.selected, ids[i] === id) }
     }
-    assert.equal(api.VERSION, '1.5.192'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.5.193'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('独立导航栈保留业务owner和身份，只有选中页提供可见工具栏', () => {
     pref.savePreferences({ defaultPage: 'overview' })
@@ -1070,7 +1070,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       const tree=render(pages.MorePage,{active,selected:false,onChanged(){}},true),boundaries=[]
       // Deliberately do NOT call unwrap: it discards custom-component boundary props.
       function visit(node){if(!node||typeof node!=='object')return;if(typeof node.type==='function'&&node.type.name==='MorePanel')boundaries.push(node);for(const child of node.props?.children??[])visit(child)}
-      visit(tree);assert.equal(boundaries.length,8);assert.ok(boundaries.every(n=>!Object.prototype.hasOwnProperty.call(n.props,'padding')));assert.deepEqual(boundaries.map(n=>n.props.contentInset),[16,16,undefined,undefined,12,12,undefined,undefined])
+      visit(tree);assert.equal(boundaries.length,7);assert.ok(boundaries.every(n=>!Object.prototype.hasOwnProperty.call(n.props,'padding')));assert.deepEqual(boundaries.map(n=>n.props.contentInset),[16,undefined,undefined,12,12,undefined,undefined])
       for(const boundary of boundaries.filter(n=>n.props.contentInset===12)){const native=boundary.type(boundary.props);assert.equal(native.type,'VStack');assert.equal(native.props.alignment,'leading');assert.equal(native.props.padding,undefined);const steps=native.props.modifiers.steps;assert.deepEqual(steps.map(s=>s[0]),['padding','frame','background']);assert.equal(steps[0][1],12);assert.deepEqual(clone(steps[1][1]),{minWidth:0,maxWidth:'infinity',alignment:'leading'});assert.equal(steps[2][1].props.cornerRadius,14);assert.equal(steps[2][1].props.fill,'secondarySystemBackground')}
       unmount()
     }
@@ -1087,8 +1087,8 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     assert.equal(tiles.length,3);assert.ok(tiles.every(n=>n.props.modifiers.steps[0][1].maxWidth==='infinity'))
     // Inspect explicit order, not just identical maxWidth props (which missed the 12pt inset).
     const allPanels=nodes(tree,'VStack').filter(n=>[n.props.background,...(n.props.modifiers?.steps??[]).filter(s=>s[0]==='background').map(s=>s[1])].some(bg=>bg?.props?.cornerRadius===14&&bg.props.fill==='secondarySystemBackground'))
-    assert.equal(allPanels.length,8)
-    const panels=allPanels.slice(2);assert.equal(panels.length,6)
+    assert.equal(allPanels.length,7)
+    const panels=allPanels.slice(1);assert.equal(panels.length,6)
     for(const panel of [panels[0],panels[1],panels[4],panels[5]]){assert.equal(panel.props.modifiers,undefined);assert.equal(panel.props.padding,undefined);assert.deepEqual(clone(panel.props.frame),{maxWidth:'infinity',alignment:'leading'})}
     // Scoped proposal/response derivation for ONLY these three modifiers; not a native renderer.
     // Pure model assumption: calls wrap inside -> outside. No host/component-boundary semantics are proved.
@@ -1713,7 +1713,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       const diagnostic = logs.filter(x => x.startsWith('[preferences-icon]'))
       for (const stage of ['change','accepted','proxies-render','group-render']) assert.ok(diagnostic.some(x => x.includes('stage=' + stage) && x.includes('enabled=false')))
       assert.ok(diagnostic.every(x => !x.includes('private.invalid') && !x.includes('private-group-name') && !x.includes('secret-')))
-      assert.ok(diagnostic.every(x => x.includes('build=1.5.192') && /instance=[a-z0-9]+/.test(x)))
+      assert.ok(diagnostic.every(x => x.includes('build=1.5.193') && /instance=[a-z0-9]+/.test(x)))
       assert.equal(new Set(diagnostic.map(x => x.match(/instance=([^ ]+)/)[1])).size, 1)
     } finally { context.console = originalConsole; unmount(); pref.savePreferences({ customIcons: true, testURL: 'https://www.gstatic.com/generate_204' }) }
   })
