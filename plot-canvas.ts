@@ -1,10 +1,10 @@
 // Inline-only chart runtime. No fetch, URLs, credentials or per-frame native bridge calls.
-export function plotCanvasHTML(initial?:{seq:number;samples:number[];tone:string;area?:boolean;running:boolean;percent:boolean;background?:string},diagnostics=false) {
+export function plotCanvasHTML(initial?:{seq:number;samples:number[];tone:string;area?:boolean;running:boolean;percent:boolean;background?:string;sampleAt?:number;timingEpoch?:number},diagnostics=false) {
   return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'none'; img-src 'none'"><style>html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#f2f2f7} @media(prefers-color-scheme:dark){html,body{background:#1c1c1e}}canvas{display:block;width:100%;height:100%;pointer-events:none}</style></head><body><canvas></canvas><script>
 (function(){
 'use strict';
 const canvas=document.querySelector('canvas'),ctx=canvas.getContext('2d');
-let config={tone:'#3485eb',area:false,percent:true},history=[],from=[],to=[],shown=[],scale=100,scaleFrom=100,scaleTo=100,start=0,duration=1000,raf=0,seq=-1,active=false;
+let config={tone:'#3485eb',area:false,percent:true},history=[],from=[],to=[],shown=[],scale=100,scaleFrom=100,scaleTo=100,start=0,duration=1000,lastSampleAt=0,lastFrameAt=-1,raf=0,seq=-1,active=false;
 const stats={frames:0,updates:0,liveLoops:0};
 const diagnosticEnabled=${diagnostics},startedAt=performance.now();let attempts=0,grids=0,lastError='';
 // Native reveals the WebView only after a real frame has been drawn and composited, so its white backing never flashes.
@@ -29,9 +29,10 @@ function paint(){
  ctx.strokeStyle=config.tone;ctx.lineWidth=1.5;ctx.lineCap='round';ctx.lineJoin='round';ctx.stroke();stats.frames++;
 }
 function stop(){if(raf)cancelAnimationFrame(raf);raf=0;stats.liveLoops=0}
-function frame(at){raf=0;const p=Math.max(0,Math.min(1,(at-start)/duration));shown=from.map((a,i)=>({x:mix(a.x,to[i].x,p),y:mix(a.y,to[i].y,p)}));scale=mix(scaleFrom,scaleTo,p);paint();if(p<1&&active&&!document.hidden){raf=requestAnimationFrame(frame);stats.liveLoops=1}else stats.liveLoops=0}
+function frame(at){raf=0;const gap=lastFrameAt>=0?at-lastFrameAt:0;lastFrameAt=at;if(gap>=1500){try{Promise.resolve(window.webkit?.messageHandlers?.plotLag?.postMessage({ms:gap,epoch:config.timingEpoch})).catch(()=>{})}catch(_){}}const p=Math.max(0,Math.min(1,(at-start)/duration));shown=from.map((a,i)=>({x:mix(a.x,to[i].x,p),y:mix(a.y,to[i].y,p)}));scale=mix(scaleFrom,scaleTo,p);paint();if(p<1&&active&&!document.hidden){raf=requestAnimationFrame(frame);stats.liveLoops=1}else stats.liveLoops=0}
 window.plotCanvas={
  update(message){if(!message||message.seq<=seq)return false;seq=message.seq;stats.updates++;config=message;document.body.style.background=message.background||'#f2f2f7';
+ const sampleAt=Number(message.sampleAt)||0,observed=sampleAt>lastSampleAt&&lastSampleAt?sampleAt-lastSampleAt:1000;lastSampleAt=sampleAt;lastFrameAt=-1;
  const values=(message.samples||[]).filter(Number.isFinite).slice(-60),target=canonical(values),oldHistory=history,wasActive=active;
  stop();active=!!message.running;scaleTo=message.percent?100:Math.max(1024,...values);
  // Resuming catches up immediately; only subsequent live samples animate.
@@ -42,7 +43,7 @@ window.plotCanvas={
  let goal=target;
  if(oldHistory.length===60&&values.length===60)goal=[{x:-1/59,y:oldHistory[0]},...target];
  const n=Math.max(origin.length,goal.length);from=Array.from({length:n},(_,i)=>origin[Math.min(i,origin.length-1)]);to=Array.from({length:n},(_,i)=>goal[Math.min(i,goal.length-1)]);
- history=values;scaleFrom=scale;start=performance.now();duration=1000;raf=requestAnimationFrame(frame);stats.liveLoops=1;return true;
+ history=values;scaleFrom=scale;start=performance.now();lastFrameAt=start;duration=Math.max(1000,Math.min(2500,observed));raf=requestAnimationFrame(frame);stats.liveLoops=1;return true;
  },pause(){active=false;stop()},inspect(){return {seq,stats:{...stats},shown:shown.map(p=>({...p})),history:history.slice(),scale}}};
  new ResizeObserver(paint).observe(canvas);document.addEventListener('visibilitychange',()=>{if(document.hidden){active=false;stop()}});window.addEventListener('pagehide',stop);
  // The first frame uses inline samples; it does not wait for a second native bridge round trip.

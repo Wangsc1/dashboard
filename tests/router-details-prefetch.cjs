@@ -49,7 +49,7 @@ const valueIn=(tree,value)=>text(tree).includes(value)||nodes(tree,app.Row).some
   const first=[
    [app.WrtInterfacesPage,{active:c,version:0},t=>text(t).includes('warm-wan')],
    [app.WrtLeasesPage,{active:c,version:0},t=>text(t).includes('warm-host')],
-   [app.DockerPage,{active:c},t=>text(t).includes('warm-docker')&&text(t).includes('warm-container')&&text(t).includes('warm-image:latest')],
+   [app.DockerPage,{active:c},t=>text(t).includes('warm-docker')&&text(t).includes('warm-container')&&text(t).includes('warm-image:latest')&&valueIn(t,'0.00 GiB')],
    [app.ContainerPage,{active:c,x:details.peekDetail(c,'containers')[0]},t=>valueIn(t,'warm-inspect')&&nodes(t,'Picker')[0].props.value==='always'],
    [app.DockerSettingsPage,{active:c},t=>nodes(t,'Picker')[0].props.value==='warn'&&nodes(t,app.Field)[0].props.value==='http://warm.invalid'],
    [app.FrpPage,{active:c},t=>text(t).includes('warm-proxy')],

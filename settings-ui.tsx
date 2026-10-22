@@ -1,3 +1,4 @@
+import { cadenceSummary } from "./cadence-diagnostics"
 import { ScrollView, Button, Circle, GeometryReader, ZStack, RoundedRectangle, gradient, Form, HStack, Image, Menu, Picker, Section, Spacer, Text, TextField, Toggle, VStack, useEffect, useState } from "scripting"
 import { Controller, ClashConfig, LOG_LEVELS, loadConfig, cachedKernelConfig, forgetKernelConfig, patchConfig, validateConfigPatch } from "./api"
 import { Preferences, AppLog, LogLevel, getPreferences, savePreferences, subscribePreferences, preferenceTrace, traceIconPreference, feedback, getLogs, clearLogs, exportLogs, logTime, getHeaderText, saveHeaders, clearImageCache } from "./preferences"
@@ -370,6 +371,7 @@ export function LogsPage() {
     {LEVELS.map(([v, title]) => <Button key={v} title={`${levels.includes(v) ? "✓ " : ""}${title}`} action={() => setLevels(s => s.includes(v) ? s.filter(x => x !== v) : [...s, v])} />)}
     <Button title="刷新" systemImage="arrow.clockwise" action={() => setLogs(getLogs())} />
     <Button title="复制全部" systemImage="doc.on.doc" action={async () => { try { await Pasteboard.setString(exportLogs()); await Dialog.alert({ message: "已复制全部日志（不受筛选影响）" }) } catch { await Dialog.alert({ message: "复制失败" }) } }} />
+    <Button title="复制停顿诊断" systemImage="doc.on.doc" action={async()=>{try{await Pasteboard.setString(cadenceSummary());await Dialog.alert({message:"已复制本次运行的安全计时摘要；无需开启详细 API 日志"})}catch{await Dialog.alert({message:"复制失败"})}}} />
     <Button title="清空日志" systemImage="trash" action={clear} />
   </Menu> }}>
     <Section listRowBackground={panelRowBackground()} header={<Text>运行日志设置</Text>}><Range title="最大记录条数" min={100} max={2000} step={100} value={p.logLimit} onChanged={n => update({ logLimit: n })} /><Toggle title="记录详细 API 请求" value={p.detailedAPI} onChanged={(v: boolean) => update({ detailedAPI: v })} />

@@ -1,3 +1,4 @@
+import { TimingToken, timingToken, timing, timingSpan } from "./cadence-diagnostics"
 import { VStack, ZStack, Canvas, Text, WebView, useState, useEffect, useColorScheme } from 'scripting'
 import { plotCanvasHTML } from './plot-canvas'
 export interface CanvasPlotProps {samples:number[];tone:string;plotHeight?:number;area?:boolean;running?:boolean;percent?:boolean;plotWidth?:number;elevated?:boolean}
@@ -26,7 +27,7 @@ export function MountedCanvasPlot({samples,tone,plotHeight=96,area=false,running
   // A WebView is white until its document exists; stay transparent so the card colour shows through until the canvas has drawn.
   const [shown,setShown]=useState(false)
   const theme=useColorScheme()
-  const [host]=useState(()=>({controller:new WebViewController({ephemeral:true}),alive:true,ready:false,busy:false,registered:false,loaded:false,seq:0,pending:null as null|{seq:number;samples:number[];tone:string;area:boolean;running:boolean;percent:boolean;background:string},flush:()=>{}}))
+  const [host]=useState(()=>({controller:new WebViewController({ephemeral:true}),alive:true,ready:false,busy:false,registered:false,loaded:false,seq:0,sampleAt:0,lastSamples:null as number[]|null,token:undefined as TimingToken|undefined,pending:null as null|{seq:number;samples:number[];tone:string;area:boolean;running:boolean;percent:boolean;background:string;sampleAt:number;timingEpoch?:number},flush:()=>{}}))
   useEffect(()=>{
     host.alive=true
     let timeout:ReturnType<typeof setTimeout>|undefined,reveal:ReturnType<typeof setTimeout>|undefined
@@ -34,7 +35,8 @@ export function MountedCanvasPlot({samples,tone,plotHeight=96,area=false,running
     const flush=()=>{
       if(!host.alive||!host.ready||host.busy||!host.pending)return
       const payload=host.pending;host.pending=null;host.busy=true
-      void host.controller.evaluateJavaScript(`return window.plotCanvas.update(${JSON.stringify(payload)})`).then(ok=>{if(ok!==true)fail()},fail).finally(()=>{host.busy=false;if(host.alive)flush()})
+      const current=timingToken(),token=current?.epoch===payload.timingEpoch?current:undefined,finished=timingSpan(token,"bridge");host.token=token
+      void host.controller.evaluateJavaScript(`return window.plotCanvas.update(${JSON.stringify(payload)})`).then(ok=>{if(ok!==true)fail()},fail).finally(()=>{finished();host.busy=false;if(host.alive)flush()})
     }
     host.flush=flush
     // The WebView is already part of the first render. Register then load once;
@@ -56,12 +58,14 @@ export function MountedCanvasPlot({samples,tone,plotHeight=96,area=false,running
       if(!host.alive)return false
       if(reveal!==undefined)clearTimeout(reveal)
       setShown(true);return true
-    })).then(()=>{host.registered=true;start()},fail)
+    })).then(()=>host.controller.addScriptMessageHandler('plotLag',(value:any)=>{if(host.alive&&value?.epoch===host.token?.epoch&&typeof value?.ms==='number')timing(host.token,'canvas-gap',value.ms);return true})).then(()=>{host.registered=true;start()},fail)
     start()
     return()=>{host.alive=false;host.ready=false;host.pending=null;if(timeout!==undefined)clearTimeout(timeout);if(reveal!==undefined)clearTimeout(reveal);host.controller.dispose()}
   },[host])
   useEffect(()=>{
-    host.pending={seq:++host.seq,samples:samples.filter(Number.isFinite).slice(-60),tone,area,running,percent,background:plotBackground(theme,elevated)}
+    if(host.lastSamples!==samples){host.lastSamples=samples;host.sampleAt=Date.now()}
+    host.token=timingToken()
+    host.pending={timingEpoch:host.token?.epoch,sampleAt:host.sampleAt,seq:++host.seq,samples:samples.filter(Number.isFinite).slice(-60),tone,area,running,percent,background:plotBackground(theme,elevated)}
     host.flush()
   },[samples,tone,area,running,percent,theme,elevated,host])
   return error?<Text font={11} foregroundStyle="secondaryLabel" frame={{height:plotHeight}}>{error}</Text>:<ZStack frame={{minHeight:plotHeight,maxHeight:plotHeight,minWidth:0,maxWidth:'infinity'}}>{shown?null:<Canvas opaque={false} draw={drawPlotGrid} frame={{minHeight:plotHeight,maxHeight:plotHeight,minWidth:0,maxWidth:'infinity'}}/>}<WebView controller={host.controller} disabled opacity={shown?1:0} frame={{minHeight:plotHeight,maxHeight:plotHeight,minWidth:0,maxWidth:'infinity'}}/></ZStack>

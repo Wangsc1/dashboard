@@ -1,3 +1,4 @@
+import { beginCadenceDiagnostics, timingToken, timing } from "./cadence-diagnostics"
 import { detailReads, useRouterDetail, peekDetail, prefetchRouterDetails, detailWrite, observeDetailsPhase, selectDetailsSource } from "./router-details"
 import { HOME_BG, HomeDashboard, CpuDetails, LiveCpuDetails, CpuDetailFrame } from "./home-ui"
 import { newHistory, appendHistory, OverviewHistory } from "./openwrt-metrics"
@@ -199,22 +200,26 @@ function saveOverviewFrame(source: string, o: Overview, baseline: boolean): Over
 function startOverviewSampling(active: Controller, foreground: boolean): () => void {
   const source = overviewSource(active)
   let disposed = false, running = false, busy = false, baseline = true
-  let completedAt = -Infinity, timer: ReturnType<typeof setInterval> | undefined
+  const diagnostics=beginCadenceDiagnostics(source)
+  let eligibleAt = -Infinity, timer: ReturnType<typeof setInterval> | undefined
   let generation = 0
   const publish = (frame?: OverviewFrame, error?: string) => {
     for (const fn of overviewPrimeListeners) fn(source, frame, error)
   }
   const refresh = async () => {
-    if (disposed || !running || busy || Date.now() - completedAt < 1000 || overviewSource(active) !== source) return
+    if (disposed || !running || busy || Date.now() < eligibleAt || overviewSource(active) !== source) return
     busy = true
-    const epoch = generation
+    const epoch = generation, startedAt=Date.now(), wasBaseline=baseline
+    const token=timingToken(source)
     try {
       const o = await loadOverview(active)
       if (disposed || !running || epoch !== generation || overviewSource(active) !== source) return
+      const publishAt=Date.now()
       const frame = saveOverviewFrame(source, o, baseline)
       baseline = false
       overviewErrors.delete(source)
       publish(frame, "")
+      timing(token,"publish",Date.now()-publishAt)
     } catch (e) {
       if (!disposed && running && epoch === generation && overviewSource(active) === source) {
         const error = msg(e)
@@ -222,24 +227,27 @@ function startOverviewSampling(active: Controller, foreground: boolean): () => v
         publish(undefined, error)
       }
     } finally {
-      busy = false; completedAt = Date.now()
-      // Anchor the next one-second tick to completion, not an old interval's
-      // phase (a slow baseline must never be followed by a near-zero delta).
+      busy = false
+      // Subtract read time instead of adding a full second to every request.
+      // Baselines (including pause/rebase) keep one full measurement interval;
+      // steady samples retain >=500ms after completion, never catch-up bursts.
+      const delay=wasBaseline||epoch!==generation?1000:Math.max(500,1000-(Date.now()-startedAt))
+      eligibleAt=Date.now()+delay
       if (!disposed && running) {
         if (timer !== undefined) clearInterval(timer)
-        timer = setInterval(refresh, 1000)
+        timer = setInterval(refresh, delay)
       }
     }
   }
   const pause = () => {
-    running = false; generation++; baseline = true
+    running = false; generation++; baseline = true; diagnostics.pause()
     if (timer !== undefined) clearInterval(timer)
     timer = undefined
     resetOverviewSampling(active, source)
   }
   const resume = () => {
     if (disposed || running) return
-    running = true; completedAt = -Infinity
+    running = true; eligibleAt = -Infinity; diagnostics.resume()
     void refresh()
     timer = setInterval(refresh, 1000)
   }
@@ -249,7 +257,7 @@ function startOverviewSampling(active: Controller, foreground: boolean): () => v
   AppEvents.scenePhase.addListener(phaseChanged)
   resetOverviewSampling(active, source)
   if (foreground) resume()
-  return () => { disposed = true; pause(); AppEvents.scenePhase.removeListener(phaseChanged) }
+  return () => { disposed = true; pause(); diagnostics.close(); AppEvents.scenePhase.removeListener(phaseChanged) }
 }
 function OverviewPage({ active, version, onSwitch, onClose, selected = true }: { active: Controller | null; version: number; onSwitch: () => void; onClose?: () => void; selected?: boolean }) {
   const prefs = usePreferences(["connectionBackground"])
@@ -367,7 +375,7 @@ function Field({ title, value, onChanged, keyboard }: { title: string; value: st
   return <HStack><Text>{title}</Text><Spacer /><TextField title="" value={value} onChanged={onChanged} multilineTextAlignment="trailing" autocorrectionDisabled textInputAutocapitalization="never" /></HStack>
 }
 
-const gi = (n: number) => (n / 1073741824).toFixed(2) + " Gi"
+const gi = (n: number) => (n / 1073741824).toFixed(2) + " GiB"
 function DockerPage({ active }: { active: Controller }) {
   const [busy,setBusy]=useState(false),[tick,setTick]=useState(0)
   const {value:ov,error:overviewError}=useRouterDetail(active,"docker",()=>detailReads.docker(active),tick)
