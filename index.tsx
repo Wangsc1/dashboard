@@ -1,3 +1,4 @@
+import { homeTraceRun, nextHomeTraceId, homeTraceSource, traceHome } from "./home-trace"
 import { HOME_BG, HomeDashboard, CpuDetails, LiveCpuDetails, CpuDetailFrame } from "./home-ui"
 import { newHistory, appendHistory, OverviewHistory } from "./openwrt-metrics"
 import { rootToolbar } from "./root-toolbar"
@@ -166,7 +167,7 @@ function useForeground() {
 
 // Diagnostic failures must never affect requests, sampling or native navigation.
 function homeDiagnostic(home: HomeDiagnostic, ok = true) {
-  try { recordEvent("homeDiagnostic", ok, { home }) } catch {}
+  traceHome(home,ok)
 }
 function homeFailure(e: unknown): HomeDiagnostic["reason"] {
   try {
@@ -181,7 +182,7 @@ function homeFailure(e: unknown): HomeDiagnostic["reason"] {
 }
 
 // First home sample is requested at launch, before any tab exists, so a non-launch home tab can show data on its first frame.
-interface OverviewFrame { overview: Overview; histories: OverviewHistory }
+interface OverviewFrame { overview: Overview; histories: OverviewHistory; serial: number }
 // Process-local display snapshots survive lazy native tab unmounts. Source keys
 // include authentication identity; neither samples nor history are persisted.
 const overviewPrime = new Map<string, OverviewFrame>()
@@ -203,7 +204,7 @@ function saveOverviewFrame(source: string, o: Overview, baseline: boolean): Over
   // adding held values or artificial zero points; real new samples append later.
   if (baseline) { histories.up=h.up; histories.down=h.down }
   if (keepCpu) histories.cpu=h.cpu
-  const frame = {overview,histories}
+  const frame = {overview,histories,serial:nextHomeTraceId()}
   overviewPrime.set(source,frame)
   return frame
 }
@@ -258,6 +259,7 @@ function OverviewPage({ active, version, onSwitch, onClose, selected = true }: {
   const [sampleSource,setSampleSource]=useState(() => (active ? overviewSource(active) : ""))
   const [cpuOpen,setCpuOpen]=useState(false)
   const source=active?overviewSource(active):""
+  const [pageTrace] = useState(()=>({id:nextHomeTraceId(),cache:overviewPrime.has(source),frame:overviewPrime.get(source)?.serial??0}))
   const all = listControllers()
   // Retain the navigation owner while pausing work behind pushed settings pages.
   const [visible, setVisible] = useState(true)
@@ -331,6 +333,10 @@ function OverviewPage({ active, version, onSwitch, onClose, selected = true }: {
   }, [source, prefs.connectionBackground, showCharts])
   const shownOv=sampleSource===source?ov:null
   const shownHistory=sampleSource===source?histories:newHistory()
+  const cachedTrace=overviewPrime.get(source)
+  const traceSource=homeTraceSource(source), cpuPoints=shownHistory.cpu.cpu?.length??0
+  const matched=!!cachedTrace&&shownOv===cachedTrace.overview&&shownHistory===cachedTrace.histories
+  useEffect(()=>{homeDiagnostic({stage:"home-frame",page:pageTrace.id,source:traceSource,frame:cachedTrace?.serial??0,selected,foreground,cache:overviewPrime.has(source),ov:!!shownOv,matched,cpu:Number.isFinite(shownOv?.wrt?.cpu),cpuPoints,upPoints:shownHistory.up.length,downPoints:shownHistory.down.length})},[source,selected,visible,foreground,!!shownOv,cpuPoints>1])
   // Keep sheet.content stable across sample updates; publish only the live frame.
   const detailFeed=useObservable<CpuDetailFrame>(()=>({overview:null,histories:newHistory(),running:false}))
   const detailContent=useMemo(()=><LiveCpuDetails feed={detailFeed}/>,[detailFeed])
@@ -355,6 +361,7 @@ function OverviewPage({ active, version, onSwitch, onClose, selected = true }: {
       <VStack spacing={16} padding={{horizontal:16,top:12,bottom:24}}>
         {all.length>1?<Card><Picker title="当前路由器" pickerStyle="menu" value={active.id} onChanged={(v:string)=>{setActive(v);onSwitch()}}>{all.map(c=><Text key={c.id} tag={c.id}>{c.name}</Text>)}</Picker></Card>:null}
         {err?<Text font={12} foregroundStyle="systemRed">{err}</Text>:null}
+        <Text font={10} foregroundStyle="secondaryLabel">{`主页诊断 R${homeTraceRun} 页${pageTrace.id} 源${traceSource} 初缓存${pageTrace.cache?1:0}/F${pageTrace.frame} 当前F${cachedTrace?.serial??0} 匹配${matched?1:0} CPU点${cpuPoints} 上点${shownHistory.up.length} 下点${shownHistory.down.length}`}</Text>
         {homeContent}
         <Card><HStack><Badge icon="link" color="#A855F7"/><Text font={13}>活动连接</Text><Spacer/><Text font={13}>{shownOv?String(shownOv.connCount):"--"}</Text></HStack>{hosts.length?<Text font={10} foregroundStyle="secondaryLabel" lineLimit={1}>{hosts.join(" · ")}</Text>:null}</Card>
       </VStack>

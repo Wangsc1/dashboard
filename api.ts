@@ -1,7 +1,7 @@
 import { CpuSampler, CpuUsage, CpuMeta, parseCpuInfo, thermalCelsius } from "./openwrt-metrics"
 
 import { getPreferences, customHeaders, recordEvent, controllerHealth, feedback } from "./preferences"
-export const VERSION = "1.8"
+export const VERSION = "1.9"
 
 export type Kind = "clash" | "openwrt"
 export type Plugin = "openclash" | "nikki" | "mihomo"
@@ -777,9 +777,11 @@ export async function verifyCoreRestart(c:Controller,before:NikkiRuntime|null,cu
   return {verified:false,runtime:last}
 }
 export async function nikkiService(c: Controller, action: "start"|"stop"|"restart"|"reload") { requireNikki(c); if (!["start","stop","restart","reload"].includes(action)) throw new Error("不支持的服务动作"); await ubus(c,"rc","init",{name:"nikki",action}) }
-export type CoreAction = "restart"|"reload"|"geo"|"dns"|"fakeip"
+export type CoreAction = "upgrade"|"restart"|"reload"|"geo"|"dns"|"fakeip"
 export async function coreAction(c: Controller, action: CoreAction) {
-  const paths = { restart: ["POST","/restart"], reload: ["PUT","/configs?force=true"], geo: ["POST","/configs/geo"], dns: ["POST","/cache/dns/flush"], fakeip: ["POST","/cache/fakeip/flush"] }
+  // Mihomo hub/route/upgrade.go: POST /upgrade uses the core's default channel,
+  // downloads/replaces its executable and schedules a restart (not a version probe).
+  const paths = { upgrade: ["POST","/upgrade"], restart: ["POST","/restart"], reload: ["PUT","/configs?force=true"], geo: ["POST","/configs/geo"], dns: ["POST","/cache/dns/flush"], fakeip: ["POST","/cache/fakeip/flush"] }
   const entry = paths[action]; if (!entry) throw new Error("不支持的核心动作")
   await http(await cc(c),entry[1],{method:entry[0], ...(action === "reload" ? {body:{}} : {})})
 }

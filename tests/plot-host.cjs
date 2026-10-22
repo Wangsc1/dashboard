@@ -13,7 +13,7 @@ context.WebViewController=class {
  dispose(){this.disposed++}
 }
 const plot=load('plot-view')
-const props={samples:[10,20],tone:'#3485eb',percent:true,running:true}
+const props={samples:[10,20],tone:'#3485eb',percent:true,running:true,diagnostic:true}
 async function mount(){const node=render(plot.MountedCanvasPlot,props,true);await flush();return node}
 ;(async()=>{
  await test('主页和每核共用绘制组件，不存在详情专用动画实现',()=>{
@@ -48,12 +48,12 @@ async function mount(){const node=render(plot.MountedCanvasPlot,props,true);awai
   host.handlers.plotReady();await flush();assert.equal(host.sent.length,0,'initial paint needs no evaluateJavaScript round trip')
   unmount();assert.equal(host.disposed,1);assert.equal(timeouts.size,0)
  })
- await test('正式界面无诊断区、无额外高度、无报告处理器且默认关闭报告',async()=>{
+ await test('临时诊断默认可见但不增加图槽高度，仅启用安全绘制状态报告',async()=>{
   for(const height of [66,76,96]){
    const slot=render(plot.InlineCanvasPlot,{...props,plotHeight:height},true);assert.equal(slot.props.frame.height,height)
    const out=render(plot.MountedCanvasPlot,{...props,plotHeight:height},true);assert.equal(out.type,'ZStack');assert.equal(out.props.frame.minHeight,height);assert.equal(out.props.frame.maxHeight,height);const web=nodes(out,'WebView')[0];assert.equal(web.props.frame.minHeight,height);assert.equal(web.props.frame.maxHeight,height)
    assert.equal(out.props.overlay,undefined);assert.equal(out.props.onAppear,undefined)
-   await flush();const host=hosts.at(-1);assert.equal(host.handlers.plotDiagnostic,undefined);assert.ok(host.html.includes('diagnosticEnabled=false'));unmount()
+   await flush();const host=hosts.at(-1);assert.equal(host.handlers.plotDiagnostic,undefined);assert.equal(typeof host.handlers.plotTrace,'function');assert.ok(host.html.includes('diagnosticEnabled=false'));assert.ok(host.html.includes('traceEnabled=true'));assert.ok(text(out).includes('图诊断 '));unmount()
   }
  })
  await test('准备好前合并采样；桥接串行；最新值接续；running=false同步',async()=>{

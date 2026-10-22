@@ -147,11 +147,14 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(pref.getPreferences().theme, theme)
     }
     tree = render(pages.ProxyTestSettings, {}, true); await flush()
-    for (const timeout of [2, 8, 15, 3]) {
-      nodes(tree, ui.Range).find(n => n.props.title === '连接超时时间').props.onChanged(timeout)
+    const requestTimeout = pref.getPreferences().requestTimeout
+    assert.ok(!text(tree).includes('连接超时'))
+    for (const timeout of [2000, 8000, 5000, 3000]) {
+      nodes(tree, ui.Range).find(n => n.props.title === '超时时间').props.onChanged(timeout)
       tree = render(pages.ProxyTestSettings, {}); await flush()
-      assert.equal(nodes(tree, ui.Range).find(n => n.props.title === '连接超时时间').props.value, timeout)
-      assert.equal(pref.getPreferences().requestTimeout, timeout)
+      assert.equal(nodes(tree, ui.Range).find(n => n.props.title === '超时时间').props.value, timeout)
+      assert.equal(pref.getPreferences().testTimeout, timeout)
+      assert.equal(pref.getPreferences().requestTimeout, requestTimeout, 'removing request-timeout UI must not alter its stored value')
     }
     const src = fs.readFileSync(path.join(root, 'settings-ui.tsx'), 'utf8'); assert.ok(!src.includes('traceIconPreference("global-render"'))
     unmount(); pref.savePreferences({ customIcons: true, haptics: false, theme: 'system', requestTimeout: 8 })
@@ -215,14 +218,14 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       gesture.onEnded(ev); assert.equal(saved.join(','), String(want)); unmount()
     }
   })
-  await test('全局配置：仅连接超时标题与滑块之间有分割线；设置行不隐藏系统分隔线；无图标', () => {
+  await test('代理测速配置：删除连接超时UI，仅保留测速超时且无额外分割线', () => {
     const tree = render(pages.ProxyTestSettings, {}, true)
     const ranges = nodes(tree, ui.Range)
-    assert.equal(ranges.length, 2)
-    assert.deepEqual(ranges.map(n => !!n.props.divider), [true, false])
+    assert.equal(ranges.length, 1)
+    assert.equal(ranges[0].props.title, '超时时间')
+    assert.deepEqual(ranges.map(n => !!n.props.divider), [false])
     const rendered = ranges.map(n => render(ui.Range, n.props))
-    assert.equal(nodes(rendered[0], 'RoundedRectangle').filter(x => x.props.frame?.height === 0.5).length, 1)
-    assert.equal(nodes(rendered[1], 'RoundedRectangle').filter(x => x.props.frame?.height === 0.5).length, 0)
+    assert.equal(nodes(rendered[0], 'RoundedRectangle').filter(x => x.props.frame?.height === 0.5).length, 0)
     assert.ok(rendered.every(t => t.props.listRowSeparator !== 'hidden'))
     unmount()
   })
@@ -263,8 +266,8 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     let tree = render(pages.ProxiesPage, { active: null, version: 0 }, true)
     assert.equal(nodes(tree, pages.ProxyTestSettings).length, 1)
     tree = render(pages.ProxyTestSettings, {}, true)
-    assert.ok(text(tree).indexOf('延迟阈值设置') < text(tree).indexOf('连接超时'))
-    assert.ok(text(tree).indexOf('连接超时') < text(tree).indexOf('测速设置'))
+    assert.ok(text(tree).indexOf('延迟阈值') < text(tree).indexOf('测速设置'))
+    assert.ok(!text(tree).includes('延迟阈值设置')); assert.ok(!text(tree).includes('连接超时'))
     unmount()
   })
   await test('全局配置移除主题/启动设置后，剩余分组顺序保持', () => {
@@ -737,7 +740,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) { const lazy = ['proxies','rules','connections'].includes(ids[i]) && ids[i] !== id; assert.equal(nodes(tree, types[i]).length, lazy ? 0 : 1); if (!lazy) assert.equal(nodes(tree, types[i])[0].props.selected, ids[i] === id) }
     }
-    assert.equal(api.VERSION, '1.8'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.9'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('独立导航栈保留业务owner和身份，只有选中页提供可见工具栏', () => {
     pref.savePreferences({ defaultPage: 'overview' })
@@ -1960,7 +1963,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       const diagnostic = logs.filter(x => x.startsWith('[preferences-icon]'))
       for (const stage of ['change','accepted','proxies-render','group-render']) assert.ok(diagnostic.some(x => x.includes('stage=' + stage) && x.includes('enabled=false')))
       assert.ok(diagnostic.every(x => !x.includes('private.invalid') && !x.includes('private-group-name') && !x.includes('secret-')))
-      assert.ok(diagnostic.every(x => x.includes('build=1.8') && /instance=[a-z0-9]+/.test(x)))
+      assert.ok(diagnostic.every(x => x.includes('build=1.9') && /instance=[a-z0-9]+/.test(x)))
       assert.equal(new Set(diagnostic.map(x => x.match(/instance=([^ ]+)/)[1])).size, 1)
     } finally { context.console = originalConsole; unmount(); pref.savePreferences({ customIcons: true, testURL: 'https://www.gstatic.com/generate_204' }) }
   })

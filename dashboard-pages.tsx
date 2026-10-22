@@ -147,12 +147,10 @@ export function ProxyModeControl({c,enabled,version,onMode}:{c:Controller;enable
   </VStack>
 }
 export function ProxyTestSettings() {
-  const p = usePreferences(["requestTimeout", "testTimeout"])
+  const p = usePreferences(["testTimeout"])
   return <>
-    <HStack><Text font={20} fontWeight="bold" padding={{top:6}}>延迟阈值设置</Text><Spacer/></HStack>
+    <HStack><Text font={20} fontWeight="bold" padding={{top:6}}>延迟阈值</Text><Spacer/></HStack>
     <Card><ThresholdRange /></Card>
-    <HStack><Text font={20} fontWeight="bold" padding={{top:6}}>连接超时</Text><Spacer/></HStack>
-    <Card><Range title="连接超时时间" divider min={1} max={30} value={p.requestTimeout} suffix=" s" onChanged={n => updatePreference({ requestTimeout: n })} /></Card>
     <HStack><Text font={20} fontWeight="bold" padding={{top:6}}>测速设置</Text><Spacer/></HStack>
     <Card><VStack alignment="leading" spacing={0} padding={{vertical:6}} frame={{maxWidth:"infinity",alignment:"leading"}}><TestURLField /></VStack><Divider /><Range title="超时时间" min={1000} max={10000} step={100} value={p.testTimeout} suffix=" ms" onChanged={n => updatePreference({ testTimeout: n })} /></Card>
   </>
@@ -387,7 +385,7 @@ export function MorePage({active,onChanged,onClose,selected=true}:{active:Contro
     const source=sourceKey(active),current=()=>guard.alive&&guard.source===source
     guard.busy=true;setBusy(true);setNotice("")
     await attempt(async()=>{
-      const options=action==="restart"?{title:"重启核心",message:"确定要重启核心吗？这将短暂中断代理服务。",confirmLabel:"确认重启"}:action==="reload"?{title:"重载配置",message:"将重新加载配置文件。",confirmLabel:"确认重载"}:null
+      const options=action==="upgrade"?{title:"升级核心",message:"将下载并替换核心，可能重启并短暂中断代理服务。是否继续？",confirmLabel:"确认升级"}:action==="restart"?{title:"重启核心",message:"确定要重启核心吗？这将短暂中断代理服务。",confirmLabel:"确认重启"}:action==="reload"?{title:"重载配置",message:"将重新加载配置文件。",confirmLabel:"确认重载"}:null
       const ok=["geo","dns","fakeip"].includes(action)?true:options?await Dialog.confirm({...options,cancelLabel:"取消"}):await Dialog.confirm({title:label,message:impact,confirmLabel:"确认清除",cancelLabel:"取消"})
       if(!ok||!current())return
       let before:NikkiRuntime|null=null
@@ -407,7 +405,7 @@ export function MorePage({active,onChanged,onClose,selected=true}:{active:Contro
         return
       }
       setNoticeKind("success")
-      setNotice(({restart:"核心重启成功",reload:"配置已重载",geo:"GEO 数据库更新成功",dns:"DNS 缓存已清除",fakeip:"FakeIP 缓存已清除"})[action])
+      setNotice(({upgrade:"已提交升级请求",restart:"核心重启成功",reload:"配置已重载",geo:"GEO 数据库更新成功",dns:"DNS 缓存已清除",fakeip:"FakeIP 缓存已清除"})[action])
     })
     guard.busy=false;if(guard.alive){setBusy(false);setNoticeKind(k=>k==="progress"?"warning":k)}
   }
@@ -426,7 +424,7 @@ export function MorePage({active,onChanged,onClose,selected=true}:{active:Contro
     guard.busy=false;if(guard.alive)setBusy(false)
   }
   const nikki=active?.kind==="openwrt"&&active.plugin==="nikki"
-  const actions:[CoreAction,string,string,string][]=[["restart","重启核心","arrow.clockwise","会短暂中断代理服务及连接；禁用管理API的内核可能拒绝。"],["reload","重载配置","arrow.triangle.2.circlepath","强制重新读取当前核心配置并应用，可能断开连接；不会保存Nikki UCI。"],["geo","更新GEO数据库","globe","内核将从其配置的上游下载GEO文件并替换本地数据库，产生外部请求。"]]
+  const actions:[CoreAction,string,string,string][]=[["upgrade","升级核心","arrow.up.circle","将下载并替换核心，可能重启并短暂中断代理服务。"],["restart","重启核心","arrow.clockwise","会短暂中断代理服务及连接；禁用管理API的内核可能拒绝。"],["reload","重载配置","arrow.triangle.2.circlepath","强制重新读取当前核心配置并应用，可能断开连接；不会保存Nikki UCI。"],["geo","更新GEO数据库","globe","内核将从其配置的上游下载GEO文件并替换本地数据库，产生外部请求。"]]
   return Shell({title:active?.name??"更多",background:"systemBackground",toolbar:rootToolbar("more",onClose),overlay:notice?{alignment:"top",content:<VStack padding={{horizontal:14,top:8}}><HStack spacing={14} padding={18} background={<RoundedRectangle cornerRadius={18} fill="secondarySystemBackground"/>}>{noticeKind==="progress"?<ProgressView/>:<Image systemName={noticeKind==="warning"?"exclamationmark.circle.fill":"checkmark.circle.fill"} font={24} foregroundStyle={noticeKind==="warning"?"systemOrange":"systemGreen"}/>}<Text font={16} fontWeight="medium">{notice}</Text><Spacer/><Button buttonStyle="plain" action={()=>setNotice("")}><Image systemName="xmark" font={16} foregroundStyle="secondaryLabel"/></Button></HStack></VStack>}:undefined,onAppear:()=>setVisible(true),onDisappear:()=>setVisible(false),children:<>
     <MoreHeading>主题及启动</MoreHeading><MorePanel contentInset={16}><HStack spacing={12} frame={{maxWidth:"infinity"}}><HStack frame={{minWidth:0,maxWidth:"infinity",alignment:"leading"}}><Choice title="外观模式" value={p.theme} values={[["system", "跟随系统"], ["light", "浅色"], ["dark", "深色"]]} onChanged={v=>updatePreference({theme:v as any})}/></HStack><HStack frame={{minWidth:0,maxWidth:"infinity",alignment:"trailing"}}><Choice title="默认打开界面" value={p.defaultPage} values={[["overview", "主页"], ["proxies", "代理"], ["rules", "规则"], ["connections", "连接"], ["more", "更多"]]} onChanged={v=>updatePreference({defaultPage:v as any})}/></HStack></HStack></MorePanel>
     {!active?<Empty/>:<>{err?<Hint>{err}</Hint>:null}

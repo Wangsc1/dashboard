@@ -27,7 +27,7 @@ export function traceIconPreference(stage: "change" | "accepted" | "global-rende
   try {
     const raw = Storage.get<Partial<Preferences>>(KEY)
     const stored = typeof raw?.customIcons === "boolean" ? raw.customIcons : "unavailable"
-    console.log(`[preferences-icon] build=1.8 instance=${preferenceInstance} revision=${preferenceRevision} stage=${stage} enabled=${enabled} snapshot=${getPreferences().customIcons} stored=${stored}`)
+    console.log(`[preferences-icon] build=1.9 instance=${preferenceInstance} revision=${preferenceRevision} stage=${stage} enabled=${enabled} snapshot=${getPreferences().customIcons} stored=${stored}`)
   } catch { console.log("[preferences-icon] diagnostic-unavailable") }
 }
 export function preferenceTrace(stage: string) { console.log(`[preferences] revision=${preferenceRevision} ${stage}`) }
@@ -90,12 +90,15 @@ export function trimLogs(limit = getPreferences().logLimit) {
   const logs = getLogs(); if (logs.length > limit) Storage.set(LOG_KEY, logs.slice(-limit))
 }
 export function clearLogs() { Storage.remove(LOG_KEY) }
-const HOME_STAGES = ["launch", "prime-start", "prime-success", "prime-failure", "prime-discard", "root-state", "root-retry", "home-mount", "home-state", "home-ui", "home-receive", "sampling-reset", "refresh-success", "refresh-failure", "refresh-discard"] as const
+const HOME_STAGES = ["launch", "prime-start", "prime-success", "prime-failure", "prime-discard", "root-state", "root-retry", "home-mount", "home-state", "home-ui", "home-receive", "sampling-reset", "refresh-success", "refresh-failure", "refresh-discard", "home-frame", "plot-state"] as const
 const HOME_REASONS = ["epoch", "auth", "timeout", "http", "response", "other"] as const
 export interface HomeDiagnostic {
   stage: typeof HOME_STAGES[number]; active?: "none" | "openwrt" | "clash"
   reason?: typeof HOME_REASONS[number]
   selected?: boolean; cache?: boolean; ov?: boolean; ui?: boolean; foreground?: boolean; pending?: boolean
+  cpu?: boolean; matched?: boolean; ready?: boolean; line?: boolean; sized?: boolean; revealed?: boolean
+  run?: number; page?: number; source?: number; frame?: number; host?: number
+  cpuPoints?: number; upPoints?: number; downPoints?: number; input?: number; drawn?: number
 }
 const homeDiagnosticTimes = new Map<string, number>()
 // Only enumerations and booleans can reach persistent logs; never serialize caller objects.
@@ -104,7 +107,11 @@ function homeDiagnosticDetail(d: HomeDiagnostic | undefined): string {
   const parts: string[] = [d.stage]
   if (["none", "openwrt", "clash"].includes(d.active ?? "")) parts.push(`active=${d.active}`)
   if (HOME_REASONS.includes(d.reason!)) parts.push(`reason=${d.reason}`)
-  for (const key of ["selected", "cache", "ov", "ui", "foreground", "pending"] as const) if (typeof d[key] === "boolean") parts.push(`${key}=${d[key] ? 1 : 0}`)
+  for (const key of ["selected", "cache", "ov", "ui", "foreground", "pending", "cpu", "matched", "ready", "line", "sized", "revealed"] as const) if (typeof d[key] === "boolean") parts.push(`${key}=${d[key] ? 1 : 0}`)
+  for (const key of ["run", "page", "source", "frame", "host", "cpuPoints", "upPoints", "downPoints", "input", "drawn"] as const) {
+    const value = d[key], limit = ["cpuPoints", "upPoints", "downPoints", "input", "drawn"].includes(key) ? 60 : 1000000
+    if (Number.isInteger(value) && value! >= 0 && value! <= limit) parts.push(`${key}=${value}`)
+  }
   return parts.join(" · ")
 }
 export function recordEvent(event: LogEvent, ok: boolean, options: { home?: HomeDiagnostic; status?: number; duration?: number; operation?: "GET" | "PATCH" | "PUT" | "DELETE" | "POST"; route?: "configs" | "connections" | "proxies" | "rules" | "version" | "delay" | "other"; warning?: boolean } = {}) {
