@@ -29,45 +29,21 @@ function propsFor(tree){return nodes(tree,home.CoreRow).flatMap(row=>nodes(home.
 }))}
 function input(n,sample=0){const cpus=Array.from({length:n},(_,i)=>({id:'cpu'+i,usage:sample+i}));return {overview:{wrt:{cpus:[{id:'cpu'},...cpus],cpuMeta:{cpu0:{mhz:2000+sample}}}},histories:{cpu:Object.fromEntries(cpus.map(c=>[c.id,Array.from({length:60},(_,i)=>(i+sample)%80)]))},running:true}}
 ;(async()=>{
- await test('16/32核最坏lazy预取：可见集合把订阅32/16降到4，滚离取消，采集值继续更新',async()=>{
-  for(const countCores of [16,32])for(const gated of [false,true]){
-   const page=instance(home.CpuDetails),plots=Array.from({length:countCores},()=>instance(home.GridPlot));let props=input(countCores)
-   let tree=await page.draw(props),scroll=nodes(tree,'ScrollView')[0]
-   assert.equal(nodes(tree,'LazyVStack')[0].props.scrollTargetLayout,true)
-   assert.equal(scroll.props.onScrollTargetVisibilityChange.idType,'string');assert.equal(scroll.props.onScrollTargetVisibilityChange.threshold,0.1)
-   if(gated){scroll.props.onScrollTargetVisibilityChange.onChanged(['core-cpu0','core-cpu2']);tree=await page.draw(props)}
-   assert.equal(nodes(tree,home.DetailCpuSummary)[0].props.running,!gated,'summary obeys native visible ids too')
-   assert.equal(nodes(home.CoreRow(nodes(tree,home.CoreRow)[0].props),'HStack')[0].props.key,'core-cpu0','native root carries target id')
-   let pp=propsFor(tree)
-   // Deliberately report EVERY prefetched SVG appeared, even though only two rows are visible.
-   for(let i=0;i<plots.length;i++){const p=await plots[i].draw(pp[i]);p.props.onAppear();await plots[i].draw(pp[i])}
+ await test('详情无额外可见ID闸门：采样直达所有核心，共用SVG出现/消失与页面running控制',async()=>{
+  for(const cores of [16,32]){
+   const page=instance(home.CpuDetails),plots=Array.from({length:cores},()=>instance(home.GridPlot));let props=input(cores)
+   let tree=await page.draw(props);assert.equal(nodes(tree,'ScrollView')[0].props.onScrollTargetVisibilityChange,undefined)
+   assert.equal(nodes(tree,'LazyVStack').length,1)
+   let pp=propsFor(tree);assert.equal(pp.length,cores);assert.ok(pp.every(p=>p.running))
+   for(let i=0;i<cores;i++){const svg=await plots[i].draw(pp[i]);if(i<4){svg.props.onAppear();await plots[i].draw(pp[i])}}
+   now+=1000;props=input(cores,1);tree=await page.draw(props);pp=propsFor(tree)
+   for(let i=0;i<cores;i++)await plots[i].draw(pp[i]);assert.equal(active,4)
+   for(let frame=0;frame<20;frame++){now+=50;for(const t of [...intervals.values()])t.fn();for(let i=0;i<cores;i++)await plots[i].draw(pp[i])}
    assert.equal(active,0)
-   now+=1000;props=input(countCores,1);tree=await page.draw(props);pp=propsFor(tree)
-   for(let i=0;i<plots.length;i++)await plots[i].draw(pp[i])
-   const subscribed=gated?4:countCores;assert.equal(active,subscribed);assert.equal(intervals.size,1)
-   const startCallbacks=callbacks,startPaths=pathBuilds
-   for(let j=0;j<20;j++){
-    now+=50;for(const t of [...intervals.values()])t.fn()
-    for(let i=0;i<plots.length;i++)await plots[i].draw(pp[i])
-   }
-   assert.equal(pathBuilds-startPaths,subscribed*20)
-   assert.equal(callbacks-startCallbacks,subscribed*20);assert.equal(active,0);assert.equal(intervals.size,0)
-   console.log(JSON.stringify({cores:countCores,preciseVisibility:gated,activeInterpolationSubscriptions:subscribed,oneSecondPlotCallbacks:callbacks-startCallbacks,oneSecondDynamicPathBuilds:pathBuilds-startPaths,expiryMs:1000}))
-   // Start a new window, then a native scroll event removes all core rows from viewport.
-   now+=1000;props=input(countCores,2);tree=await page.draw(props);pp=propsFor(tree)
-   for(let i=0;i<plots.length;i++)await plots[i].draw(pp[i]);assert.equal(active,subscribed)
-   scroll.props.onScrollTargetVisibilityChange.onChanged([]);tree=await page.draw(props);pp=propsFor(tree)
-   for(let i=0;i<plots.length;i++)await plots[i].draw(pp[i]);assert.equal(active,0);assert.equal(intervals.size,0)
-   // All cards and latest metadata/history remain available while animation is gated off.
-   now+=1000;props=input(countCores,3);tree=await page.draw(props)
-   const rows=nodes(tree,home.CoreRow);assert.equal(rows.flatMap(r=>r.props.cpus).length,countCores)
-   const first=nodes(home.CoreRow(rows[0].props),home.CoreCard)[0];assert.equal(first.props.cpu.usage,3);assert.equal(first.props.w.cpuMeta.cpu0.mhz,2003);assert.equal(first.props.history.at(-1),62)
-   scroll.props.onScrollTargetVisibilityChange.onChanged(['core-cpu0','summary']);tree=await page.draw(props);pp=propsFor(tree)
-   assert.equal(nodes(tree,home.DetailCpuSummary)[0].props.running,true)
-   for(let i=0;i<plots.length;i++)await plots[i].draw(pp[i]);assert.equal(active,0,'re-entry snaps to latest, no stale replay')
-   now+=1000;props=input(countCores,4);tree=await page.draw(props);pp=propsFor(tree)
-   for(let i=0;i<plots.length;i++)await plots[i].draw(pp[i]);assert.equal(active,2,'smooth interpolation resumes on next genuine sample')
-   for(const p of plots)p.close();page.close();assert.equal(active,0);assert.equal(intervals.size,0)
+   now+=1000;props=input(cores,2);tree=await page.draw(props);pp=propsFor(tree);for(let i=0;i<cores;i++)await plots[i].draw(pp[i]);assert.equal(active,4)
+   tree=await page.draw({...props,running:false});pp=propsFor(tree);for(let i=0;i<cores;i++)await plots[i].draw(pp[i]);assert.equal(active,0)
+   assert.equal(nodes(tree,home.CoreRow).flatMap(r=>r.props.cpus).length,cores)
+   for(const plot of plots)plot.close();page.close();assert.equal(intervals.size,0)
   }
  })
  await test('相同内容新数组：主页详情共用引用更新语义与平滑周期',async()=>{

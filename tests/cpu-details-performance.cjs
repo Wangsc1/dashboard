@@ -16,10 +16,9 @@ const checks=String.raw`
    }
  })
  await test('摘要可见才允许曲线订阅，离屏/后台停止；详情数字无插值定时器，卸载释放',async()=>{
-   const props={history:[10,20],running:true};let s=render(home.DetailCpuSummary,props,true);assert.equal(nodes(s,home.CpuCard)[0].props.running,false)
-   s.props.onAppear();s=render(home.DetailCpuSummary,props);assert.equal(nodes(s,home.CpuCard)[0].props.running,true)
-   s.props.onDisappear();s=render(home.DetailCpuSummary,props);assert.equal(nodes(s,home.CpuCard)[0].props.running,false)
-   s.props.onAppear();s=render(home.DetailCpuSummary,{...props,running:false});assert.equal(nodes(s,home.CpuCard)[0].props.running,false)
+   const props={history:[10,20],running:true};let s=render(home.DetailCpuSummary,props,true);assert.equal(nodes(s,home.CpuCard)[0].props.running,true)
+   assert.equal(s.props.onAppear,undefined);assert.equal(s.props.onDisappear,undefined)
+   s=render(home.DetailCpuSummary,{...props,running:false});assert.equal(nodes(s,home.CpuCard)[0].props.running,false)
    const card=home.CpuCard({history:[10,20],running:true,detail:true});assert.equal(nodes(card,home.CpuBreakdown)[0].props.running,false);assert.equal(nodes(card,home.GridPlot)[0].props.running,true)
    let c=render(home.GridPlot,{samples:[10,20],tone:'#3485eb',running:true,percent:true},true);await flush();assert.equal(c.type,'SVG');assert.equal(intervals.size,0)
    now+=1000;c=render(home.GridPlot,{samples:[10,20,30],tone:'#3485eb',running:false,percent:true});await flush();assert.equal(c.type,'SVG');assert.equal(intervals.size,0);unmount();assert.equal(intervals.size,0)
