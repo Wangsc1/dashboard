@@ -1,12 +1,13 @@
-import { VStack, ZStack, Text, WebView, useState, useEffect, useColorScheme } from 'scripting'
+import { VStack, Text, WebView, useState, useEffect, useColorScheme } from 'scripting'
 import { plotCanvasHTML } from './plot-canvas'
 interface PlotDiagnostic {ms:number;width:number;height:number;viewportWidth:number;viewportHeight:number;bitmapWidth:number;bitmapHeight:number;context:boolean;hidden:boolean;attempts:number;grids:number;frames:number;updates:number;samples:number;seq:number;active:boolean;error:string}
+export const PLOT_DIAGNOSTIC_HEIGHT=56
 export interface CanvasPlotProps {samples:number[];tone:string;plotHeight?:number;area?:boolean;running?:boolean;percent?:boolean;plotWidth?:number}
 // Mount the drawing host in the first render, including during sheet presentation.
 // LazyVStack owns lazy creation; running and component cleanup own pause/disposal.
 // Native onAppear can arrive only after scrolling, so it must not gate chart creation.
 export function InlineCanvasPlot(props:CanvasPlotProps) {
-  const height=props.plotHeight??96
+  const height=(props.plotHeight??96)+PLOT_DIAGNOSTIC_HEIGHT
   return <VStack spacing={0} frame={props.plotWidth?{width:props.plotWidth,height}:{height}}>
     <MountedCanvasPlot {...props}/>
   </VStack>
@@ -54,14 +55,16 @@ export function MountedCanvasPlot({samples,tone,plotHeight=96,area=false,running
     host.flush()
   },[samples,tone,area,running,percent,theme,host])
   const d=trace.web
-  return <ZStack alignment="topLeading" frame={{height:plotHeight}}>
+  // Diagnostics are a separate, explicitly sized footer. Never cover the WebView:
+  // an opaque overlapping native view can itself interfere with visibility testing.
+  return <VStack alignment="leading" spacing={0} frame={{height:plotHeight+PLOT_DIAGNOSTIC_HEIGHT}}>
     {error?<Text font={11} foregroundStyle="secondaryLabel" frame={{height:plotHeight}}>{error}</Text>:<WebView controller={host.controller} onAppear={()=>{if(host.alive)setTrace(s=>({...s,nativeAppear:s.nativeAppear+1}))}} disabled frame={{minHeight:plotHeight,maxHeight:plotHeight,minWidth:0,maxWidth:'infinity'}}/>}
-    <VStack alignment="leading" spacing={0} padding={2} background="secondarySystemBackground" foregroundStyle="label" font={8} fontDesign="monospaced">
-      <Text>{`D180 ${trace.stage} A:${trace.nativeAppear} ${d?Math.round(d.ms/1000)+'s':'JS:--'}`}</Text>
+    <VStack alignment="leading" spacing={0} frame={{height:PLOT_DIAGNOSTIC_HEIGHT}} foregroundStyle="label" font={8} fontDesign="monospaced">
+      <Text>{`D181 ${trace.stage} A:${trace.nativeAppear} ${d?Math.round(d.ms/1000)+'s':'JS:--'}`}</Text>
       <Text>{d?`C:${d.width}x${d.height} V:${d.viewportWidth}x${d.viewportHeight} H:${+d.hidden}`:'C:-- V:-- H:--'}</Text>
       <Text>{d?`P:${d.attempts} G:${d.grids} F:${d.frames} N:${d.samples} U:${d.updates}`:'P:-- G:-- F:-- N:-- U:--'}</Text>
       <Text>{d?`B:${d.bitmapWidth}x${d.bitmapHeight} ctx:${+d.context} run:${+d.active}`:'B:-- ctx:-- run:--'}</Text>
       {d?.error?<Text>{`ERR:${d.error}`}</Text>:null}
     </VStack>
-  </ZStack>
+  </VStack>
 }
