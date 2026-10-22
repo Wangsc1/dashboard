@@ -5,7 +5,7 @@ import { newHistory, appendHistory, OverviewHistory } from "./openwrt-metrics"
 import { rootToolbar } from "./root-toolbar"
 import { prefetchMoreVersions, prefetchProxies, prefetchRules, prefetchConnections, ProxiesPage, ConnectionsPage, RulesPage, GroupSection, MorePage as DashboardMorePage } from "./dashboard-pages"
 import {
-  AppEvents, Animation, Transition, Button, ForEach, Form, HStack, Label, LongPressGesture, Navigation, NavigationLink, NavigationStack, Picker, Script, Section, SecureField, Spacer,
+  AppEvents, Animation, Transition, Button, ForEach, Form, HStack, Label, Navigation, NavigationLink, NavigationStack, Picker, Script, Section, SecureField, Spacer,
   Image, Menu, RoundedRectangle, Circle, ScrollView, SVG, Text, ZStack, modifiers, TextField, Toggle, VStack, TabView, Tab, useObservable, useEffect, useState, useMemo,
 } from "scripting"
 import {
@@ -748,9 +748,10 @@ function SettingsPage({ active, onChanged }: { active: Controller | null; onChan
   return <Form background="systemBackground" scrollContentBackground="hidden" navigationTitle="面板设置" navigationBarTitleDisplayMode="inline">
     <Section listRowBackground={panelRowBackground()} header={<HStack><Text>OpenWrt</Text><Spacer /><Text font={12} foregroundStyle="secondaryLabel">{`v${VERSION}`}</Text></HStack>}>
       {list.map(c => <NavigationLink key={c.id} destination={<EditController initial={c} onDone={reload} />}
+          contextMenu={controllerHealth[c.id] === false && !revealed.includes(c.id) ? {menuItems:<Button title="展开地址" action={() => setRevealed(ids => ids.includes(c.id) ? ids : [...ids, c.id])} />} : undefined}
           trailingSwipeActions={{ allowsFullSwipe: false, actions: [<Button title="删除" tint="systemRed" action={() => remove(c.id)} />] }}>
-          <VStack alignment="leading" frame={{maxWidth:"infinity",alignment:"leading"}} simultaneousGesture={LongPressGesture().onEnded(() => setRevealed(ids => ids.includes(c.id) ? ids : [...ids, c.id]))}><Text>{c.name}</Text>{controllerHealth[c.id] === false && !revealed.includes(c.id)
-            ? <Text font={12} foregroundStyle="secondaryLabel">连接失败 · 长按展开地址</Text>
+          <VStack alignment="leading" frame={{maxWidth:"infinity",alignment:"leading"}}><Text>{c.name}</Text>{controllerHealth[c.id] === false && !revealed.includes(c.id)
+            ? <Text font={12} foregroundStyle="secondaryLabel">连接失败 · 长按菜单展开地址</Text>
             : <Text font={12} foregroundStyle="secondaryLabel">{maskUrl(c.url)}</Text>}</VStack>
         </NavigationLink>)}
       <NavigationLink destination={<EditController onDone={reload} />}><Label title="添加 OpenWrt" systemImage="plus" /></NavigationLink>
