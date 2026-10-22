@@ -24,9 +24,12 @@ const SIZED=typeof SCREEN_W==="number"&&SCREEN_W>112&&SCREEN_W<=600
 export const PLOT_FULL_W:number|undefined=SIZED?SCREEN_W-64:undefined
 export const PLOT_HALF_W:number|undefined=SIZED?(SCREEN_W-48)/2-32:undefined
 export const PLOT_STROKE=1.5
-export function GridPlot({samples,tone,plotHeight=96,area=false,running=true,percent=false,plotWidth}:{samples:number[];tone:string;plotHeight?:number;area?:boolean;running?:boolean;percent?:boolean;plotWidth?:number}) {
+export function GridPlot({samples,tone,plotHeight=96,area=false,running=true,percent=false,plotWidth,stableSamples=false}:{samples:number[];tone:string;plotHeight?:number;area?:boolean;running?:boolean;percent?:boolean;plotWidth?:number;stableSamples?:boolean}) {
   const [visible,setVisible]=useState(false)
-  const values=useMemo(()=>samples.slice(-CHART_HISTORY).filter(Number.isFinite),[samples])
+  // Detail-only: a fresh array with identical values is not a new visual frame.
+  // Keep homepage reference-based behavior unchanged. At most 60 numbers are compared.
+  const sampleKey=useMemo(()=>stableSamples?samples.slice(-CHART_HISTORY).join(","):samples,[samples,stableSamples])
+  const values=useMemo(()=>samples.slice(-CHART_HISTORY).filter(Number.isFinite),[sampleKey])
   const enabled=running&&visible
   const [track]=useState({previous:values,current:values,enabled,at:Date.now(),duration:1000,animating:false})
   const [tick,setTick]=useState(Date.now())
@@ -67,7 +70,7 @@ export function CpuBreakdown({cpu,running}:{cpu?:CpuUsage;running:boolean}) {
   return <HStack spacing={0} alignment="bottom"><HStack spacing={22}>{([['SYS',cpu?.system],['USER',cpu?.user],['STEAL',cpu?.steal]] as const).map(([title,value])=><VStack key={title} alignment="leading" spacing={3}><Text font={10} fontWeight="semibold" foregroundStyle="secondaryLabel" lineLimit={1}>{title}</Text><MetricNumber value={value} digits={1} pointSize={14} running={running}/></VStack>)}</HStack><Spacer/><HStack alignment="lastTextBaseline" spacing={2}><MetricNumber running={running} value={cpu?.usage} digits={1} pointSize={22} tone="#3485eb"/><Text font={11} foregroundStyle="#3485eb">%</Text></HStack></HStack>
 }
 export function CpuCard({w,history,running,onOpen,detail=false}:{w?:WrtInfo;history:number[];running:boolean;onOpen?:()=>void;detail?:boolean}) {
-  return <HomeCard onOpen={onOpen}><HStack><Text font={detail?15:16} fontWeight="semibold">{detail?w?.cpuModel||"CPU 型号未提供":"CPU"}</Text><Spacer/>{!detail?<Text font={11} foregroundStyle="#3485eb" padding={{horizontal:8,vertical:4}} background={<RoundedRectangle cornerRadius={8} fill={{light:"#edf5ff",dark:"#24374d"}}/>}>{w?.temperature===undefined?"-- °C":`${w.temperature.toFixed(1)} °C`}</Text>:null}</HStack><GridPlot samples={history} tone="#3485eb" percent running={running} plotWidth={PLOT_FULL_W}/><CpuBreakdown cpu={w?.cpus?.find(c=>c.id==='cpu')} running={running&&!detail}/></HomeCard>
+  return <HomeCard onOpen={onOpen}><HStack><Text font={detail?15:16} fontWeight="semibold">{detail?w?.cpuModel||"CPU 型号未提供":"CPU"}</Text><Spacer/>{!detail?<Text font={11} foregroundStyle="#3485eb" padding={{horizontal:8,vertical:4}} background={<RoundedRectangle cornerRadius={8} fill={{light:"#edf5ff",dark:"#24374d"}}/>}>{w?.temperature===undefined?"-- °C":`${w.temperature.toFixed(1)} °C`}</Text>:null}</HStack><GridPlot samples={history} tone="#3485eb" percent running={running} plotWidth={PLOT_FULL_W} stableSamples={detail}/><CpuBreakdown cpu={w?.cpus?.find(c=>c.id==='cpu')} running={running&&!detail}/></HomeCard>
 }
 export function TrafficCard({heading,rate,total,history,tone,running}:{heading:string;rate?:number;total?:number;history:number[];tone:string;running:boolean}) {
   const parts=rate===undefined?undefined:fmtSpeed(rate).split(' '),value=parts?Number(parts[0]):undefined,unit=parts?" "+parts.slice(1).join(' '):""
@@ -139,22 +142,30 @@ export function HomeDashboard({overview,histories,running,onCpu}:{overview:Overv
   return <VStack spacing={16}><CpuCard w={w} history={histories.cpu.cpu??[]} running={running} onOpen={onCpu}/><HStack spacing={16} alignment="top"><TrafficCard heading="上传" rate={overview?.traffic.up} total={overview?.upTotal} history={histories.up} tone="#2dbf82" running={running}/><TrafficCard heading="下载" rate={overview?.traffic.down} total={overview?.downTotal} history={histories.down} tone="#27b1cf" running={running}/></HStack><HStack spacing={16} alignment="top" background={<HStack spacing={16}><RoundedRectangle cornerRadius={14} fill={PANEL} frame={{minWidth:0,maxWidth:"infinity"}}/><RoundedRectangle cornerRadius={14} fill={PANEL} frame={{minWidth:0,maxWidth:"infinity"}}/></HStack>}><RamCard w={w} running={running}/><LoadCard w={w}/></HStack><DiskCard w={w}/></VStack>
 }
 export function CpuDetails({overview,histories,running}:{overview:Overview|null;histories:OverviewHistory;running:boolean}) {
+  // onAppear includes lazy prefetch. Only the native viewport id set gates interpolation.
+  // null retains the old appearance fallback on hosts without this iOS18+/Scripting3.1 API.
+  const [visibleIds,setVisibleIds]=useState<string[]|null>(null)
+  const visibility=useMemo(()=>({idType:"string" as const,threshold:0.1,onChanged:(ids:string[]|number[])=>{
+    const next=(ids as string[]).slice().sort()
+    setVisibleIds(old=>old!==null&&old.length===next.length&&old.every((id,i)=>id===next[i])?old:next)
+  }}),[])
+  const live=(id:string)=>running&&(visibleIds===null||visibleIds.includes(id))
   const w=overview?.wrt,cores=w?.cpus?.filter(x=>x.id!=='cpu')??[],rows=Array.from({length:Math.ceil(cores.length/2)},(_,i)=>cores.slice(i*2,i*2+2))
   const info=[['Uptime',w?fmtUptime(w.uptime,true):'--'],['Arch',w?.arch||'--'],['Cpu',cores.length?String(cores.length):'--'],['Kernel',w?.kernel||'--'],['Board',w?.model||'--']]
-  return <NavigationStack presentationDetents={['large']} presentationDragIndicator="visible" presentationContentInteraction="scrolls"><ScrollView navigationTitle="CPU" navigationBarTitleDisplayMode="inline" background={HOME_BG}><LazyVStack spacing={16} padding={{horizontal:16,top:12,bottom:24}}><HomeCard><Text font={15} fontWeight="semibold">{w?.release||'系统版本未提供'}</Text><VStack spacing={5}>{info.map(([title,value])=><HStack key={title}><Text font={12} foregroundStyle="label">{title}</Text><Spacer/><Text font={12} foregroundStyle="label" multilineTextAlignment="trailing">{value}</Text></HStack>)}</VStack></HomeCard><DetailCpuSummary w={w} history={histories.cpu.cpu??[]} running={running}/>{rows.map((row,i)=><CoreRow key={String(i)} cpus={row} w={w} histories={histories} running={running}/>)}{!cores.length?<Text font={12} foregroundStyle="secondaryLabel">/proc/stat未提供逻辑核数据或当前账号无读取权限。</Text>:null}</LazyVStack></ScrollView></NavigationStack>
+  return <NavigationStack presentationDetents={['large']} presentationDragIndicator="visible" presentationContentInteraction="scrolls"><ScrollView navigationTitle="CPU" navigationBarTitleDisplayMode="inline" background={HOME_BG} onScrollTargetVisibilityChange={visibility}><LazyVStack scrollTargetLayout spacing={16} padding={{horizontal:16,top:12,bottom:24}}><HomeCard><Text font={15} fontWeight="semibold">{w?.release||'系统版本未提供'}</Text><VStack spacing={5}>{info.map(([title,value])=><HStack key={title}><Text font={12} foregroundStyle="label">{title}</Text><Spacer/><Text font={12} foregroundStyle="label" multilineTextAlignment="trailing">{value}</Text></HStack>)}</VStack></HomeCard><DetailCpuSummary key="summary" w={w} history={histories.cpu.cpu??[]} running={live("summary")}/>{rows.map(row=><CoreRow key={`core-${row[0].id}`} cpus={row} w={w} histories={histories} running={live(`core-${row[0].id}`)}/>)}{!cores.length?<Text font={12} foregroundStyle="secondaryLabel">/proc/stat未提供逻辑核数据或当前账号无读取权限。</Text>:null}</LazyVStack></ScrollView></NavigationStack>
 }
 // No whole-card/element snapshots: metadata and numeric values always use latest inputs.
 // Each GridPlot independently controls its animation subscription through SVG visibility.
 export function CoreRow({cpus,w,histories,running}:{cpus:CpuUsage[];w?:WrtInfo;histories:OverviewHistory;running:boolean}) {
-  return <HStack spacing={16} alignment="top">{cpus.map(c=><CoreCard key={c.id} cpu={c} w={w} history={histories.cpu[c.id]??[]} running={running}/>)}{cpus.length===1?<Spacer frame={{minWidth:0,maxWidth:'infinity'}}/>:null}</HStack>
+  return <HStack key={`core-${cpus[0]?.id}`} spacing={16} alignment="top">{cpus.map(c=><CoreCard key={c.id} cpu={c} w={w} history={histories.cpu[c.id]??[]} running={running}/>)}{cpus.length===1?<Spacer frame={{minWidth:0,maxWidth:'infinity'}}/>:null}</HStack>
 }
 // Per-core plots share GridPlot and the single scheduler; no per-core timer.
 export function SampledCpuPlot({samples,running=false}:{samples:number[];running?:boolean}) {
-  return <GridPlot samples={samples} tone="#2dbf82" percent plotHeight={76} running={running} plotWidth={PLOT_HALF_W}/>
+  return <GridPlot samples={samples} tone="#2dbf82" percent plotHeight={76} running={running} plotWidth={PLOT_HALF_W} stableSamples/>
 }
 export function DetailCpuSummary({w,history,running}:{w?:WrtInfo;history:number[];running:boolean}) {
   const [visible,setVisible]=useState(false)
-  return <VStack onAppear={()=>setVisible(true)} onDisappear={()=>setVisible(false)}><CpuCard w={w} history={history} running={running&&visible} detail/></VStack>
+  return <VStack key="summary" onAppear={()=>setVisible(true)} onDisappear={()=>setVisible(false)}><CpuCard w={w} history={history} running={running&&visible} detail/></VStack>
 }
 export function CoreCard({cpu,w,history,running}:{cpu:CpuUsage;w?:WrtInfo;history:number[];running:boolean}) {
   const meta=w?.cpuMeta?.[cpu.id]

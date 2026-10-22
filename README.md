@@ -26,6 +26,14 @@
 
 原生 Tab API 面向 iOS 18+；外观与手势由系统及 Scripting 版本决定。仓库配置了 `remoteResource`，实际导入和更新以 Scripting 的处理结果为准。配置编辑器的 CodeMirror/Lezer/YAML 静态 bundle 已嵌入现有 `dashboard-pages.tsx`；在线更新仍只需原有运行文件，不需 CDN、额外资源下载或在手机安装 npm 包。`editor/` 为构建源码、锁定依赖及许可证，非运行依赖。
 
+## 1.5.169 更新
+
+- **详情滚动减少屏外绘制**：本机官方 `views/scrollview/en.md`（同官网 [Scroll views](https://scriptingapp.github.io/guide/Views/Scroll%20views/index.md)）提供 `onScrollTargetVisibilityChange` + `scrollTargetLayout`：iOS18+/Scripting3.1按字符串key回报可见行集合。详情以行至少10%进入视口为准，仅这些行允许曲线插值，避免lazy预取的onAppear让屏外核心也持续20fps。未收到回调的旧宿主保留原onAppear回退，此时没有精确可见性收益。没有添加分页、吸附或手势拦截，下拉关闭保持原生。
+- **去掉相同样本的冗余窗口**：仅详情按最多60点的内容去重，新数组但内容未变时不重新订阅、不重建路径；真实变化仍共享20fps平滑。比较key仅在样本数组变化时生成，不逐帧做。保留已有窗口到期退订（1秒采样窗口约1000ms，慢采样最多1500ms），并非新增的永久timer修复。
+- **本地动态工作量**：模拟所有16/32核均被lazy预取onAppear、实际仅两行/4核可见，一次1000ms插值的订阅由16/32降至4，局部tick回调和动态路径构建分别由320/640降至80（75%/87.5%减少）。相同内容新数组的详情路径重建/订阅均为0。测试执行多实例hook、计时器、可见集合变化、屏外/暂停/卸载清理及最新数值/元数据，不是iPhone实测。
+- 未找到官方滚动开始/结束状态API，因此本版**不声称滚动期间全部暂停**，可见曲线仍有20fps SVG构建/桥接/栅格化成本。每秒采集仍会更新详情父树和所有核心数据；未缓存整卡或冻结数值。主页冻结后running=false的数字/曲线timer原已释放，验证但未重构。
+- 保留单SVG96/66/76pt、统一1.5线宽、60点右对齐、全部核心与元数据、原生下滑关闭；主页曲线架构、RAM/负载/磁盘及CPU紧凑布局不变。真机回调覆盖、SVG栅格化耗时与滚动流畅度仍需设备验证。本轮仅提交，不推送。
+
 ## 1.5.168 更新
 
 - 修正 1.5.167 曲线/高度消失、详情进入异常的回归路径：删除双 SVG、ZStack 裁剪、offset/armed 双阶段原生动画，曲线重新只由一个 SVG 承载；即使不足两个样本也保留网格及 96/66/76pt 固定高度，不返回空节点。是否解决实机回归仍待验证。
@@ -150,6 +158,8 @@ node tests/chart-download.cjs
 node tests/home-dashboard.cjs
 node tests/cpuinfo-complete.cjs
 node tests/cpu-details-performance.cjs
+node tests/cpu-scroll-work.cjs
+node tests/home-layout.cjs
 node tests/home-polish.cjs
 git diff --check
 ```
