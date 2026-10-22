@@ -16,7 +16,7 @@ import { confirmed } from "./dashboard-model"
 import { DOCKER_PNG_BASE64 } from "./docker-icon"
 import { useSmoothPlot } from "./chart-ui"
 import { CHART_HISTORY } from "./chart"
-import { PanelSettingsSections, LogsPage, KernelConfigPage, usePreferences } from "./settings-ui"
+import { panelRowBackground, PanelSettingsSections, LogsPage, KernelConfigPage, usePreferences } from "./settings-ui"
 import { getPreferences, controllerHealth, cachedIcon, feedback, recordEvent } from "./preferences"
 
 const msg = (e: any) => String(e?.message ?? e ?? "未知错误")
@@ -264,9 +264,9 @@ function WrtInterfacesPage({ active, version }: { active: Controller; version: n
   const [list, setList] = useState<WrtIface[]>([])
   const [err, setErr] = useState("")
   useInterval(current => loadWrtInterfaces(active).then(l => { if (current()) { setList(l); setErr("") } }).catch(e => { if (current()) setErr(msg(e)) }), 5000, [overviewSource(active), version])
-  return <Form navigationTitle="网络接口" navigationBarTitleDisplayMode="inline">
-    {err ? <Section><Text foregroundStyle="systemRed">{err}</Text></Section> : null}
-    <Section>
+  return <Form background="systemBackground" scrollContentBackground="hidden" navigationTitle="网络接口" navigationBarTitleDisplayMode="inline">
+    {err ? <Section listRowBackground={panelRowBackground()}><Text foregroundStyle="systemRed">{err}</Text></Section> : null}
+    <Section listRowBackground={panelRowBackground()}>
       {list.map(i => <VStack key={i.name} alignment="leading" spacing={2}>
         <HStack><Text>{i.name}</Text><Spacer /><Text font={13} foregroundStyle={i.up ? "systemGreen" : "systemRed"}>{i.up ? "已连接" : "未连接"}</Text></HStack>
         <Text font={12} foregroundStyle="secondaryLabel">{`${i.proto || "-"} · ${i.device || "-"} · ${i.ip || "无 IPv4"}${i.up ? " · " + fmtUptime(i.uptime) : ""}`}</Text>
@@ -278,9 +278,9 @@ function WrtLeasesPage({ active, version }: { active: Controller; version: numbe
   const [list, setList] = useState<WrtLease[]>([])
   const [err, setErr] = useState("")
   useInterval(current => loadWrtLeases(active).then(l => { if (current()) { setList(l); setErr("") } }).catch(e => { if (current()) setErr(msg(e)) }), 10000, [overviewSource(active), version])
-  return <Form navigationTitle={`在线设备 (${list.length})`} navigationBarTitleDisplayMode="inline">
-    {err ? <Section><Text foregroundStyle="systemRed">{err}</Text></Section> : null}
-    <Section footer={<Text>来自 DHCP 租约，不含静态地址设备。</Text>}>
+  return <Form background="systemBackground" scrollContentBackground="hidden" navigationTitle={`在线设备 (${list.length})`} navigationBarTitleDisplayMode="inline">
+    {err ? <Section listRowBackground={panelRowBackground()}><Text foregroundStyle="systemRed">{err}</Text></Section> : null}
+    <Section listRowBackground={panelRowBackground()} footer={<Text>来自 DHCP 租约，不含静态地址设备。</Text>}>
       {list.map(l => <VStack key={l.mac + l.ip} alignment="leading" spacing={2}>
         <Text>{l.host || "未命名设备"}</Text>
         <Text font={12} foregroundStyle="secondaryLabel">{`${l.ip} · ${l.mac}`}</Text>
@@ -314,9 +314,9 @@ function DockerPage({ active }: { active: Controller }) {
     if (busy) return
     void guarded(setBusy, async () => { await confirmed(`${active.name} · ${x.name}`, `${label}容器；会影响该容器承载的服务。`, () => dockerAction(active, x.id, action)); setTick(t => t + 1) })
   }
-  return <Form navigationTitle="Docker 管理" navigationBarTitleDisplayMode="inline">
-    {err ? <Section><Text foregroundStyle="systemRed">{err}</Text></Section> : null}
-    {ov ? <Section header={<Text>概览</Text>}>
+  return <Form background="systemBackground" scrollContentBackground="hidden" navigationTitle="Docker 管理" navigationBarTitleDisplayMode="inline">
+    {err ? <Section listRowBackground={panelRowBackground()}><Text foregroundStyle="systemRed">{err}</Text></Section> : null}
+    {ov ? <Section listRowBackground={panelRowBackground()} header={<Text>概览</Text>}>
       <HStack spacing={14}>
         <DockerLogo size={52} />
         <VStack alignment="leading" spacing={4}>
@@ -332,8 +332,8 @@ function DockerPage({ active }: { active: Controller }) {
       <HStack><Text>索引服务器地址</Text><Spacer /><Text font={13} foregroundStyle="secondaryLabel">{ov.index || "-"}</Text></HStack>
       <VStack alignment="leading" spacing={4}><Text>Registry 镜像</Text>{ov.mirrors.length ? ov.mirrors.map(m => <Text key={m} font={13} foregroundStyle="secondaryLabel">{m}</Text>) : <Text font={13} foregroundStyle="secondaryLabel">无</Text>}</VStack>
     </Section> : null}
-    <Section><NavigationLink destination={<DockerSettingsPage active={active} />}><Label title="Docker 参数" systemImage="slider.horizontal.3" /></NavigationLink></Section>
-    <Section header={<Text>容器</Text>}>
+    <Section listRowBackground={panelRowBackground()}><NavigationLink destination={<DockerSettingsPage active={active} />}><Label title="Docker 参数" systemImage="slider.horizontal.3" /></NavigationLink></Section>
+    <Section listRowBackground={panelRowBackground()} header={<Text>容器</Text>}>
       {list.map(x => <NavigationLink key={x.id} destination={<ContainerPage active={active} x={x} />}
           trailingSwipeActions={{ allowsFullSwipe: false, actions: [
             x.state === "running" ? <Button title="停止" tint="systemRed" action={() => act(x, "stop", "停止")} /> : <Button title="启动" tint="systemGreen" action={() => act(x, "start", "启动")} />,
@@ -349,7 +349,7 @@ function DockerPage({ active }: { active: Controller }) {
         </HStack>
       </NavigationLink>)}
     </Section>
-    <Section header={<Text>镜像</Text>}>
+    <Section listRowBackground={panelRowBackground()} header={<Text>镜像</Text>}>
       {images.map(x => <NavigationLink key={x.id} destination={<ImagePage active={active} x={x} onDone={() => setTick(t => t + 1)} />}>
         <HStack spacing={10}>
           <DockerLogo size={26} />
@@ -370,15 +370,15 @@ function Row({ title, value }: { title: string; value: string }) { return <VStac
 function ImagePage({ active, x, onDone }: { active: Controller; x: DockerImage; onDone: () => void }) {
   const dismiss = Navigation.useDismiss(), [busy, setBusy] = useState(false)
   const del = (force: boolean) => guarded(setBusy, async () => { if (await confirmed(`${active.name} · ${x.tags[0] ?? x.id.slice(7, 19)}`, `${force ? "强制" : ""}删除镜像；${x.containers.length ? "仍有容器使用它，" : ""}不可恢复。`, () => dockerImageRemove(active, x.id, force))) { onDone(); dismiss() } })
-  return <Form navigationTitle="镜像" navigationBarTitleDisplayMode="inline">
-    <Section header={<Text>镜像文件概览</Text>}>
+  return <Form background="systemBackground" scrollContentBackground="hidden" navigationTitle="镜像" navigationBarTitleDisplayMode="inline">
+    <Section listRowBackground={panelRowBackground()} header={<Text>镜像文件概览</Text>}>
       <Row title="标签" value={x.tags.join("\n")} />
       <Row title="容器" value={x.containers.join(", ")} />
       <Row title="大小" value={mib(x.size)} />
       <Row title="创建时间" value={when(x.created)} />
       <Row title="ID" value={x.id.replace("sha256:", "").slice(0, 12)} />
     </Section>
-    <Section>
+    <Section listRowBackground={panelRowBackground()}>
       <Button title="删除" tint="systemRed" disabled={busy} action={() => del(false)} />
       <Button title="强制删除" tint="systemRed" disabled={busy} action={() => del(true)} />
     </Section>
@@ -391,9 +391,9 @@ function ContainerPage({ active, x }: { active: Controller; x: DockerContainer }
   useEffect(() => { let alive = true; loadContainerDetail(active, x.id).then(v => { if (alive) { setD(v); setPolicy(v.policy); setOrig(v.policy); setErr("") } }).catch(() => { if (alive) setErr("读取容器信息失败") }); return () => { alive = false } }, [x.id, tick])
   const op = (label: string, effect: string, fn: () => Promise<any>, leave = false) => guarded(setBusy, async () => { if (await confirmed(`${active.name} · ${x.name}`, effect, fn)) { if (leave) dismiss(); else setTimeout(() => setTick(t => t + 1), 800) } })
   const save = () => guarded(setBusy, async () => { await confirmed(`${active.name} · ${x.name}`, `将重启策略改为 ${policy}，不重启容器。`, () => saveContainerPolicy(active, x.id, policy)); setOrig(policy) })
-  return <Form navigationTitle={x.name} navigationBarTitleDisplayMode="inline">
-    {err ? <Section><Text foregroundStyle="systemRed">{err}</Text></Section> : null}
-    {d ? <Section header={<Text>容器概览</Text>}>
+  return <Form background="systemBackground" scrollContentBackground="hidden" navigationTitle={x.name} navigationBarTitleDisplayMode="inline">
+    {err ? <Section listRowBackground={panelRowBackground()}><Text foregroundStyle="systemRed">{err}</Text></Section> : null}
+    {d ? <Section listRowBackground={panelRowBackground()} header={<Text>容器概览</Text>}>
       <Row title="容器" value={d.name} />
       <Row title="状态" value={d.paused ? "paused" : d.state} />
       <Row title="ID" value={d.id.slice(0, 12)} />
@@ -403,7 +403,7 @@ function ContainerPage({ active, x }: { active: Controller; x: DockerContainer }
       <Row title="命令" value={d.command} />
       <Row title="创建时间" value={when(d.created)} />
     </Section> : null}
-    {d ? <Section>
+    {d ? <Section listRowBackground={panelRowBackground()}>
       <Button title={d.paused ? "恢复" : "暂停"} disabled={busy} action={() => op("", `${d.paused ? "恢复" : "暂停"}容器。`, () => dockerContainerOp(active, x.id, d.paused ? "unpause" : "pause"))} />
       <Button title="重启" disabled={busy} action={() => op("", "重启容器；服务会短暂中断。", () => dockerAction(active, x.id, "restart"))} />
       <Button title="停止" disabled={busy} action={() => op("", "停止容器；服务会中断。", () => dockerAction(active, x.id, "stop"))} />
@@ -411,7 +411,7 @@ function ContainerPage({ active, x }: { active: Controller; x: DockerContainer }
       <Button title="删除" tint="systemRed" disabled={busy} action={() => op("", "删除容器（需先停止）；不可恢复。", () => dockerContainerOp(active, x.id, "remove"), true)} />
       <Button title="强制删除" tint="systemRed" disabled={busy} action={() => op("", "强制删除容器，即使正在运行；不可恢复。", () => dockerContainerOp(active, x.id, "force-remove"), true)} />
     </Section> : null}
-    {policy ? <Section header={<Text>参数</Text>} footer={<Text>仅修改重启策略；端口、挂载、环境变量需重建容器，这里不提供。</Text>}>
+    {policy ? <Section listRowBackground={panelRowBackground()} header={<Text>参数</Text>} footer={<Text>仅修改重启策略；端口、挂载、环境变量需重建容器，这里不提供。</Text>}>
       <Picker title="重启策略" pickerStyle="menu" value={policy} onChanged={setPolicy}>
         <Text tag="no">不自动重启</Text><Text tag="always">总是重启</Text><Text tag="unless-stopped">除非手动停止</Text><Text tag="on-failure">失败时重启</Text>
       </Picker>
@@ -425,20 +425,20 @@ function DockerSettingsPage({ active }: { active: Controller }) {
   useEffect(() => { let alive = true; loadDockerSettings(active).then(v => { if (alive) setS(v) }).catch(() => { if (alive) setErr("读取 Docker 参数失败") }); return () => { alive = false } }, [active.id])
   const set = (k: keyof DockerSettings, v: string) => setS(o => o ? { ...o, [k]: v } : o)
   const save = () => s && guarded(setBusy, async () => { await confirmed(`${active.name} · dockerd`, "保存后将重启 Docker 服务，所有容器会短暂中断。", () => saveDockerSettings(active, s)) })
-  return <Form navigationTitle="Docker 参数" navigationBarTitleDisplayMode="inline">
-    {err ? <Section><Text foregroundStyle="systemRed">{err}</Text></Section> : null}
-    {s ? <Section header={<Text>常规</Text>} footer={<Text>数据目录为只读（改动会让现有容器消失）。保存会重启 Docker。</Text>}>
+  return <Form background="systemBackground" scrollContentBackground="hidden" navigationTitle="Docker 参数" navigationBarTitleDisplayMode="inline">
+    {err ? <Section listRowBackground={panelRowBackground()}><Text foregroundStyle="systemRed">{err}</Text></Section> : null}
+    {s ? <Section listRowBackground={panelRowBackground()} header={<Text>常规</Text>} footer={<Text>数据目录为只读（改动会让现有容器消失）。保存会重启 Docker。</Text>}>
       <HStack><Text>数据目录</Text><Spacer /><Text foregroundStyle="secondaryLabel">{s.dataRoot}</Text></HStack>
       <Picker title="日志级别" pickerStyle="menu" value={s.logLevel} onChanged={(v: string) => set("logLevel", v)}>
         {["debug", "info", "warn", "error", "fatal"].map(l => <Text key={l} tag={l}>{l}</Text>)}
       </Picker>
     </Section> : null}
-    {s ? <Section header={<Text>代理</Text>} footer={<Text>留空表示不使用。地址需以 http:// 或 https:// 开头。</Text>}>
+    {s ? <Section listRowBackground={panelRowBackground()} header={<Text>代理</Text>} footer={<Text>留空表示不使用。地址需以 http:// 或 https:// 开头。</Text>}>
       <Field title="HTTP" value={s.httpProxy} onChanged={v => set("httpProxy", v)} />
       <Field title="HTTPS" value={s.httpsProxy} onChanged={v => set("httpsProxy", v)} />
       <Field title="不代理" value={s.noProxy} onChanged={v => set("noProxy", v)} />
     </Section> : null}
-    {s ? <Section><Button title="保存" disabled={busy} action={save} /></Section> : null}
+    {s ? <Section listRowBackground={panelRowBackground()}><Button title="保存" disabled={busy} action={save} /></Section> : null}
   </Form>
 }
 
@@ -451,16 +451,16 @@ function FrpPage({ active }: { active: Controller }) {
     void guarded(setBusy, async () => { await confirmed(`${active.name} · frpc`, `${label} frp 客户端；穿透服务会短暂中断。`, () => frpAction(active, action)); setTimeout(() => setTick(t => t + 1), 1500) })
   }
   const reload = () => setTimeout(() => setTick(t => t + 1), 1500)
-  return <Form navigationTitle="FRP 管理" navigationBarTitleDisplayMode="inline">
-    {err ? <Section><Text foregroundStyle="systemRed">{err}</Text></Section> : null}
-    {info ? <Section header={<Text>服务</Text>}>
+  return <Form background="systemBackground" scrollContentBackground="hidden" navigationTitle="FRP 管理" navigationBarTitleDisplayMode="inline">
+    {err ? <Section listRowBackground={panelRowBackground()}><Text foregroundStyle="systemRed">{err}</Text></Section> : null}
+    {info ? <Section listRowBackground={panelRowBackground()} header={<Text>服务</Text>}>
       <HStack><Text>状态</Text><Spacer /><HStack spacing={6}><Circle fill={info.running ? "systemGreen" : "systemRed"} frame={{ width: 7, height: 7 }} /><Text foregroundStyle="secondaryLabel">{info.running ? "运行中" : "已停止"}</Text></HStack></HStack>
       <HStack><Text>开机启动</Text><Spacer /><Text foregroundStyle="secondaryLabel">{info.enabled ? "已启用" : "未启用"}</Text></HStack>
       <NavigationLink destination={<FrpCommonPage active={active} info={info} onDone={reload} />}><HStack><Text>服务端参数</Text><Spacer /><Text foregroundStyle="secondaryLabel">{maskUrl(info.server)}</Text></HStack></NavigationLink>
       <Button title={info.running ? "停止" : "启动"} systemImage={info.running ? "stop.fill" : "play.fill"} disabled={busy} action={() => act(info.running ? "stop" : "start", info.running ? "停止" : "启动")} />
       <Button title="重启" systemImage="arrow.clockwise" disabled={busy} action={() => act("restart", "重启")} />
     </Section> : null}
-    {info ? <Section header={<Text>穿透规则</Text>}>
+    {info ? <Section listRowBackground={panelRowBackground()} header={<Text>穿透规则</Text>}>
       {info.proxies.map(x => <NavigationLink key={x.id} destination={<FrpProxyPage active={active} initial={x} onDone={reload} />}
           trailingSwipeActions={{ allowsFullSwipe: false, actions: [<Button title="删除" tint="systemRed" action={() => { void guarded(setBusy, async () => { await confirmed(`${active.name} · ${x.name}`, "删除该穿透规则并重启 frpc。", () => deleteFrpProxy(active, x.id)); reload() }) }} />] }}>
         <VStack alignment="leading" spacing={2}>
@@ -478,15 +478,15 @@ function FrpCommonPage({ active, info, onDone }: { active: Controller; info: Frp
   const dismiss = Navigation.useDismiss()
   const [addr, setAddr] = useState(info.common.addr), [port, setPort] = useState(info.common.port), [tls, setTls] = useState(info.common.tls), [token, setToken] = useState(info.common.token), [busy, setBusy] = useState(false)
   const save = () => guarded(setBusy, async () => { if (await confirmed(`${active.name} · frpc`, "保存服务端参数并重启 frpc；穿透会短暂中断，参数错误会导致断连。", () => saveFrpCommon(active, { addr: addr.trim(), port: port.trim(), tls, token: token.trim() }))) { onDone(); dismiss() } })
-  return <Form navigationTitle="服务端参数" navigationBarTitleDisplayMode="inline">
-    <Section>
+  return <Form background="systemBackground" scrollContentBackground="hidden" navigationTitle="服务端参数" navigationBarTitleDisplayMode="inline">
+    <Section listRowBackground={panelRowBackground()}>
       <Field title="服务器地址" value={addr} onChanged={setAddr} />
       <Field title="服务器端口" value={port} onChanged={setPort} />
       <Toggle title="启用 TLS" value={tls} onChanged={setTls} />
       <Field title="Token" value={token} onChanged={setToken} />
 
     </Section>
-    <Section><Button title="保存" disabled={busy} action={save} /></Section>
+    <Section listRowBackground={panelRowBackground()}><Button title="保存" disabled={busy} action={save} /></Section>
   </Form>
 }
 
@@ -497,15 +497,15 @@ function FrpProxyPage({ active, initial, onDone }: { active: Controller; initial
   const [lip, setLip] = useState(initial ? rawLocal.slice(0, idx) : "10.0.0.1"), [lport, setLport] = useState(initial ? rawLocal.slice(idx + 1) : "")
   const [rport, setRport] = useState(initial?.remote ?? ""), [busy, setBusy] = useState(false)
   const save = () => guarded(setBusy, async () => { if (await confirmed(`${active.name} · ${name || "新规则"}`, `${initial ? "修改" : "添加"}穿透规则并重启 frpc。`, () => saveFrpProxy(active, { id: initial?.id, name: name.trim(), type, local_ip: lip.trim(), local_port: lport.trim(), remote_port: rport.trim() }))) { onDone(); dismiss() } })
-  return <Form navigationTitle={initial ? initial.name : "添加规则"} navigationBarTitleDisplayMode="inline">
-    <Section>
+  return <Form background="systemBackground" scrollContentBackground="hidden" navigationTitle={initial ? initial.name : "添加规则"} navigationBarTitleDisplayMode="inline">
+    <Section listRowBackground={panelRowBackground()}>
       <Field title="名称" value={name} onChanged={setName} />
       <Picker title="类型" pickerStyle="menu" value={type} onChanged={setType}><Text tag="tcp">TCP</Text><Text tag="udp">UDP</Text></Picker>
       <Field title="本地 IP" value={lip} onChanged={setLip} />
       <Field title="本地端口" value={lport} onChanged={setLport} />
       <Field title="远程端口" value={rport} onChanged={setRport} />
     </Section>
-    <Section><Button title="保存" disabled={busy} action={save} /></Section>
+    <Section listRowBackground={panelRowBackground()}><Button title="保存" disabled={busy} action={save} /></Section>
   </Form>
 }
 
@@ -537,39 +537,39 @@ function SoftwarePage({ active }: { active: Controller }) {
     ? [...(p.upgradeTo ? [<Button title="升级" tint="systemBlue" action={() => run(p.name, `升级到 ${p.upgradeTo}；可能重启相关服务。`, () => pkgUpgrade(active, [p.name]))} />] : []),
        <Button title="卸载" tint="systemRed" action={() => run(p.name, "卸载软件包及其不再需要的依赖；可能导致依赖它的功能失效。", () => pkgRemove(active, [p.name]))} />]
     : [<Button title="安装" tint="systemBlue" action={() => run(p.name, "下载并安装；会改动系统。", () => pkgInstall(active, [p.name]))} />]
-  return <Form navigationTitle="软件管理" navigationBarTitleDisplayMode="inline">
-    {err ? <Section><Text foregroundStyle="systemRed">{err}</Text></Section> : null}
-    <Section header={<Text>磁盘空间</Text>} footer={<Text>软件包操作可能破坏系统，请谨慎。</Text>}><Text foregroundStyle="secondaryLabel">{disk || "-"}</Text></Section>
-    <Section header={<Text>过滤器</Text>}><TextField title="输入关键字过滤" value={q} onChanged={(v: string) => { setQ(v); setLimit(100) }} autocorrectionDisabled textInputAutocapitalization="never" /></Section>
-    <Section header={<Text>下载并安装</Text>}>
+  return <Form background="systemBackground" scrollContentBackground="hidden" navigationTitle="软件管理" navigationBarTitleDisplayMode="inline">
+    {err ? <Section listRowBackground={panelRowBackground()}><Text foregroundStyle="systemRed">{err}</Text></Section> : null}
+    <Section listRowBackground={panelRowBackground()} header={<Text>磁盘空间</Text>} footer={<Text>软件包操作可能破坏系统，请谨慎。</Text>}><Text foregroundStyle="secondaryLabel">{disk || "-"}</Text></Section>
+    <Section listRowBackground={panelRowBackground()} header={<Text>过滤器</Text>}><TextField title="输入关键字过滤" value={q} onChanged={(v: string) => { setQ(v); setLimit(100) }} autocorrectionDisabled textInputAutocapitalization="never" /></Section>
+    <Section listRowBackground={panelRowBackground()} header={<Text>下载并安装</Text>}>
       <TextField title="软件包名称" value={url} onChanged={setUrl} autocorrectionDisabled textInputAutocapitalization="never" />
       <Button title="安装" disabled={busy || !url.trim()} action={() => run(url.trim(), "下载并安装；会改动系统。", () => pkgInstall(active, [url.trim()]))} />
     </Section>
-    <Section header={<Text>操作</Text>}>
+    <Section listRowBackground={panelRowBackground()} header={<Text>操作</Text>}>
       <Button title="更新列表" disabled={busy} action={() => run("软件源", "刷新软件源索引，需联网，不安装任何软件。", () => pkgUpdateLists(active))} />
       {updates.length ? <Button title="升级全部" tint="systemRed" disabled={busy} action={() => run(`${updates.length} 个软件包`, "升级全部可更新的软件包；可能重启服务，系统核心包升级有风险。", () => pkgUpgrade(active, updates.map(p => p.name)))} /> : null}
     </Section>
-    <Section>
+    <Section listRowBackground={panelRowBackground()}>
       <Picker title="" pickerStyle="segmented" value={tab} onChanged={(v: any) => { setTab(v); setLimit(100) }}><Text tag="available">可用</Text><Text tag="installed">已安装</Text><Text tag="updates">更新</Text></Picker>
     </Section>
-    <Section footer={<Text>{tab !== "installed" && !available ? "正在读取软件源（首次约十几秒）…" : shown.total > shown.items.length ? `显示 ${shown.items.length} / ${shown.total}，输入关键字缩小范围` : `共 ${shown.total} 项`}</Text>}>
+    <Section listRowBackground={panelRowBackground()} footer={<Text>{tab !== "installed" && !available ? "正在读取软件源（首次约十几秒）…" : shown.total > shown.items.length ? `显示 ${shown.items.length} / ${shown.total}，输入关键字缩小范围` : `共 ${shown.total} 项`}</Text>}>
       {shown.items.map(p => { const q = tab === "available" && installed.some(i => i.name === p.name) ? { ...p, installed: true, upgradeTo: updates.find(u => u.name === p.name)?.upgradeTo } : p; return <PkgRow key={p.name + p.version} p={q} actions={swipeFor(q)} /> })}
       {shown.total > shown.items.length ? <Button title="显示更多" action={() => setLimit(limit + 100)} /> : null}
     </Section>
-    {log ? <Section header={<Text>操作输出</Text>}><Text font={11} foregroundStyle="secondaryLabel">{log}</Text></Section> : null}
+    {log ? <Section listRowBackground={panelRowBackground()} header={<Text>操作输出</Text>}><Text font={11} foregroundStyle="secondaryLabel">{log}</Text></Section> : null}
   </Form>
 }
 
 function HelpPage() {
   return <Form background="systemBackground" scrollContentBackground="hidden" navigationTitle="使用说明" navigationBarTitleDisplayMode="inline">
-    <Section header={<Text>OpenWrt</Text>}>
+    <Section listRowBackground={panelRowBackground()} header={<Text>OpenWrt</Text>}>
       <Text>地址填路由器 LuCI 后台的 IP，端口为 LuCI 的端口（默认 80；开启 HTTPS 时通常 443）。用户名、密码是登录 LuCI 的账号。</Text>
     </Section>
-    <Section header={<Text>自动获取配置</Text>}>
+    <Section listRowBackground={panelRowBackground()} header={<Text>自动获取配置</Text>}>
       <Text>开启后，登录路由器读取所选插件（OpenClash / Nikki / MihomoTProxy）的配置，自动得到 Clash 控制器端口和密钥，无需手动填写。需要账号有读取配置的权限。</Text>
       <Text>关闭后可手动填写控制器端口和密钥。</Text>
     </Section>
-    <Section header={<Text>注意</Text>}>
+    <Section listRowBackground={panelRowBackground()} header={<Text>注意</Text>}>
       <Text>Clash 控制器通过“路由器地址 + 控制器端口”访问，请确认该端口监听在局域网地址，而不是只监听 127.0.0.1。</Text>
       <Text>密码和密钥保存在 Keychain。</Text>
     </Section>
@@ -614,17 +614,17 @@ function EditController({ initial, onDone }: { initial?: Controller; onDone: () 
   }
   return <Form background="systemBackground" scrollContentBackground="hidden" navigationTitle={initial ? "编辑 OpenWrt" : "添加 OpenWrt"} navigationBarTitleDisplayMode="inline"
     onDisappear={()=>save(true)}>
-    <Section header={<Text>基本信息</Text>}>
+    <Section listRowBackground={panelRowBackground()} header={<Text>基本信息</Text>}>
       <TextField title="名称" value={name} onChanged={change("name",setName)} prompt="例如：家庭路由" />
       <TextField title="地址" value={host} onChanged={change("host",setHost)} prompt="IP 地址" />
       <TextField title="端口" value={port} onChanged={change("port",setPort)} prompt="80" />
       <Toggle title="启用 SSL (HTTPS)" value={https} onChanged={toggleHttps} />
     </Section>
-    <Section header={<Text>认证</Text>}>
+    <Section listRowBackground={panelRowBackground()} header={<Text>认证</Text>}>
       <TextField title="用户名" value={username} onChanged={change("username",setUsername)} prompt="root" />
       <SecureField title="密码" value={password} onChanged={change("password",setPassword)} prompt="LuCI 登录密码" />
     </Section>
-    <Section header={<Text>插件配置</Text>}>
+    <Section listRowBackground={panelRowBackground()} header={<Text>插件配置</Text>}>
       <Picker title="插件" pickerStyle="segmented" value={plugin} onChanged={(v: string) => change("plugin",setPlugin)(v as Plugin)}>
         {PLUGINS.map(([v, l]) => <Text key={v} tag={v}>{l}</Text>)}
       </Picker>
@@ -634,15 +634,14 @@ function EditController({ initial, onDone }: { initial?: Controller; onDone: () 
         <SecureField title="控制器密钥" value={csecret} onChanged={change("csecret",setCsecret)} prompt="Secret（无则留空）" />
       </> : null}
     </Section>
-    {err ? <Section><Text foregroundStyle="systemRed">{err}</Text></Section> : null}
-    <Section>
+    {err ? <Section listRowBackground={panelRowBackground()}><Text foregroundStyle="systemRed">{err}</Text></Section> : null}
+    <Section listRowBackground={panelRowBackground()}>
       <NavigationLink destination={<HelpPage />}><Label title="使用说明" systemImage="questionmark.circle.fill" /></NavigationLink>
     </Section>
   </Form>
 }
 
 function SettingsPage({ active, onChanged }: { active: Controller | null; onChanged: () => void }) {
-  const [prefs, setPrefs] = useState(getPreferences())
   const [revealed, setRevealed] = useState<string[]>([])
   const [list, setList] = useState(listControllers())
   const reload = () => { setList(listControllers()); onChanged() }
@@ -652,20 +651,20 @@ function SettingsPage({ active, onChanged }: { active: Controller | null; onChan
     setList(listControllers())
     setTimeout(onChanged, 500)
   }
-  return <Form background="systemBackground" scrollContentBackground="hidden" navigationTitle="面板设置" navigationBarTitleDisplayMode="inline" onAppear={() => setPrefs(prev => { const next = getPreferences(); return prev.foldOffline === next.foldOffline ? prev : next })}>
-    <Section header={<HStack><Text>OpenWrt</Text><Spacer /><Text font={12} foregroundStyle="secondaryLabel">{`v${VERSION}`}</Text></HStack>}>
+  return <Form background="systemBackground" scrollContentBackground="hidden" navigationTitle="面板设置" navigationBarTitleDisplayMode="inline">
+    <Section listRowBackground={panelRowBackground()} header={<HStack><Text>OpenWrt</Text><Spacer /><Text font={12} foregroundStyle="secondaryLabel">{`v${VERSION}`}</Text></HStack>}>
       {list.map(c => <NavigationLink key={c.id} destination={<EditController initial={c} onDone={reload} />}
           trailingSwipeActions={{ allowsFullSwipe: false, actions: [<Button title="删除" tint="systemRed" action={() => remove(c.id)} />] }}>
-          <VStack alignment="leading" onLongPressGesture={() => setRevealed([...revealed, c.id])}><Text>{c.name}</Text>{prefs.foldOffline && controllerHealth[c.id] === false && !revealed.includes(c.id)
+          <VStack alignment="leading" onLongPressGesture={() => setRevealed([...revealed, c.id])}><Text>{c.name}</Text>{controllerHealth[c.id] === false && !revealed.includes(c.id)
             ? <Text font={12} foregroundStyle="secondaryLabel">连接失败 · 长按展开地址</Text>
             : <Text font={12} foregroundStyle="secondaryLabel">{maskUrl(c.url)}</Text>}</VStack>
         </NavigationLink>)}
       <NavigationLink destination={<EditController onDone={reload} />}><Label title="添加 OpenWrt" systemImage="plus" /></NavigationLink>
     </Section>
-    {!active ? <Section header={<Text>路由器详情</Text>}>
+    {!active ? <Section listRowBackground={panelRowBackground()} header={<Text>路由器详情</Text>}>
       <NavigationLink destination={<LogsPage />}><Label title="运行日志" systemImage="doc.text" /></NavigationLink>
     </Section> : null}
-    {active ? <Section header={<Text>路由器详情</Text>}>
+    {active ? <Section listRowBackground={panelRowBackground()} header={<Text>路由器详情</Text>}>
       <NavigationLink destination={<WrtInterfacesPage active={active} version={0} />}><Label title="网络接口" systemImage="network" /></NavigationLink>
       <NavigationLink destination={<WrtLeasesPage active={active} version={0} />}><Label title="在线设备" systemImage="laptopcomputer.and.iphone" /></NavigationLink>
       <NavigationLink destination={<DockerPage active={active} />}><HStack spacing={10}><DockerLogo size={22} mono /><Text>Docker 管理</Text></HStack></NavigationLink>
@@ -673,7 +672,7 @@ function SettingsPage({ active, onChanged }: { active: Controller | null; onChan
       <NavigationLink destination={<SoftwarePage active={active} />}><Label title="软件管理" systemImage="shippingbox" /></NavigationLink>
       <NavigationLink destination={<LogsPage />}><Label title="运行日志" systemImage="doc.text" /></NavigationLink>
     </Section> : null}
-    <PanelSettingsSections onFoldChanged={() => setPrefs(prev => { const next = getPreferences(); return prev.foldOffline === next.foldOffline ? prev : next })} />
+    <PanelSettingsSections />
   </Form>
 }
 

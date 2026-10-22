@@ -13,7 +13,7 @@ export const DEFAULTS: Preferences = {
   theme: "system", connectionStyle: "standard", proxyStyle: "list", collapseGesture: false, removalFade: false,
   delayGreen: 240, delayRed: 500, showHidden: false, customIcons: true, groupIcons: {},
   showWrt: true, droplets: false, connectionBackground: false, ripple: false,
-  foldOffline: false, disconnectOnSwitch: false, haptics: false, defaultPage: "overview",
+  foldOffline: true, disconnectOnSwitch: false, haptics: false, defaultPage: "overview",
   headersEnabled: true, nestedDelay: false, nodeSort: "default", showGlobal: false, requestTimeout: 8,
   testURL: "https://www.gstatic.com/generate_204", testTimeout: 5000, logLimit: 500, detailedAPI: false,
 }
@@ -27,7 +27,7 @@ export function traceIconPreference(stage: "change" | "accepted" | "global-rende
   try {
     const raw = Storage.get<Partial<Preferences>>(KEY)
     const stored = typeof raw?.customIcons === "boolean" ? raw.customIcons : "unavailable"
-    console.log(`[preferences-icon] build=1.5.200 instance=${preferenceInstance} revision=${preferenceRevision} stage=${stage} enabled=${enabled} snapshot=${getPreferences().customIcons} stored=${stored}`)
+    console.log(`[preferences-icon] build=1.5.201 instance=${preferenceInstance} revision=${preferenceRevision} stage=${stage} enabled=${enabled} snapshot=${getPreferences().customIcons} stored=${stored}`)
   } catch { console.log("[preferences-icon] diagnostic-unavailable") }
 }
 export function preferenceTrace(stage: string) { console.log(`[preferences] revision=${preferenceRevision} ${stage}`) }
@@ -45,6 +45,7 @@ export function normalizePreferences(raw: Partial<Preferences>): Preferences {
     const v = raw[k]
     if (typeof v === typeof DEFAULTS[k] && v !== null) (p as any)[k] = v
   }
+  p.foldOffline = true
   p.haptics = false
   for (const [k, choices] of Object.entries({ theme: ["system", "light", "dark"], connectionStyle: ["standard", "compact"], proxyStyle: ["list", "compact"], defaultPage: ["overview", "proxies", "rules", "connections", "more"], nodeSort: ["default", "name", "nameDesc", "delay", "delayDesc"] })) {
     if (!choices.includes((p as any)[k])) (p as any)[k] = (DEFAULTS as any)[k]

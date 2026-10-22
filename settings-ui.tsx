@@ -326,15 +326,14 @@ export function TestURLField() {
     {error ? <Text font={12} foregroundStyle="systemRed">{error}</Text> : null}
   </VStack>
 }
-export function PanelSettingsSections({ onFoldChanged }: { onFoldChanged?: () => void }) {
-  const p = usePreferences(["foldOffline"])
+export function panelRowBackground() { return <RoundedRectangle cornerRadius={0} fill="secondarySystemBackground" /> }
+export function PanelSettingsSections() {
   async function clear() {
     if (!await Dialog.confirm({ title: "清除图片缓存", message: "仅删除本脚本缓存的代理组图片；不会删除账号、密码、密钥、设置或日志。", confirmLabel: "清除" })) return
     const n = clearImageCache(); await Dialog.alert({ message: `已清除 ${n} 项脚本图片缓存；已显示图片在重新进入代理页后重载。` })
   }
   return <>
-    <Section header={<Text>缓存管理</Text>}><Button title="清除图片缓存" action={clear} /></Section>
-    <Section header={<Text>控制器管理</Text>}><Toggle key="foldOffline" title="自动折叠离线控制器" value={p.foldOffline} onChanged={(v: boolean) => { update({ foldOffline: v }); onFoldChanged?.() }} /></Section>
+    <Section listRowBackground={panelRowBackground()} header={<Text>缓存管理</Text>}><Button title="清除图片缓存" action={clear} /></Section>
   </>
 }
 function CloudSettingsPage() {
@@ -374,7 +373,7 @@ export function LogsPage() {
     <Button title="复制全部" systemImage="doc.on.doc" action={async () => { try { await Pasteboard.setString(exportLogs()); await Dialog.alert({ message: "已复制全部日志（不受筛选影响）" }) } catch { await Dialog.alert({ message: "复制失败" }) } }} />
     <Button title="清空日志" systemImage="trash" action={clear} />
   </Menu> }}>
-    <Section header={<Text>运行日志设置</Text>}><Range title="最大记录条数" min={100} max={2000} step={100} value={p.logLimit} onChanged={n => update({ logLimit: n })} /><Toggle title="记录详细 API 请求" value={p.detailedAPI} onChanged={(v: boolean) => update({ detailedAPI: v })} />
+    <Section listRowBackground={panelRowBackground()} header={<Text>运行日志设置</Text>}><Range title="最大记录条数" min={100} max={2000} step={100} value={p.logLimit} onChanged={n => update({ logLimit: n })} /><Toggle title="记录详细 API 请求" value={p.detailedAPI} onChanged={(v: boolean) => update({ detailedAPI: v })} />
     {search ? <TextField title="搜索日志" value={query} onChanged={setQuery} /> : null}
     {shown.map(l => <VStack key={l.id} alignment="leading" spacing={4}><HStack spacing={6}><Circle fill={LEVELS.find(x => x[0] === l.level)?.[2] ?? "systemBlue"} frame={{ width: 6, height: 6 }} /><Text font={12} foregroundStyle="secondaryLabel">{logTime(l.at)}</Text><Spacer /><Text font={11} foregroundStyle="secondaryLabel">{l.category}</Text></HStack><Text>{l.title + (l.count > 1 ? ` ×${l.count}` : "")}</Text>{l.detail ? <Text font={12} foregroundStyle="secondaryLabel">{l.detail}</Text> : null}</VStack>)}{!shown.length ? <Text foregroundStyle="secondaryLabel">暂无符合条件的应用日志</Text> : null}</Section>
   </Form>

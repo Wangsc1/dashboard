@@ -137,12 +137,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
   })
   await test('全局配置开关/滑块及更多页主题连续修改，保存及当前页状态一致', async () => {
     const props = { active: null }; let tree = render(ui.PanelSettingsSections, props, true); await flush()
-    for (const value of [false, true, false, true, false]) {
-      nodes(tree, 'Toggle').find(n => n.props.key === 'foldOffline').props.onChanged(value)
-      tree = render(ui.PanelSettingsSections, props); await flush()
-      assert.equal(nodes(tree, 'Toggle').find(n => n.props.key === 'foldOffline').props.value, value)
-      assert.equal(pref.getPreferences().foldOffline, value)
-    }
+    assert.equal(nodes(tree, 'Toggle').length, 0)
     const moreProps = { active: null, onChanged() {} }
     tree = render(pages.MorePage, moreProps, true); await flush()
     for (const theme of ['dark','light','system','dark']) {
@@ -275,7 +270,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
   await test('全局配置移除主题/启动设置后，剩余分组顺序保持', () => {
     const tree = render(ui.PanelSettingsSections, { active: null }, true)
     const headers = nodes(tree, 'Section').map(n => text(n.props.header))
-    assert.equal(headers.join('|'), '缓存管理|控制器管理')
+    assert.equal(headers.join('|'), '缓存管理')
     unmount()
   })
   await test('删除保存测速链接按钮；输入结束自动保存、拒绝无效值并显示失败', async () => {
@@ -742,7 +737,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) { const lazy = ['proxies','rules','connections'].includes(ids[i]) && ids[i] !== id; assert.equal(nodes(tree, types[i]).length, lazy ? 0 : 1); if (!lazy) assert.equal(nodes(tree, types[i])[0].props.selected, ids[i] === id) }
     }
-    assert.equal(api.VERSION, '1.5.200'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.5.201'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('独立导航栈保留业务owner和身份，只有选中页提供可见工具栏', () => {
     pref.savePreferences({ defaultPage: 'overview' })
@@ -865,33 +860,57 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     unmount(); assert.equal(intervals.size, 0); assert.equal(sceneListeners.size, 0)
     emitScene('active'); assert.equal(intervals.size, 0)
   })
-  await test('面板底部内嵌缓存及离线折叠，无全局入口与触感设置，旧触感开启值失效', async () => {
+  await test('面板底部仅保留缓存，无全局入口、离线折叠开关与触感设置', async () => {
     const before = pref.getPreferences(), beforeHaptics = haptics
     for (const active of [null, c]) {
       let tree = render(app.SettingsPage, { active, onChanged() {} }, true)
       assert.ok(!text(tree).includes('全局配置'))
       const section = nodes(tree, ui.PanelSettingsSections)[0]
       assert.equal(tree.props.children.at(-1).type, ui.PanelSettingsSections)
-      pref.savePreferences({ foldOffline: true }); section.props.onFoldChanged()
-      assert.equal(hooks[0].foldOffline, true)
       unmount()
     }
-    let notified = 0
-    let tree = render(ui.PanelSettingsSections, { onFoldChanged() { notified++ } }, true); await flush()
-    assert.equal(nodes(tree, 'Toggle').length, 1); assert.ok(!text(tree).includes('交互体验')); assert.ok(!text(tree).includes('触感反馈'))
-    nodes(tree, 'Toggle')[0].props.onChanged(false); assert.equal(pref.getPreferences().foldOffline, false); assert.equal(notified, 1)
+    let tree = render(ui.PanelSettingsSections, {}, true); await flush()
+    assert.equal(nodes(tree, 'Toggle').length, 0); assert.ok(!text(tree).includes('交互体验')); assert.ok(!text(tree).includes('触感反馈'))
     const beforeConfirms = confirms.length
     context.confirmResult = false; await button(tree, '清除图片缓存').props.action(); assert.equal(confirms.length, beforeConfirms + 1)
     pref.savePreferences({ haptics: true }); pref.feedback(); assert.equal(pref.getPreferences().haptics, false); assert.equal(haptics, beforeHaptics)
     unmount(); pref.savePreferences(before)
   })
-  await test('设置恢复时偏好未变不重建子页；离线折叠改变仍同步', () => {
-    pref.savePreferences({ foldOffline: false })
-    render(app.SettingsPage, { active: c, onChanged() {} }, true)
-    const state = hooks[0]
-    let tree = render(app.SettingsPage, { active: c, onChanged() {} }); tree.props.onAppear(); assert.equal(hooks[0], state)
-    pref.savePreferences({ foldOffline: true }); tree.props.onAppear(); assert.notEqual(hooks[0], state); assert.equal(hooks[0].foldOffline, true)
-    unmount(); pref.savePreferences({ foldOffline: false })
+  await test('离线控制器默认折叠，不受旧关闭值影响，长按只展开当前地址', () => {
+    const before = pref.getPreferences()
+    pref.savePreferences({ foldOffline: false }); assert.equal(pref.getPreferences().foldOffline, true)
+    const list = api.listControllers(); assert.ok(list.length)
+    const current = list[0], health = pref.controllerHealth[current.id]
+    pref.controllerHealth[current.id] = false
+    let tree = render(app.SettingsPage, { active: current, onChanged() {} }, true)
+    assert.ok(text(tree).includes('连接失败 · 长按展开地址'))
+    const row = nodes(tree, 'VStack').find(n => n.props.onLongPressGesture && text(n).includes(current.name))
+    row.props.onLongPressGesture(); tree = render(app.SettingsPage, { active: current, onChanged() {} })
+    const expanded = nodes(tree, 'VStack').find(n => n.props.onLongPressGesture && text(n).includes(current.name))
+    assert.ok(!text(expanded).includes('连接失败 · 长按展开地址'))
+    assert.ok(!nodes(tree, 'Toggle').some(n => n.props.title === '自动折叠离线控制器'))
+    if (health === undefined) delete pref.controllerHealth[current.id]; else pref.controllerHealth[current.id] = health
+    unmount(); pref.savePreferences(before)
+  })
+  await test('面板及全部子表单使用白黑自适应页面底色和灰色原生分组行背景', () => {
+    const src = fs.readFileSync(path.join(root, 'index.tsx'), 'utf8')
+    const body = src.slice(src.indexOf('function WrtInterfacesPage'), src.indexOf('type RootTab'))
+    const forms = body.match(/<Form\b[^>]*>/g), sections = body.match(/<Section\b/g)
+    assert.ok(forms.length >= 12); assert.ok(forms.every(f => f.includes('background="systemBackground"') && f.includes('scrollContentBackground="hidden"')))
+    assert.equal(sections.length, (body.match(/<Section listRowBackground=\{panelRowBackground\(\)\}/g) || []).length)
+    const settings = fs.readFileSync(path.join(root, 'settings-ui.tsx'), 'utf8')
+    for (const name of ['PanelSettingsSections', 'LogsPage']) {
+      const start = settings.indexOf('export function ' + name)
+      const end = settings.indexOf('\nfunction ', start + 1)
+      const scope = settings.slice(start, end < 0 ? undefined : end)
+      assert.equal((scope.match(/<Section\b/g) || []).length, (scope.match(/<Section listRowBackground=\{panelRowBackground\(\)\}/g) || []).length)
+    }
+    const bg = ui.panelRowBackground(); assert.equal(bg.type, 'RoundedRectangle'); assert.equal(bg.props.fill, 'secondarySystemBackground')
+    for (const Page of [app.SettingsPage, app.EditController, ui.LogsPage]) {
+      const tree = render(Page, { active: null, onChanged() {}, onDone() {} }, true)
+      for (const section of nodes(tree, 'Section')) assert.equal(section.props.listRowBackground.props.fill, 'secondarySystemBackground')
+      unmount()
+    }
   })
   await test('外观壳响应浅深色与跟随系统，主题更新保持根导航元素身份', async () => {
     pref.savePreferences({ theme: 'system' })
@@ -991,7 +1010,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     await assert.rejects(() => api.dockerContainerOp(router, '../x', 'kill'))
     const im = await api.loadDockerImages(router); assert.equal(im.length, 1); assert.equal(JSON.stringify(im[0].containers), '["miaospeed"]'); assert.equal(im[0].tags[0], 'airportr/miaospeed:latest')
     await api.dockerImageRemove(router, im[0].id, true); assert.ok(seen.some(x => x.obj === 'docker.image' && x.method === 'remove' && x.args.query.force === 'true')); await assert.rejects(() => api.dockerImageRemove(router, 'bad/id', false))
-    const src = fs.readFileSync(path.join(root, 'index.tsx'), 'utf8'); assert.ok(src.includes('<Section header={<Text>镜像</Text>}>')); assert.ok(src.includes('<Section header={<Text>容器</Text>}>')); assert.ok(src.includes('<Section header={<Text>穿透规则</Text>}>')); assert.ok(!src.includes('`容器 ${list.length}`')); assert.ok(!src.includes('穿透规则 ${'))
+    const src = fs.readFileSync(path.join(root, 'index.tsx'), 'utf8'); assert.ok(src.includes('<Section listRowBackground={panelRowBackground()} header={<Text>镜像</Text>}>')); assert.ok(src.includes('<Section listRowBackground={panelRowBackground()} header={<Text>容器</Text>}>')); assert.ok(src.includes('<Section listRowBackground={panelRowBackground()} header={<Text>穿透规则</Text>}>')); assert.ok(!src.includes('`容器 ${list.length}`')); assert.ok(!src.includes('穿透规则 ${'))
   })
   await test('1.5.46 软件管理：cgi-exec、列表解析、更新对比、过滤分页、操作参数校验、磁盘字节', async () => {
     const router = { ...api.listControllers().find(x => x.kind === 'openwrt'), id: 'pkg-test' }, reqs = []
@@ -1409,7 +1428,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     pref.savePreferences({ theme: 'dark' }); assert.notEqual(render(Probe, {}), first); assert.equal(render(Probe, {}).theme, 'dark')
     unmount(); pref.savePreferences({ headersEnabled: true, theme: 'system' })
     const src = fs.readFileSync(path.join(root, 'index.tsx'), 'utf8')
-    assert.ok(src.includes('function AppearanceRoot()')); assert.ok(src.includes('usePreferences(["connectionBackground"])'));  assert.ok(src.includes('prev.foldOffline === next.foldOffline ? prev : next'))
+    assert.ok(src.includes('function AppearanceRoot()')); assert.ok(src.includes('usePreferences(["connectionBackground"])'));  assert.ok(!src.includes('prefs.foldOffline'))
   })
   await test('五种节点排序：升降序、超时未测速最后、原始顺序不变', () => {
     const g = { all: ['C','B','A','D','E'], delays: { A: 10, B: 20, C: 0, E: 20 } }
@@ -1796,7 +1815,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       const diagnostic = logs.filter(x => x.startsWith('[preferences-icon]'))
       for (const stage of ['change','accepted','proxies-render','group-render']) assert.ok(diagnostic.some(x => x.includes('stage=' + stage) && x.includes('enabled=false')))
       assert.ok(diagnostic.every(x => !x.includes('private.invalid') && !x.includes('private-group-name') && !x.includes('secret-')))
-      assert.ok(diagnostic.every(x => x.includes('build=1.5.200') && /instance=[a-z0-9]+/.test(x)))
+      assert.ok(diagnostic.every(x => x.includes('build=1.5.201') && /instance=[a-z0-9]+/.test(x)))
       assert.equal(new Set(diagnostic.map(x => x.match(/instance=([^ ]+)/)[1])).size, 1)
     } finally { context.console = originalConsole; unmount(); pref.savePreferences({ customIcons: true, testURL: 'https://www.gstatic.com/generate_204' }) }
   })
