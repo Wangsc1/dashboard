@@ -676,7 +676,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) { const lazy = ['proxies','rules','connections'].includes(ids[i]) && ids[i] !== id; assert.equal(nodes(tree, types[i]).length, lazy ? 0 : 1); if (!lazy) assert.equal(nodes(tree, types[i])[0].props.selected, ids[i] === id) }
     }
-    assert.equal(api.VERSION, '1.5.165'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.5.166'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('独立导航栈保留业务owner和身份，只有选中页提供可见工具栏', () => {
     pref.savePreferences({ defaultPage: 'overview' })
@@ -1707,7 +1707,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       const diagnostic = logs.filter(x => x.startsWith('[preferences-icon]'))
       for (const stage of ['change','accepted','proxies-render','group-render']) assert.ok(diagnostic.some(x => x.includes('stage=' + stage) && x.includes('enabled=false')))
       assert.ok(diagnostic.every(x => !x.includes('private.invalid') && !x.includes('private-group-name') && !x.includes('secret-')))
-      assert.ok(diagnostic.every(x => x.includes('build=1.5.165') && /instance=[a-z0-9]+/.test(x)))
+      assert.ok(diagnostic.every(x => x.includes('build=1.5.166') && /instance=[a-z0-9]+/.test(x)))
       assert.equal(new Set(diagnostic.map(x => x.match(/instance=([^ ]+)/)[1])).size, 1)
     } finally { context.console = originalConsole; unmount(); pref.savePreferences({ customIcons: true, testURL: 'https://www.gstatic.com/generate_204' }) }
   })
@@ -1787,7 +1787,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
   })
   await test('首页关键行为（速度图表、数字动画）', () => {
     const source=fs.readFileSync(path.join(root,'index.tsx'),'utf8')
-    assert.ok(!source.includes('title="下载速率"'));assert.ok(!source.includes('title="上传速率"'));assert.ok(source.includes('>速度</Text>'));assert.ok(source.includes('<HomeDashboard overview={homeFrame.overview}'));assert.ok(fs.readFileSync(path.join(root,'home-ui.tsx'),'utf8').includes('<LineChart marks={marks}'));assert.ok(source.includes('(Date.now() - at) / span'));assert.ok(source.includes('}, 16)'))
+    assert.ok(!source.includes('title="下载速率"'));assert.ok(!source.includes('title="上传速率"'));assert.ok(source.includes('>速度</Text>'));assert.ok(source.includes('<HomeDashboard overview={homeFrame.overview}'));assert.ok(fs.readFileSync(path.join(root,'home-ui.tsx'),'utf8').includes('<SVG code={code} resizable'));assert.ok(source.includes('(Date.now() - at) / span'));assert.ok(source.includes('}, 16)'))
   })
   console.log(`\n${count} tests passed. All fetch, Storage, Keychain, iCloud and UI bindings were mocked; no device/remote effects executed.`)
 })().catch(e => { console.error(e); process.exitCode = 1 })

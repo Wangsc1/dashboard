@@ -108,7 +108,7 @@ function fixture(url,init){if(url.endsWith('/cgi-bin/cgi-download'))return {stat
    now+=500;for(const t of [...intervals.values()])t.fn();let n=render(home.MetricNumber,{...p,value:20});assert.ok(Number(text(n).split(' ')[0])>10);assert.ok(Number(text(n).split(' ')[0])<20)
    n=render(home.MetricNumber,{...p,value:20,running:false});await flush();assert.equal(intervals.size,0);n=render(home.MetricNumber,{...p,value:20,running:false});assert.ok(text(n).startsWith('20.0'))
    render(home.MetricNumber,{value:1,unit:' GB/s',running:true,digits:1});await flush();assert.equal(intervals.size,0);unmount()
-   const chart=render(home.GridPlot,{samples:[10,20,40],tone:'#3485eb',percent:true,running:true},true);await flush();assert.equal(intervals.size,0);assert.equal(chart.type,'Chart');assert.equal(typeof chart.props.animation.value,'number');unmount()
+   const chart=render(home.GridPlot,{samples:[10,20,40],tone:'#3485eb',percent:true,running:true},true);await flush();assert.equal(intervals.size,0);assert.equal(chart.type,'SVG');unmount()
  })
  await test('CPU sheet开关/后台/切Tab: 单轮询、详情共享样本、旧来源不覆盖',async()=>{
    responder=fixture;const props={active:device,version:0,selected:true,onSwitch(){}};render(app.OverviewPage,props,true);await flush();let view=render(app.OverviewPage,props)

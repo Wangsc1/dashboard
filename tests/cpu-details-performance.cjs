@@ -1,4 +1,4 @@
-// Native Charts scheduling contracts; not native scroll FPS.
+// SVG plot scheduling contracts; not native scroll FPS.
 const fs=require('node:fs'),vm=require('node:vm')
 const harness=fs.readFileSync(__dirname+'/run.cjs','utf8').split(';(async () => {')[0]
 const checks=String.raw`
@@ -9,10 +9,10 @@ const checks=String.raw`
      for(let sample=0;sample<3;sample++)for(let i=0;i<cores;i++){
        const card=home.CoreCard({cpu:{id:'cpu'+i,usage:10+sample},history:[10,20,30+sample],running:true});assert.equal(nodes(card,home.MetricNumber).length,0)
        const p=nodes(card,home.SampledCpuPlot)[0],child=home.SampledCpuPlot(p.props);assert.equal(child.type,home.GridPlot);assert.equal(child.props.running,false)
-       const chart=render(home.GridPlot,child.props,true);await flush();assert.equal(chart.type,'Chart');assert.equal(chart.props.animation,undefined);charts++;marks+=nodes(chart,'LineChart')[0].props.marks.length;assert.equal(nodes(chart,'SVG').length,0)
+       const chart=render(home.GridPlot,child.props,true);await flush();assert.equal(chart.type,'SVG');charts++;marks+=(chart.props.code.match(/ C /g)||[]).length
      }
      assert.equal(intervals.size,0);const before=intervals.size;now+=1000;for(const timer of intervals.values())timer.fn();assert.equal(intervals.size,before)
-     console.log(JSON.stringify({cores,realSampleUpdates:3,nativeChartsBuilt:charts,dataMarks:marks,jsAnimationTimers:intervals.size,betweenSampleJsChartCallbacks:0}));unmount()
+     console.log(JSON.stringify({cores,realSampleUpdates:3,svgPlotsBuilt:charts,dataMarks:marks,jsAnimationTimers:intervals.size,betweenSampleJsChartCallbacks:0}));unmount()
    }
  })
  await test('摘要可见才原生动画，离屏/后台停止；详情数字无插值定时器，卸载释放',async()=>{
@@ -21,8 +21,8 @@ const checks=String.raw`
    s.props.onDisappear();s=render(home.DetailCpuSummary,props);assert.equal(nodes(s,home.CpuCard)[0].props.running,false)
    s.props.onAppear();s=render(home.DetailCpuSummary,{...props,running:false});assert.equal(nodes(s,home.CpuCard)[0].props.running,false)
    const card=home.CpuCard({history:[10,20],running:true,detail:true});assert.equal(nodes(card,home.CpuBreakdown)[0].props.running,false);assert.equal(nodes(card,home.GridPlot)[0].props.running,true)
-   let c=render(home.GridPlot,{samples:[10,20],tone:'#3485eb',running:true,percent:true},true);await flush();assert.equal(typeof c.props.animation?.value,'number');assert.equal(intervals.size,0)
-   now+=1000;c=render(home.GridPlot,{samples:[10,20,30],tone:'#3485eb',running:false,percent:true});await flush();assert.equal(c.props.animation,undefined);assert.equal(intervals.size,0);unmount();assert.equal(intervals.size,0)
+   let c=render(home.GridPlot,{samples:[10,20],tone:'#3485eb',running:true,percent:true},true);await flush();assert.equal(c.type,'SVG');assert.equal(intervals.size,0)
+   now+=1000;c=render(home.GridPlot,{samples:[10,20,30],tone:'#3485eb',running:false,percent:true});await flush();assert.equal(c.type,'SVG');assert.equal(intervals.size,0);unmount();assert.equal(intervals.size,0)
  })
  await test('sheet实时采样时主页Chart节点/数据冻结，下拉关闭立即接最新样本，无额外轮询',async()=>{
    const raw=(n,type)=>{if(n?.type===type)return n;for(const child of n?.props?.children??[]){const found=raw(child,type);if(found)return found}};let t=0;responder=(url,init)=>{if(url.endsWith('/cgi-bin/cgi-download'))return {status:403};const q=JSON.parse(init.body),[,obj,method,args]=q.params;let body={};if(obj==='session')body={ubus_rpc_session:'performance-fixture'};if(obj==='system'&&method==='info')body={uptime:100+t,memory:{total:100,free:50},load:[]};if(obj==='system'&&method==='board')body={release:{description:'Fixture'}};if(args?.path==='/proc/stat'){t++;body={data:'cpu '+(100+t*10)+' 0 20 '+(880+t*10)+' 0 0 0 0\n'+'cpu0 '+(100+t*10)+' 0 20 '+(880+t*10)+' 0 0 0 0\n'}}return {body:{id:q.id,result:[0,body]}}}

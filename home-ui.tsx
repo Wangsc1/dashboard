@@ -1,6 +1,7 @@
-import { HStack, VStack, Text, Image, RoundedRectangle, Spacer, ScrollView, LazyVStack, Animation, Chart, LineChart, AreaChart, ZStack, NavigationStack, modifiers, useState, useEffect, useMemo, GeometryReader, useColorScheme } from "scripting"
+import { HStack, VStack, Text, Image, RoundedRectangle, Spacer, ScrollView, LazyVStack, SVG, ZStack, NavigationStack, modifiers, useState, useEffect, useMemo, GeometryReader, useColorScheme } from "scripting"
 import { Overview, WrtInfo, fmtBytes, fmtSpeed, fmtUptime } from "./api"
 import { CpuUsage, OverviewHistory } from "./openwrt-metrics"
+import { CHART_HISTORY, scrollPoints, smoothPath } from "./chart"
 export const HOME_BG = "systemBackground"
 const INK="label",PANEL="secondarySystemBackground"
 export function HomeCard({children,onOpen}:{children?:any;onOpen?:()=>void}) {
@@ -16,25 +17,17 @@ export function MetricNumber({value,unit="",pointSize=16,tone="label",digits=0,r
   },[target,unit,running])
   return <Text font={pointSize} fontWeight="semibold" foregroundStyle={tone} lineLimit={1} minimumScaleFactor={0.65}>{`${shown}${unit}`}</Text>
 }
-// Minimal documented native Chart: fixed 60 category labels declared through the documented
-// `chartXScale` string[] form; existing samples occupy the LAST n labels (right-aligned, no
-// fake zeros). No Date domain, hand-built axis values or animation; <2 points keeps only the slot.
-// ONE-SWITCH animation (officially `animation={{animation, value}}`). 1.5.164 removed it while
-// investigating Charts crashes; if crashes return after re-enabling, set this to false first.
-export const CHART_ANIMATION=true
-const PLOT_LABELS=Array.from({length:60},(_,i)=>String(i).padStart(2,"0"))
-export function GridPlot({samples,tone,plotHeight=96,area=false,running=true,percent=false}:{samples:number[];tone:string;plotHeight?:number;area?:boolean;running?:boolean;percent?:boolean}) {
-  const values=samples.slice(-60).filter(Number.isFinite),top=percent?100:Math.max(1024,...values)
-  const marks=useMemo(()=>values.map((value,i)=>({label:PLOT_LABELS[60-values.length+i],value,foregroundStyle:tone,interpolationMethod:"monotone" as const,lineStyle:{lineWidth:1.5,lineCap:"round" as const}})),[samples,tone])
-  if(values.length<2)return <VStack frame={{height:plotHeight}}/>
-  return <Chart frame={{height:plotHeight}} chartLegend="hidden" chartXAxis="hidden"
-    chartXScale={PLOT_LABELS}
-    chartYScale={{domain:{from:0,to:top},type:"linear"}}
-    chartYAxis={{valueLabel:false,tick:false,gridLine:{stroke:{lineWidth:0.5,dash:[3,3]}}}}
-    animation={CHART_ANIMATION&&running?{animation:Animation.linear(0.9),value:values.reduce((a,b)=>a+b,0)}:undefined}>
-    {area?<AreaChart marks={marks.map(m=>({...m,opacity:0.10}))}/>:null}
-    <LineChart marks={marks}/>
-  </Chart>
+// Non-Charts plot, same SVG approach that displayed on the device through 1.5.161. One string,
+// rebuilt only when a new sample arrives (no timers, no per-frame setState). The newest sample is
+// always at the right of a fixed 60-point window; short history grows from the right, no fake zeros.
+// Smoothness limit: updates step once per sample (1 s) instead of sliding every frame.
+export function GridPlot({samples,tone,plotHeight=96,area=false,percent=false}:{samples:number[];tone:string;plotHeight?:number;area?:boolean;running?:boolean;percent?:boolean}) {
+  const W=336,H=plotHeight,values=samples.slice(-CHART_HISTORY).filter(Number.isFinite),scale=percent?100:Math.max(1024,...values)
+  const points=scrollPoints(values,values,0,W),line=values.length<2?"":smoothPath(points,H,scale,2),first=points[0],last=points[points.length-1]
+  const grid=[...Array.from({length:8},(_,i)=>`<path d="M ${i*W/7},0 V ${H}"/>`),...Array.from({length:5},(_,i)=>`<path d="M 0,${i*H/4} H ${W}"/>`)].join("")
+  const fill=area&&line&&first&&last?`<path d="${line} L ${last.x},${H} L ${first.x},${H} Z" fill="${tone}" fill-opacity="0.10"/>`:""
+  const code=`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"><g stroke="#9295a3" stroke-opacity="0.22" stroke-width="0.6" stroke-dasharray="3 3" fill="none">${grid}</g>${fill}${line?`<path d="${line}" fill="none" stroke="${tone}" stroke-width="1.5" stroke-linecap="round"/>`:""}</svg>`
+  return <SVG code={code} resizable frame={{maxWidth:"infinity",height:plotHeight}}/>
 }
 export function CpuBreakdown({cpu,running}:{cpu?:CpuUsage;running:boolean}) {
   return <HStack spacing={0} alignment="bottom"><HStack spacing={22}>{([['SYS',cpu?.system],['USER',cpu?.user],['STEAL',cpu?.steal]] as const).map(([title,value])=><VStack key={title} alignment="leading" spacing={3}><Text font={10} fontWeight="semibold" foregroundStyle="secondaryLabel" lineLimit={1}>{title}</Text><MetricNumber value={value} digits={1} pointSize={14} running={running}/></VStack>)}</HStack><Spacer/><HStack alignment="lastTextBaseline" spacing={2}><MetricNumber running={running} value={cpu?.usage} digits={1} pointSize={22} tone="#3485eb"/><Text font={11} foregroundStyle="#3485eb">%</Text></HStack></HStack>
@@ -54,13 +47,13 @@ export function CapacityBars({fraction,tone}:{fraction?:number;tone:string}) {
   return <HStack spacing={2} frame={BAR_ROW}>{Array.from({length:24},(_,i)=><RoundedRectangle key={String(i)} cornerRadius={1.75} fill={{color:tone,opacity:i<n?0.85:0.12}} frame={BAR_CELL}/>)}</HStack>
 }
 export const LOAD_TONES={light:["#17965b","#c16b13","#287ed6"],dark:["#39d98a","#ffaf40","#56b5ff"]}
+// Same structure as the working RAM bars: plain rounded rectangles in one HStack. Each cell is a
+// VStack of at most two fixed-height rectangles (empty track above, filled part below).
 export function LoadBars({fraction,tone}:{fraction?:number;tone:string}) {
   const known=fraction!==undefined&&Number.isFinite(fraction)&&fraction>=0
-  const height=known?24*Math.min(1,fraction):undefined
-  return <HStack spacing={2} frame={BAR_ROW}>{Array.from({length:24},(_,i)=><ZStack key={String(i)} alignment="bottom" frame={BAR_CELL}>
-    <RoundedRectangle cornerRadius={1.75} fill={{color:tone,opacity:0.12}} frame={BAR_CELL}/>
-    {height===undefined||height<=0?null:<RoundedRectangle cornerRadius={Math.min(1.75,height/2)} fill={tone} frame={{minWidth:0,maxWidth:"infinity",minHeight:height,maxHeight:height}}/>}
-  </ZStack>)}</HStack>
+  const fill=known?Math.min(24,24*Math.min(1,fraction)):0,rest=24-fill
+  const rect=(opacity:number,size:number,key:string)=><RoundedRectangle key={key} cornerRadius={1.75} fill={{color:tone,opacity}} frame={{minWidth:0,maxWidth:"infinity",minHeight:size,maxHeight:size}}/>
+  return <HStack spacing={2} frame={BAR_ROW}>{Array.from({length:24},(_,i)=><VStack key={String(i)} spacing={0} frame={BAR_CELL}>{rest>0?rect(0.12,rest,"t"):null}{fill>0?rect(0.85,fill,"f"):null}</VStack>)}</HStack>
 }
 // Intrinsic content sets the row height; its background paints equal-height cards.
 // Neither the card nor the row asks for an infinite height proposal.
@@ -111,7 +104,7 @@ export function CpuDetails({overview,histories,running}:{overview:Overview|null;
   const info=[['Uptime',w?fmtUptime(w.uptime,true):'--'],['Arch',w?.arch||'--'],['Cpu',cores.length?String(cores.length):'--'],['Kernel',w?.kernel||'--'],['Board',w?.model||'--']]
   return <NavigationStack presentationDetents={['large']} presentationDragIndicator="visible" presentationContentInteraction="scrolls"><ScrollView navigationTitle="CPU" navigationBarTitleDisplayMode="inline" background={HOME_BG}><LazyVStack spacing={16} padding={{horizontal:16,top:12,bottom:24}}><HomeCard><Text font={15} fontWeight="semibold">{w?.release||'系统版本未提供'}</Text><VStack spacing={5}>{info.map(([title,value])=><HStack key={title}><Text font={12} foregroundStyle="label">{title}</Text><Spacer/><Text font={12} foregroundStyle="label" multilineTextAlignment="trailing">{value}</Text></HStack>)}</VStack></HomeCard><DetailCpuSummary w={w} history={histories.cpu.cpu??[]} running={running}/>{rows.map((row,i)=><HStack key={String(i)} spacing={16} alignment="top">{row.map(c=><CoreCard key={c.id} cpu={c} w={w} history={histories.cpu[c.id]??[]} running={running}/>)}{row.length===1?<Spacer frame={{minWidth:0,maxWidth:'infinity'}}/>:null}</HStack>)}{!cores.length?<Text font={12} foregroundStyle="secondaryLabel">/proc/stat未提供逻辑核数据或当前账号无读取权限。</Text>:null}</LazyVStack></ScrollView></NavigationStack>
 }
-// Per-core native Charts consume each real sample without JS animation timers.
+// Per-core plots use the same SVG GridPlot (no timers).
 export function SampledCpuPlot({samples}:{samples:number[]}) {
   return <GridPlot samples={samples} tone="#2dbf82" percent plotHeight={76} running={false}/>
 }
