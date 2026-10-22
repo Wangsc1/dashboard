@@ -1,3 +1,5 @@
+import { HOME_BG, HomeDashboard, CpuDetails } from "./home-ui"
+import { newHistory, appendHistory } from "./openwrt-metrics"
 import { rootToolbar } from "./root-toolbar"
 import { ProxiesPage, ConnectionsPage, RulesPage, GroupSection, MorePage as DashboardMorePage } from "./dashboard-pages"
 import {
@@ -6,7 +8,7 @@ import {
 } from "scripting"
 import {
   VERSION, Controller, Group, Conn, Rule, Overview, Plugin, PLUGINS, listControllers, saveController, removeController, getActive, setActive, getSecret, getClashSecret,
-  loadOverview, loadClashOverview, loadWrtInterfaces, loadWrtLeases, WrtIface, WrtLease, loadGroups, selectProxy, testGroup, loadConnections, loadConnectionHosts, closeConnection,
+  loadOverview, overviewSource, resetOverviewSampling, loadClashOverview, loadWrtInterfaces, loadWrtLeases, WrtIface, WrtLease, loadGroups, selectProxy, testGroup, loadConnections, loadConnectionHosts, closeConnection,
   closeAllConnections, loadRules, DockerContainer, FrpInfo, FrpProxy, DockerSettings, loadDiskUsage, loadInstalledPkgs, loadAvailablePkgs, upgradablePkgs, filterPkgs, pkgUpdateLists, pkgInstall, pkgRemove, pkgUpgrade, Pkg, loadDockerContainers, loadContainerDetail, dockerContainerOp, DockerContainerDetail, loadDockerImages, dockerImageRemove, DockerImage, loadDockerOverview, DockerOverview, dockerAction, loadFrp, frpAction, saveFrpCommon, saveFrpProxy, deleteFrpProxy, loadDockerSettings, saveDockerSettings, loadContainerPolicy, saveContainerPolicy, fmtBytes, fmtSpeed, fmtParts, fmtUptime, fmtDuration, delayColor,
 } from "./api"
 
@@ -160,30 +162,34 @@ function OverviewPage({ active, version, onSwitch, onClose, selected = true }: {
   const [hosts, setHosts] = useState<string[]>([])
   const [ov, setOv] = useState<Overview | null>(null)
   const [err, setErr] = useState("")
-  const [dn, setDn] = useState<number[]>([])
-  const [upH, setUpH] = useState<number[]>([])
+  const [histories, setHistories] = useState(newHistory)
+  const [sampleSource,setSampleSource]=useState("")
+  const [cpuOpen,setCpuOpen]=useState(false)
+  const source=active?overviewSource(active):""
   const all = listControllers()
   // Retain the navigation owner while pausing work behind pushed settings pages.
   const [visible, setVisible] = useState(true)
   const foreground = useForeground()
-  const showCharts = foreground && selected && visible
-  useEffect(() => { setDn([]); setUpH([]); setOv(null) }, [active?.id, active?.url])
+  const showCharts = foreground && selected && (visible || cpuOpen)
+  useEffect(() => { setHistories(newHistory()); setOv(null); setSampleSource(source); setCpuOpen(false) }, [source])
+  useEffect(()=>{if(!selected)setCpuOpen(false)},[selected])
   useEffect(() => {
     if (!active || !showCharts) return
     if (active.kind !== "openwrt") { setErr("主页仅支持 OpenWrt 路由器数据，请在设置添加 OpenWrt"); return }
+    resetOverviewSampling(active)
     let alive = true, refreshing = false
     async function refresh() {
       if (!alive || refreshing) return
       refreshing = true
       try {
         const o = await loadOverview(active!)
-        if (alive) { setOv(o); setErr(""); setDn(h => [...h, o.traffic.down].slice(-HIST)); setUpH(h => [...h, o.traffic.up].slice(-HIST)) }
+        if (alive && overviewSource(active!)===source) { setSampleSource(source);setOv(o);setErr("");setHistories(h=>appendHistory(h,o.traffic.down,o.traffic.up,o.wrt?.cpus??[])) }
       } catch (e) { if (alive) setErr(msg(e)) }
       finally { refreshing = false }
     }
     void refresh(); const t = setInterval(refresh, 1000)
-    return () => { alive = false; clearInterval(t) }
-  }, [active?.id, active?.url, version, showCharts])
+    return () => { alive = false; clearInterval(t);resetOverviewSampling(active!) }
+  }, [source, version, showCharts])
   useEffect(() => {
     setHosts([])
     if (!active || !prefs.connectionBackground || !showCharts) return
@@ -196,45 +202,26 @@ function OverviewPage({ active, version, onSwitch, onClose, selected = true }: {
     }
     void read(); const t = setInterval(read, 30000)
     return () => { alive = false; clearInterval(t) }
-  }, [active?.id, prefs.connectionBackground, showCharts])
-  const w = ov?.wrt
-  const memUsed = w ? Math.max(0, w.memTotal - w.memFree) : 0
+  }, [source, prefs.connectionBackground, showCharts])
+  const shownOv=sampleSource===source?ov:null
+  const shownHistory=sampleSource===source?histories:newHistory()
   const statusText = err ? "连接失败" : ov ? "运行正常" : "连接中", statusColor = err ? "systemRed" : "systemGreen"
   const toolbar = useMemo(() => ({ ...rootToolbar("home", onClose, <NavigationLink destination={<SettingsPage active={active} onChanged={onSwitch} />}><Image systemName="ellipsis.circle" /></NavigationLink>),
     principal: <VStack spacing={1}>
-      <Text font={17} fontWeight="semibold">OpenWrt 状态</Text>
+      <Text font={17} fontWeight="semibold">{active?.name||"OpenWrt 状态"}</Text>
       <HStack spacing={4}><Circle fill={statusColor} frame={{ width: 5, height: 5 }} /><Text font={11} foregroundStyle={statusColor}>{statusText}</Text></HStack>
     </VStack> }), [active, onSwitch, onClose, statusText, statusColor])
   if (!active) return <Form navigationTitle="dashboard" navigationBarTitleDisplayMode="inline" toolbar={toolbar} onAppear={() => setVisible(true)} onDisappear={() => setVisible(false)}><NoController /></Form>
-  return <VStack spacing={0} navigationTitle="OpenWrt 状态" navigationBarTitleDisplayMode="inline" toolbar={toolbar} onAppear={() => setVisible(true)} onDisappear={() => setVisible(false)}>
-    <ScrollView>
-    <VStack spacing={12} padding={{ horizontal: 14, top: 0, bottom: 8 }}>
-      {all.length > 1 ? <Card>
-        <Picker title="当前路由器" pickerStyle="menu" value={active.id} onChanged={(v: string) => { setActive(v); onSwitch() }}>
-          {all.map(c => <Text key={c.id} tag={c.id}>{c.name}</Text>)}
-        </Picker>
-      </Card> : null}
-
-      <Card>
-        <InfoItem icon="cpu" color="#10B981" title="目标平台" value={w?.target || "-"} />
-        <InfoItem icon="shippingbox" color="#A855F7" title="内核版本" value={w?.kernel || "-"} />
-        <InfoItem icon="gauge.medium" color="#EF4444" title="CPU 使用率" value={w?.cpu !== undefined ? `${w.cpu.toFixed(0)}%` : "-"} />
-        <InfoItem icon="waveform.path.ecg" color="#F59E0B" title="系统负载" value={w ? w.load.map(v => v.toFixed(2)).join(" ") : "-"} />
-        <InfoItem icon="clock" color="#3B82F6" title="运行时间" value={w ? fmtUptime(w.uptime, true) : "-"} />
-      </Card>
-
-      <HStack spacing={12}>
-        <StatCard enabled={showCharts} icon="icloud.and.arrow.down.fill" color="#3B82F6" title="下载总量" droplets parts={ov ? fmtParts(ov.downTotal) : null} />
-        <StatCard enabled={showCharts} icon="icloud.and.arrow.up.fill" color="#34C759" title="上传总量" droplets parts={ov ? fmtParts(ov.upTotal) : null} />
-      </HStack>
-      <HStack spacing={12}>
-        <StatCard enabled={showCharts} icon="link" color="#A855F7" title="活动连接" connectionHosts={hosts} parts={ov ? [String(ov.connCount), ""] : null} />
-        <StatCard enabled={showCharts} icon="square.stack.3d.up.fill" color="#F59E0B" title="内存使用" parts={w ? fmtParts(memUsed, false, 1) : null} />
-      </HStack>
-
-      <RateChart down={dn} up={upH} enabled={showCharts} />
-
-    </VStack>
+  const closeCpu=(value:boolean)=>{setCpuOpen(value);if(!value)setVisible(true)}
+  return <VStack spacing={0} navigationTitle={active.name} navigationBarTitleDisplayMode="inline" toolbar={toolbar} onAppear={() => setVisible(true)} onDisappear={() => setVisible(false)}
+    sheet={{isPresented:cpuOpen,onChanged:closeCpu,content:<CpuDetails overview={shownOv} histories={shownHistory} running={showCharts&&cpuOpen} onDismiss={()=>closeCpu(false)}/>}}>
+    <ScrollView background={HOME_BG}>
+      <VStack spacing={16} padding={{horizontal:16,top:12,bottom:24}}>
+        {all.length>1?<Card><Picker title="当前路由器" pickerStyle="menu" value={active.id} onChanged={(v:string)=>{setActive(v);onSwitch()}}>{all.map(c=><Text key={c.id} tag={c.id}>{c.name}</Text>)}</Picker></Card>:null}
+        {err?<Text font={12} foregroundStyle="systemRed">{err}</Text>:null}
+        <HomeDashboard overview={shownOv} histories={shownHistory} running={showCharts&&visible&&!cpuOpen} onCpu={()=>setCpuOpen(true)}/>
+        <Card><HStack><Badge icon="link" color="#A855F7"/><Text font={13}>活动连接</Text><Spacer/><Text font={13}>{shownOv?String(shownOv.connCount):"--"}</Text></HStack>{hosts.length?<Text font={10} foregroundStyle="secondaryLabel" lineLimit={1}>{hosts.join(" · ")}</Text>:null}</Card>
+      </VStack>
     </ScrollView>
   </VStack>
 }

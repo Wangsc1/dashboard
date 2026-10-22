@@ -53,7 +53,7 @@ context.WebViewController = require('./webview-mock.cjs').MockWebViewController
 function load(name) {
   name = name.replace(/^\.\//, '')
   if (cache.has(name)) return cache.get(name)
-  const file = path.join(root, name + (name === 'index' || name === 'settings-ui' || name === 'dashboard-pages' || name === 'root-toolbar' ? '.tsx' : '.ts'))
+  const file = path.join(root, name + (name === 'index' || name === 'settings-ui' || name === 'dashboard-pages' || name === 'root-toolbar' || name === 'home-ui' ? '.tsx' : '.ts'))
   let source = fs.readFileSync(file, 'utf8')
   if (name === 'index') source = source.replace(/\nrun\(\)\s*$/, '') + '\nexport { EditController, OverviewPage, InfoItem, SettingsPage, ConnectionsPage, ProxiesPage, RulesPage, Spark, RateChart, StatCard, GroupSection, MorePage, Root, AppearanceRoot };'
   if (name === 'settings-ui') source += '\nexport { Choice, Range, TestURLField };'
@@ -62,7 +62,7 @@ function load(name) {
   vm.runInNewContext('(function(require,module,exports){' + code + '\n})', context, { filename: file })(n => n === 'scripting' ? scripting : load(n), module, module.exports)
   return module.exports
 }
-const pref = load('preferences'), api = load('api'), ui = load('settings-ui'), app = load('index'), cloud = load('cloud-backup'), pages = load('dashboard-pages'), model = load('dashboard-model')
+const pref = load('preferences'), api = load('api'), ui = load('settings-ui'), app = load('index'), cloud = load('cloud-backup'), pages = load('dashboard-pages'), model = load('dashboard-model'), home = load('home-ui'), metrics = load('openwrt-metrics')
 function unmount() { for (const fn of cleanups.values()) fn(); cleanups.clear(); hooks = []; effects = [] }
 function render(fn, props, reset = false) { if (reset) unmount(); hookIndex = 0; effects = []; return fn(props) }
 async function flush() { const es = effects; effects = []; es.forEach(f => f()); for (let i = 0; i < 60; i++) await Promise.resolve() }
@@ -593,14 +593,14 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     assert.equal(trail.type, 'NavigationLink'); assert.equal(trail.props.destination.type, app.SettingsPage)
     assert.equal(nodes(trail, 'Image')[0].props.systemName, 'ellipsis.circle')
     assert.equal(tree.props.navigationDestination, undefined)
-    const src = fs.readFileSync(path.join(root, 'index.tsx'), 'utf8'); assert.ok(src.includes('function WrtInterfacesPage')); assert.ok(src.includes('function WrtLeasesPage')); assert.ok(!src.includes('sheet='))
+    const src = fs.readFileSync(path.join(root, 'index.tsx'), 'utf8'); assert.ok(src.includes('function WrtInterfacesPage')); assert.ok(src.includes('function WrtLeasesPage')); assert.ok(src.includes('sheet='))
   })
   await test('默认界面选择tab；主题与外观项接入、概览数据布局不变', () => {
     pref.savePreferences({ defaultPage: 'rules', theme: 'dark', showWrt: false })
     let tree = render(app.OverviewPage, { active: c, version: 0, onSwitch() {} }, true); assert.equal(tree.props.navigationDestination, undefined)
-    assert.ok(nodes(tree, app.InfoItem).some(n => n.props.title === '目标平台')); assert.ok(!fs.readFileSync(path.join(root, 'index.tsx'), 'utf8').includes('prefs.showWrt'))
-    const cards = nodes(tree, app.StatCard); assert.equal(cards.length, 4); assert.equal(cards.filter(n => n.props.spark).length, 0); assert.equal(cards.filter(n => n.props.droplets).length, 2)
-    assert.ok(cards.filter(n => ['活动连接', '内存使用'].includes(n.props.title)).every(n => !n.props.spark))
+    assert.equal(nodes(tree,home.HomeDashboard).length,1);assert.equal(tree.props.sheet.isPresented,false)
+    const dashboard=render(home.HomeDashboard,{overview:null,histories:metrics.newHistory(),running:false,onCpu(){}},true)
+    assert.equal(nodes(dashboard,home.CpuCard).length,1);assert.equal(nodes(dashboard,home.TrafficCard).length,2);assert.equal(nodes(dashboard,home.RamCard).length,1);assert.equal(nodes(dashboard,home.LoadCard).length,1);assert.equal(nodes(dashboard,home.DiskCard).length,1)
     const appearance = render(app.AppearanceRoot, {}, true); assert.equal(appearance.props.preferredColorScheme, 'dark'); tree = render(app.Root, {}, true); assert.equal(nodes(tree,'TabView')[0].props.selection.value, 'rules'); assert.equal(nodes(tree, app.RulesPage).length, 1)
     tree = render(ui.GlobalConfigPage, { active: null }, true); assert.ok(!text(tree).includes('应用图标')); assert.ok(nodes(tree, 'Toggle').some(n => n.props.title === '自定义代理组图标'))
   })
@@ -670,7 +670,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) { const lazy = ['proxies','rules','connections'].includes(ids[i]) && ids[i] !== id; assert.equal(nodes(tree, types[i]).length, lazy ? 0 : 1); if (!lazy) assert.equal(nodes(tree, types[i])[0].props.selected, ids[i] === id) }
     }
-    assert.equal(api.VERSION, '1.5.159'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.5.160'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('独立导航栈保留业务owner和身份，只有选中页提供可见工具栏', () => {
     pref.savePreferences({ defaultPage: 'overview' })
@@ -703,7 +703,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
         scan(page);assert.equal(owners.length,1)
         const toolbar=owners[0].props.toolbar;assert.equal(toolbar.type,undefined)
         assert.deepEqual(Object.keys(toolbar),id==='home'?['topBarLeading','topBarTrailing','principal']:['topBarLeading','topBarTrailing'])
-        if(id==='home'){assert.ok(text(toolbar.principal).includes('OpenWrt 状态'));assert.ok(/运行正常|连接中|连接失败/.test(text(toolbar.principal)));assert.ok(!/运行正常|连接中|连接失败/.test(text(page.props.children)))}
+        if(id==='home'){assert.ok(text(toolbar.principal).includes(children[0].props.active?.name||'OpenWrt 状态'));assert.ok(/运行正常|连接中|连接失败/.test(text(toolbar.principal)));assert.ok(!/运行正常|连接中|连接失败/.test(text(page.props.children)))}
         assert.equal(toolbar.topBarLeading.props.systemImage,'xmark');assert.equal(toolbar.topBarLeading.props.action,children[0].props.onClose)
         assert.equal(nodes(toolbar,'ToolbarItem').length,0)
         if(id==='more'){assert.equal(toolbar.topBarTrailing,undefined);continue}
@@ -757,12 +757,12 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       const quiet = calls.length; render(app.OverviewPage, props); await flush(); assert.equal(calls.length, quiet)
       tree.props.onAppear(); render(app.OverviewPage, props); await flush()
       assert.equal(polling().length, 1)
-      const before = calls.length, beforeParts = nodes(tree, app.StatCard).find(n => n.props.title === '内存使用').props.parts
-      const beforeUptime = nodes(tree, app.InfoItem).find(n => n.props.title === '运行时间').props.value
+      const before = calls.length, beforeParts = nodes(tree, home.HomeDashboard)[0].props.overview?.wrt.memTotal
+      const beforeUptime = nodes(tree, home.HomeDashboard)[0].props.overview?.wrt.uptime
       await polling()[0].fn(); await flush(); assert.ok(calls.length > before)
       const updated = render(app.OverviewPage, props)
-      assert.ok(nodes(updated, app.StatCard).find(n => n.props.title === '内存使用').props.parts)
-      assert.notEqual(nodes(updated, app.InfoItem).find(n => n.props.title === '运行时间').props.value, beforeUptime)
+      assert.ok(nodes(updated, home.HomeDashboard)[0].props.overview?.wrt.memTotal)
+      assert.notEqual(nodes(updated, home.HomeDashboard)[0].props.overview?.wrt.uptime, beforeUptime)
       assert.ok(beforeParts)
     }
     unmount(); assert.equal(intervals.size, 0)
@@ -825,13 +825,14 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     let o = await api.loadOverview(router); assert.equal(o.wrt.target, 'x86/64'); assert.equal(o.wrt.kernel, '6.12.94'); assert.equal(o.wrt.cpu, undefined)
     stat = 'cpu  150 0 150 900 0 0 0 0 0 0\n'
     o = await api.loadOverview(router); assert.equal(Math.round(o.wrt.cpu), 50)
-    const src = fs.readFileSync(path.join(root, 'index.tsx'), 'utf8'); for (const t of ['目标平台','内核版本','CPU 使用率']) assert.ok(src.includes(`title="${t}"`)); assert.ok(src.indexOf('title="CPU 使用率"') < src.indexOf('title="系统负载"') && src.indexOf('title="系统负载"') < src.indexOf('title="运行时间"'))
+    assert.equal(Array.isArray(o.wrt.cpus),true);assert.equal(o.wrt.cpus[0].system,25);assert.equal(o.wrt.cpus[0].user,25)
+
   })
   await test('1.5.46 图标地址：路径中的@允许，查询串/片段/用户信息仍拒绝', async () => {
     responder = () => ({ body: {}, contentType: 'image/png' })
     assert.ok(await pref.cachedIcon('https://fastly.jsdelivr.net/gh/Koolson/Qure@master/IconSet/Color/Emby.png'))
     for (const u of ['http://x.invalid/a.png', 'https://x.invalid/a.png?k=1', 'https://x.invalid/a.png#f', 'https://user:pw@x.invalid/a.png']) assert.equal(await pref.cachedIcon(u), null)
-    const src = fs.readFileSync(path.join(root, 'index.tsx'), 'utf8'); assert.ok(src.includes('navigationTitle="OpenWrt 状态"')); assert.ok(src.includes('运行正常')); assert.ok(src.indexOf('运行正常') < src.indexOf('title="目标平台"'))
+    const src = fs.readFileSync(path.join(root, 'index.tsx'), 'utf8'); assert.ok(src.includes('navigationTitle={active.name}')); assert.ok(src.includes('运行正常'))
   })
   await test('1.5.46 Docker/FRP管理：解析、敏感字段不外露、操作参数校验', async () => {
     const router = { ...api.listControllers().find(x => x.kind === 'openwrt'), id: 'dock-test' }
@@ -1700,7 +1701,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       const diagnostic = logs.filter(x => x.startsWith('[preferences-icon]'))
       for (const stage of ['change','accepted','proxies-render','group-render']) assert.ok(diagnostic.some(x => x.includes('stage=' + stage) && x.includes('enabled=false')))
       assert.ok(diagnostic.every(x => !x.includes('private.invalid') && !x.includes('private-group-name') && !x.includes('secret-')))
-      assert.ok(diagnostic.every(x => x.includes('build=1.5.159') && /instance=[a-z0-9]+/.test(x)))
+      assert.ok(diagnostic.every(x => x.includes('build=1.5.160') && /instance=[a-z0-9]+/.test(x)))
       assert.equal(new Set(diagnostic.map(x => x.match(/instance=([^ ]+)/)[1])).size, 1)
     } finally { context.console = originalConsole; unmount(); pref.savePreferences({ customIcons: true, testURL: 'https://www.gstatic.com/generate_204' }) }
   })
@@ -1776,11 +1777,11 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     assert.deepEqual(Array.from(api.fmtParts(128 * 1048576, false, 1)), ['128.0', 'MB'])
     assert.deepEqual(Array.from(api.fmtParts(1.25 * 1073741824, false, 1)), ['1.3', 'GB'])
     assert.deepEqual(Array.from(api.fmtParts(128 * 1048576)), ['128.00', 'MB'])
-    assert.ok(fs.readFileSync(path.join(root, 'index.tsx'), 'utf8').includes('title="内存使用" parts={w ? fmtParts(memUsed, false, 1) : null}'))
+    assert.ok(fs.readFileSync(path.join(root,'home-ui.tsx'),'utf8').includes('RamCard'))
   })
   await test('首页关键行为（速度图表、数字动画）', () => {
     const source=fs.readFileSync(path.join(root,'index.tsx'),'utf8')
-    assert.ok(!source.includes('title="下载速率"'));assert.ok(!source.includes('title="上传速率"'));assert.ok(source.includes('>速度</Text>'));assert.ok(source.includes('<RateChart down={dn} up={upH}'));assert.ok(source.includes('(Date.now() - at) / span'));assert.ok(source.includes('}, 16)'))
+    assert.ok(!source.includes('title="下载速率"'));assert.ok(!source.includes('title="上传速率"'));assert.ok(source.includes('>速度</Text>'));assert.ok(source.includes('<HomeDashboard overview={shownOv}'));assert.ok(fs.readFileSync(path.join(root,'home-ui.tsx'),'utf8').includes('useSmoothPlot'));assert.ok(source.includes('(Date.now() - at) / span'));assert.ok(source.includes('}, 16)'))
   })
   console.log(`\n${count} tests passed. All fetch, Storage, Keychain, iCloud and UI bindings were mocked; no device/remote effects executed.`)
 })().catch(e => { console.error(e); process.exitCode = 1 })

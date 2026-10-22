@@ -604,7 +604,7 @@ export function NikkiFileEditor({c,base,file,done,entryKey="direct",onExit}:{c:C
     return host.exitTask
   }
   const editorBackground=p.theme==="dark"?"#141820":p.theme==="light"?"#fff":{light:"#fff",dark:"#141820"}
-  const toolbar={topBarTrailing:<Button accessibilityLabel="保存" buttonStyle="plain" disabled={!ready||!!loadError||original===null||text===original||work.busy||host.closing||work.changed} action={save}><Image systemName="square.and.arrow.down"/></Button>}
+  const toolbar={topBarTrailing:<Button accessibilityLabel="保存" buttonStyle="plain" disabled={!ready||!!loadError||original===null||text===original||work.busy||host.closing||work.changed} action={save}><Image systemName="checkmark.circle"/></Button>}
   return <VStack alignment="leading" spacing={0} background={<RoundedRectangle cornerRadius={0} fill={editorBackground} ignoresSafeArea={{regions:"container",edges:"bottom"}}/>} frame={{maxWidth:"infinity",maxHeight:"infinity"}} navigationTitle={file.filename} navigationBarTitleDisplayMode="inline" toolbar={toolbar} onAppear={()=>{host.closing=false;host.exitTask=null;host.exitNotified=false;host.closedSignal=new Promise<void>(resolve=>{host.cancel=resolve});work.onAppear();setAppeared(true)}} onDisappear={()=>leaveFile()}>
     <Status work={work}/>{work.changed?<Note error>来源已改变，请返回后重新进入</Note>:null}
     <ZStack frame={{maxWidth:"infinity",maxHeight:"infinity",minHeight:0}}>

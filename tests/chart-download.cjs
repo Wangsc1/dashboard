@@ -19,18 +19,18 @@ function plot(down, up, reset = true, enabled = true) { return render(app.RateCh
     for (let i = 0; i < 3; i++) {
       tree = render(app.OverviewPage, props)
       assert.equal(polling().length, 1)
-      assert.equal(nodes(tree, app.RateChart).length, 1)
-      const down = nodes(tree, app.RateChart)[0].props.down
+      assert.equal(nodes(tree, home.HomeDashboard).length, 1)
+      const down = nodes(tree, home.HomeDashboard)[0].props.histories.down
       tree.props.onDisappear(); tree = render(app.OverviewPage, props); await flush()
-      assert.equal(polling().length, 0); assert.equal(nodes(tree, app.RateChart)[0].props.enabled, false)
-      assert.equal(nodes(tree, app.RateChart)[0].props.down, down)
+      assert.equal(polling().length, 0); assert.equal(nodes(tree, home.HomeDashboard)[0].props.running, false)
+      assert.equal(nodes(tree, home.HomeDashboard)[0].props.histories.down, down)
       assert.equal(tree.props.toolbar, toolbar); assert.equal(trailing(tree.props.toolbar), link)
       const before = calls.length
       emitScene('background'); render(app.OverviewPage, props); await flush()
       emitScene('active'); tree = render(app.OverviewPage, props); await flush()
       assert.equal(calls.length, before); assert.equal(polling().length, 0)
       tree.props.onAppear(); tree = render(app.OverviewPage, props); await flush()
-      assert.equal(polling().length, 1); assert.equal(nodes(tree, app.RateChart)[0].props.enabled, true)
+      assert.equal(polling().length, 1); assert.equal(nodes(tree, home.HomeDashboard)[0].props.running, true)
       assert.equal(tree.props.toolbar, toolbar)
       tree = render(app.OverviewPage, { ...props, selected: false }); await flush()
       assert.equal(polling().length, 0)

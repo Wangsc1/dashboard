@@ -4,7 +4,7 @@
 
 ## 功能
 
-- **主页**：OpenWrt 实时上下行速率与曲线、累计流量、连接数、内存、运行时间和负载。
+- **主页**：全宽 CPU、上传/下载双列、RAM/负载双列与磁盘容量卡；点击 CPU 打开实时总览及全部逻辑核详情。保留连接数和设置/关闭入口。
 - **代理**：策略组与节点列表、切换、测速、排序、代理提供者更新。
 - **规则**：内核规则查询、规则提供者查看与更新。与 Nikki 的「附加规则」分开。
 - **连接**：活动/已关闭记录、流量速率、详情、搜索排序、同源/同域名筛选、断开连接。已关闭记录只来自本脚本连续观察，不生成设备历史。
@@ -25,6 +25,16 @@
 编辑已有 OpenWrt 连接时不显示右上保存；左上返回会先校验并保存最新本地草稿，再退出。无效地址/端口会留在当前页显示错误，旧设置和凭证不变；打开使用说明、切换 App 或卸载页面不会触发保存。使用官方 `navigationBarBackButtonHidden` 隐藏默认返回，明确走自定义返回动作，不依赖消失/卸载事件；原生边缘返回手势及工具栏承载仍需真机确认。继续调用原有本地 `saveController`，密码与密钥仍在 Keychain，编辑返回不执行连接测试或远程配置写入；添加 OpenWrt 页仍为显式保存并测试连接。Nikki 正文编辑的保存确认不变。
 
 原生 Tab API 面向 iOS 18+；外观与手势由系统及 Scripting 版本决定。仓库配置了 `remoteResource`，实际导入和更新以 Scripting 的处理结果为准。配置编辑器的 CodeMirror/Lezer/YAML 静态 bundle 已嵌入现有 `dashboard-pages.tsx`；在线更新仍只需原有运行文件，不需 CDN、额外资源下载或在手机安装 npm 包。`editor/` 为构建源码、锁定依赖及许可证，非运行依赖。
+
+## 主页与 CPU 详情
+
+主页按 CPU → 上传/下载 → RAM/负载 → 磁盘排序，不显示 Swap 或重复全宽负载。CPU 蓝色曲线，上传绿色、下载青色面积曲线，RAM 和负载采用紧凑段条；浅紫蓝背景随明暗外观适配。负载为真实 1/5/15 分钟值（两位小数），段条以逻辑核数归一化，非 CPU 百分比。磁盘只展示 LuCI 实际返回的根/overlay 挂载点、设备路径和容量，不推断硬件型号或 NVMe。
+
+CPU 详情是原生大尺寸可下拉关闭 sheet（单一 X），系统版本/运行时间/Arch/逻辑核数/Kernel/Board、CPU 型号及总曲线，下方双列显示 `/proc/stat` 中全部唯一逻辑核 ID，无分页或重复物理分组。频率和缓存仅取 `/proc/cpuinfo` 的 MHz/KB；缓存是内核报告值，可能共享，不能视为每线程独占。未报告显示 `--`，不使用 BogoMIPS 推断。
+
+采样沿用唯一主页轮询，详情不再开启第二条请求流；后台、隐藏 Tab、导航离开或卸载停止采样/曲线动画，打开 CPU sheet 只暂停被遮挡主页的曲线。每个来源独立保存有界真实样本（不零填充）；URL/认证来源变化隔离历史和旧响应。首次、暂停恢复、重启、计数回退、热插拔或不可读时先建立 CPU 差分基线，显示未知而非伪造 0%。CPU 总量只累加前八项 jiffies（guest 已包含于 user/nice），USER=user+nice，SYS=system+irq+softirq，STEAL=steal，使用率剔除 idle+iowait；定义依据 Linux `/proc/stat`。
+
+新增访问仅为既有认证后的只读 ubus：`system info/board`、`network.device status`、`network.interface dump`、`luci getMountPoints`、`file read`（`/proc/stat`、`/proc/cpuinfo`、`/etc/openwrt_release` 和 CPU/SOC 类型 thermal zone）及 `file list /sys/class/thermal`。温度只采纳有 CPU/SOC/package 类型且范围合理的毫摄氏度，不将 GPU 或任意未知传感器当 CPU。ACL 不允许或字段缺失时降级未知；不安装包、不修改权限、路由器配置或执行 shell。磁盘容量和系统静态信息约每分钟更新，其余与已有实时采样同频。
 
 ## 代理页模式
 
@@ -100,6 +110,7 @@ node tests/nikki-file-lifecycle.cjs
 node tests/nikki-editor-browser.cjs
 node tests/proxy-mode.cjs
 node tests/chart-download.cjs
+node tests/home-dashboard.cjs
 git diff --check
 ```
 

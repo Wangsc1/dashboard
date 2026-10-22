@@ -1,6 +1,7 @@
+import { CpuSampler, CpuUsage, CpuMeta, parseCpuInfo, thermalCelsius } from "./openwrt-metrics"
 
 import { getPreferences, customHeaders, recordEvent, controllerHealth, feedback } from "./preferences"
-export const VERSION = "1.5.159"
+export const VERSION = "1.5.160"
 
 export type Kind = "clash" | "openwrt"
 export type Plugin = "openclash" | "nikki" | "mihomo"
@@ -15,7 +16,7 @@ export interface Group { name: string; type: string; now: string; all: string[];
 export interface Conn { id: string; host: string; src: string; dst: string; network: string; rule: string; chain: string; up: number; down: number; start: number; upSpeed?: number; downSpeed?: number; sourceIP?: string; inboundType?: string; chains?: string[]; closedAt?: number }
 export interface Rule { type: string; payload: string; proxy: string }
 export interface Traffic { up: number; down: number; upTotal?: number; downTotal?: number }
-export interface WrtInfo { model: string; release: string; uptime: number; load: number[]; memTotal: number; memFree: number; wan: string; target?: string; kernel?: string; cpu?: number }
+export interface WrtInfo { model: string; release: string; uptime: number; load: number[]; memTotal: number; memFree?: number; wan: string; target?: string; kernel?: string; cpu?: number; cpus?: CpuUsage[]; cpuModel?: string; cpuMeta?: Record<string,CpuMeta>; arch?: string; temperature?: number; disk?: DiskUsage | null }
 export interface Overview { version: string; mode: string; traffic: Traffic; upTotal: number; downTotal: number; connCount: number; wrt?: WrtInfo; mem?: number }
 export interface WrtIface { name: string; proto: string; up: boolean; ip: string; device: string; uptime: number }
 export interface DockerContainer { id: string; name: string; image: string; state: string; status: string }
@@ -108,8 +109,16 @@ async function apiFetch(url: string, init: any, path: string): Promise<any> {
 const enc = encodeURIComponent
 const num = (v: any) => typeof v === "number" && Number.isFinite(v) ? v : 0
 
+// 私有内存比较完整来源/认证，向界面与缓存只暴露不含凭证的不透明代次。
+let sourceSerial = 0
+const sourceIds = new Map<string,{signature:string;token:string}[]>()
+export function overviewSource(c:Controller):string {
+  const signature=JSON.stringify([c.kind,c.url,c.host,c.port,c.https,c.username,getSecret(c.id),customHeaders()])
+  const identities=sourceIds.get(c.id)??[],prior=identities.find(x=>x.signature===signature);if(prior)return prior.token
+  const token="wrt-source-"+(++sourceSerial);sourceIds.set(c.id,[...identities,{signature,token}].slice(-8));return token
+}
 const NULL_SID = "00000000000000000000000000000000"
-const sessions: Record<string, { sid: string; at: number; source:string }> = {}
+const sessions: Record<string, { sid: string; at: number; source:string; auth?:string }> = {}
 async function ubusRaw(c: Controller, sid: string, obj: string, method: string, params: any, timeout?: number): Promise<any> {
   try { return await ubusRequest(c, sid, obj, method, params, timeout) }
   catch (e) { recordEvent("ubus", false); throw e }
@@ -133,19 +142,20 @@ async function ubusRequest(c: Controller, sid: string, obj: string, method: stri
 }
 const loginPending: Record<string, Promise<string> | undefined> = {}
 async function wrtLogin(c: Controller): Promise<string> {
-  if (loginPending[c.id]) return loginPending[c.id]!
+  const key=overviewSource(c)
+  if (loginPending[key]) return loginPending[key]!
   const p = wrtLoginOnce(c)
-  loginPending[c.id] = p
-  try { return await p } finally { if (loginPending[c.id] === p) delete loginPending[c.id] }
+  loginPending[key] = p
+  try { return await p } finally { if (loginPending[key] === p) delete loginPending[key] }
 }
 async function wrtLoginOnce(c: Controller): Promise<string> {
-  const user = c.username || "root"
+  const user = c.username || "root", source=[c.url,c.username].join("|"), auth=overviewSource(c)
   try {
     const r = await ubusRaw(c, NULL_SID, "session", "login", { username: user, password: getSecret(c.id), timeout: 3600 })
     const sid = r.ubus_rpc_session
     if (!sid) throw new Error("登录失败")
     recordEvent("login", true)
-    sessions[c.id] = { sid, at: Date.now(), source:[c.url,c.username].join("|") }
+    sessions[c.id] = { sid, at: Date.now(), source, auth }
     return sid
   } catch (e: any) {
     recordEvent("login", false)
@@ -155,7 +165,7 @@ async function wrtLoginOnce(c: Controller): Promise<string> {
 }
 async function ubus(c: Controller, obj: string, method: string, params: any = {}): Promise<any> {
   let sid = sessions[c.id]?.sid
-  if (!sid || Date.now() - sessions[c.id].at > 50 * 60 * 1000) sid = await wrtLogin(c)
+  if (!sid || sessions[c.id].auth !== overviewSource(c) || Date.now() - sessions[c.id].at > 50 * 60 * 1000) sid = await wrtLogin(c)
   try { return await ubusRaw(c, sid, obj, method, params) } catch (e: any) {
     if (String(e?.message) !== "ACCESS") throw e
     sid = await wrtLogin(c)
@@ -190,7 +200,7 @@ async function ubusBatchRaw(c: Controller, sid: string, calls: UbusCall[]): Prom
 }
 async function ubusBatch(c: Controller, calls: UbusCall[]): Promise<any[]> {
   let sid = sessions[c.id]?.sid
-  if (!sid || Date.now() - sessions[c.id].at > 50 * 60 * 1000) sid = await wrtLogin(c)
+  if (!sid || sessions[c.id].auth !== overviewSource(c) || Date.now() - sessions[c.id].at > 50 * 60 * 1000) sid = await wrtLogin(c)
   try { return await ubusBatchRaw(c, sid, calls) } catch (e: any) {
     if (String(e?.message) !== "ACCESS") throw e
     return await ubusBatchRaw(c, await wrtLogin(c), calls)
@@ -202,57 +212,60 @@ function pickWan(dump: any): { name: string; device: string } {
   const w = list.find(hasDefault) ?? list.find(i => i.interface === "wan") ?? list.find(i => i.interface !== "loopback" && i.up)
   return { name: String(w?.interface ?? ""), device: String(w?.l3_device ?? w?.device ?? "") }
 }
-let lastCpu: Record<string, { total: number; idle: number }> = {}
-
-function cpuPercent(id: string, raw: any): number | undefined {
-  const line = String(raw?.data ?? "").split("\n").find(l => /^cpu\s/.test(l))
-  if (!line) return undefined
-  const v = line.trim().split(/\s+/).slice(1).map(Number)
-  if (v.length < 4 || v.some(x => !Number.isFinite(x))) return undefined
-  const idle = v[3] + (v[4] ?? 0), total = v.slice(0, 8).reduce((a, b) => a + b, 0), prev = lastCpu[id]
-  lastCpu[id] = { total, idle }
-  if (!prev || total <= prev.total) return undefined
-  return Math.max(0, Math.min(100, (1 - (idle - prev.idle) / (total - prev.total)) * 100))
-}
 const MAX_RATE = 1.25e9
-const slowCache: Record<string, { at: number; board: any; dump: any }> = {}
+export interface DiskUsage { size:number; used:number; avail:number; mount?:string; device?:string }
+const slowCache: Record<string, { at: number; board: any; dump: any; arch?:string; thermal:string[]; disk:DiskUsage|null }> = {}
+const cpuSamplers: Record<string,CpuSampler>={}
+const ratePrevious: Record<string,{t:number;rx:number;tx:number;up:number;down:number;uptime:number}>={}
+const samplingEpoch:Record<string,number>={}
+const overviewPending:Record<string,Promise<Overview>|undefined>={}
+export function resetOverviewSampling(c:Controller) { const key=overviewSource(c);delete cpuSamplers[key];delete ratePrevious[key];samplingEpoch[key]=(samplingEpoch[key]??0)+1 }
+function mountUsage(r:any):DiskUsage|null {
+  const list:any[]=Array.isArray(r?.result)?r.result:[]
+  const m=list.find(x=>x.mount==="/overlay")??list.find(x=>x.mount==="/")
+  return m&&typeof m.size==="number"&&m.size>0&&typeof m.avail==="number" ? {size:m.size,used:Math.max(0,m.size-m.avail),avail:m.avail,mount:String(m.mount),device:typeof m.device==="string"?m.device:undefined}:null
+}
 async function wrtOverview(c: Controller): Promise<Overview> {
-
-  const cached = slowCache[c.id], stale = !cached || Date.now() - cached.at > 60000
-  const calls: UbusCall[] = [
-    ["system", "info"], ["network.device", "status"], ["file", "read", { path: "/proc/stat" }], ["file", "read", { path: "/proc/sys/net/netfilter/nf_conntrack_count" }],
-    ...(stale ? [["system", "board"], ["network.interface", "dump"]] as UbusCall[] : []),
+  const key=overviewSource(c), cached=slowCache[key], stale=!cached||Date.now()-cached.at>60000
+  const epoch=samplingEpoch[key]??0, sampler=cpuSamplers[key]??(cpuSamplers[key]=new CpuSampler())
+  if(Object.keys(cpuSamplers).length>16){const old=Object.keys(cpuSamplers).find(k=>k!==key);if(old){delete cpuSamplers[old];delete ratePrevious[old];delete slowCache[old]}}
+  const zones=cached?.thermal??[]
+  const calls:UbusCall[]=[
+    ["system","info"],["network.device","status"],["file","read",{path:"/proc/stat"}],["file","read",{path:"/proc/sys/net/netfilter/nf_conntrack_count"}],
+    ["file","read",{path:"/proc/cpuinfo"}],
+    ...zones.flatMap(z=>[["file","read",{path:`/sys/class/thermal/${z}/type`}],["file","read",{path:`/sys/class/thermal/${z}/temp`}]] as UbusCall[]),
+    ...(stale?[["system","board"],["network.interface","dump"],["file","list",{path:"/sys/class/thermal"}],["file","read",{path:"/etc/openwrt_release"}],["luci","getMountPoints"]] as UbusCall[]:[]),
   ]
-  const r = await ubusBatch(c, calls)
-  const info = r[0], devs = r[1] ?? {}, stat = r[2] ?? {}, ct = r[3] ?? {}
-  if (!info) throw new Error("路由器未返回系统信息")
-  if (stale) {
-    if (!r[4] && !cached) throw new Error("路由器未返回系统信息")
-    slowCache[c.id] = { at: Date.now(), board: r[4] ?? cached?.board ?? {}, dump: r[5] ?? cached?.dump ?? {} }
+  const r=await ubusBatch(c,calls),info=r[0],devs=r[1]??{},stat=r[2]??{},ct=r[3]??{}
+  if(!info)throw new Error("路由器未返回系统信息")
+  // 同id改地址/认证后返回的旧响应不得进入任何新来源缓存。
+  if(overviewSource(c)!==key||(samplingEpoch[key]??0)!==epoch)throw new Error("来源或采样代次已改变")
+  if(stale){
+    const i=5+zones.length*2
+    if(!r[i]&&!cached)throw new Error("路由器未返回系统信息")
+    const names=(r[i+2]?.entries??[]).map((x:any)=>String(x.name??"" )).filter((x:string)=>/^thermal_zone\d+$/.test(x)).slice(0,32)
+    const arch=/^DISTRIB_ARCH=['"]?([^'"\s]+)["']?$/m.exec(String(r[i+3]?.data??""))?.[1]
+    slowCache[key]={at:Date.now(),board:r[i]??cached?.board??{},dump:r[i+1]??cached?.dump??{},thermal:names,disk:mountUsage(r[i+4]),arch}
+    if(Object.keys(slowCache).length>16){const oldest=Object.keys(slowCache).find(k=>k!==key);if(oldest){delete slowCache[oldest];delete ratePrevious[oldest];delete cpuSamplers[oldest]}}
   }
-  const board = slowCache[c.id].board, dump = slowCache[c.id].dump
-  const wan = pickWan(dump)
-  const st = devs?.[wan.device]?.statistics ?? {}
-  const rx = num(st.rx_bytes), tx = num(st.tx_bytes), now = Date.now()
-  const key = "neko_prev_" + c.id
-  const prev = Storage.get<{ t: number; rx: number; tx: number; up?: number; down?: number }>(key)
-  let up = 0, down = 0, keep = false
-  if (prev && now > prev.t && rx >= prev.rx && tx >= prev.tx && now - prev.t < 10 * 60 * 1000) {
-    const dt = (now - prev.t) / 1000
-    if (dt < 0.5) { up = prev.up ?? 0; down = prev.down ?? 0; keep = true }
-    else {
-      down = (rx - prev.rx) / dt; up = (tx - prev.tx) / dt
-      if (down > MAX_RATE || up > MAX_RATE) { up = prev.up ?? 0; down = prev.down ?? 0 }
-    }
+  const slow=slowCache[key]??cached!,board=slow.board,dump=slow.dump,wan=pickWan(dump),st=devs?.[wan.device]?.statistics??{}
+  const rx=num(st.rx_bytes),tx=num(st.tx_bytes),now=Date.now(),prev=ratePrevious[key]
+  let up=0,down=0,keep=false
+  if(prev&&num(info.uptime)>=prev.uptime&&now>prev.t&&rx>=prev.rx&&tx>=prev.tx&&now-prev.t<600000){
+    const dt=(now-prev.t)/1000
+    if(dt<0.5){up=prev.up;down=prev.down;keep=true}else{down=(rx-prev.rx)/dt;up=(tx-prev.tx)/dt;if(down>MAX_RATE||up>MAX_RATE){up=prev.up;down=prev.down}}
   }
-  if (!keep) Storage.set(key, { t: now, rx, tx, up, down })
-  return {
-    version: String(board.release?.description ?? ""), mode: "", traffic: { up, down }, upTotal: tx, downTotal: rx,
-    connCount: parseInt(String(ct.data ?? "0"), 10) || 0,
-    wrt: { model: String(board.model ?? board.hostname ?? ""), release: String(board.release?.description ?? ""), uptime: num(info.uptime),
-      load: (info.load ?? []).map((v: number) => num(v) / 65536), memTotal: num(info.memory?.total), memFree: num(info.memory?.available ?? info.memory?.free), wan: wan.name,
-      target: board.release?.target ? String(board.release.target) : undefined, kernel: board.kernel ? String(board.kernel) : undefined, cpu: cpuPercent(c.id, stat) },
-  }
+  if(!keep)ratePrevious[key]={t:now,rx,tx,up,down,uptime:num(info.uptime)}
+  const cpus=sampler.sample(String(stat.data??""),typeof info.uptime==="number"?info.uptime:undefined),meta=parseCpuInfo(String(r[4]?.data??""))
+  let temperature:number|undefined
+  for(let i=0;i<zones.length;i++){const value=thermalCelsius(String(r[5+i*2]?.data??""),String(r[6+i*2]?.data??""));if(value!==undefined){temperature=value;break}}
+  return {version:String(board.release?.description??""),mode:"",traffic:{up,down},upTotal:tx,downTotal:rx,
+    connCount:parseInt(String(ct.data??"0"),10)||0,
+    wrt:{model:String(board.model??board.hostname??""),release:String(board.release?.description??""),uptime:num(info.uptime),
+      load:(info.load??[]).map((v:number)=>num(v)/65536),memTotal:num(info.memory?.total),memFree:typeof (info.memory?.available??info.memory?.free)==="number"?num(info.memory?.available??info.memory?.free):undefined,wan:wan.name,
+      target:board.release?.target?String(board.release.target):undefined,kernel:board.kernel?String(board.kernel):undefined,cpu:cpus.find(x=>x.id==="cpu")?.usage,cpus,
+      cpuMeta:meta.cores,cpuModel:meta.model,arch:typeof board.release?.arch==="string"?board.release.arch:slow.arch,temperature,
+      disk:slow.disk}}
 }
 export async function loadWrtInterfaces(c: Controller): Promise<WrtIface[]> {
   const j = await ubus(c, "network.interface", "dump")
@@ -354,7 +367,12 @@ export const subscribeConnCount = (c: Controller, onData: (n: number) => void) =
 
 export async function loadOverview(c: Controller): Promise<Overview> {
   try {
-    const o = c.kind === "openwrt" ? await wrtOverview(c) : await loadClashOverview(c)
+    let o:Overview
+    if(c.kind==="openwrt"){
+      const key=overviewSource(c)
+      if(!overviewPending[key]){const pending=wrtOverview(c);overviewPending[key]=pending;void pending.finally(()=>{if(overviewPending[key]===pending)delete overviewPending[key]}).catch(()=>{})}
+      o=await overviewPending[key]!
+    }else o=await loadClashOverview(c)
     controllerHealth[c.id] = true; return o
   } catch (e) { controllerHealth[c.id] = false; throw e }
 }
@@ -1084,9 +1102,6 @@ export async function pkgInstall(c: Controller, names: string[]) { if (!names.le
 export async function pkgRemove(c: Controller, names: string[]) { if (!names.length || !names.every(okPkg)) throw new Error("软件包名称无效"); return pkgOp(c, ["remove", ...names]) }
 export async function pkgUpgrade(c: Controller, names: string[]) { if (!names.length || !names.every(okPkg)) throw new Error("软件包名称无效"); delete availableCache[c.id]; return pkgOp(c, ["upgrade", ...names]) }
 
-export async function loadDiskUsage(c: Controller): Promise<{ size: number; used: number; avail: number } | null> {
-  const r = await ubus(c, "luci", "getMountPoints")
-  const list: any[] = r?.result ?? []
-  const m = list.find(x => x.mount === "/overlay") ?? list.find(x => x.mount === "/")
-  return m ? { size: num(m.size), used: num(m.size) - num(m.avail), avail: num(m.avail) } : null
+export async function loadDiskUsage(c: Controller): Promise<DiskUsage | null> {
+  return mountUsage(await ubus(c,"luci","getMountPoints"))
 }
