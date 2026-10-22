@@ -31,7 +31,7 @@ export function usePreferences(keys?: (keyof Preferences)[], enabled = true, tra
 function update(patch: Partial<Preferences>) { if (typeof patch.customIcons === "boolean") traceIconPreference("change", patch.customIcons); preferenceTrace("changed"); try { savePreferences(patch); feedback() } catch { void Dialog.alert({ message: "本地设置保存失败，请重试" }) } }
 export { update as updatePreference, Choice }
 function Choice({ title, value, values, onChanged, disabled = false }: { title: string; value: string; values: string[][]; onChanged: (v: string) => void; disabled?: boolean }) {
-  return <Picker title={title} pickerStyle="menu" value={value} onChanged={onChanged} disabled={disabled}>{values.map(([v, l]) => <Text key={v} tag={v}>{l}</Text>)}</Picker>
+  return <Picker title={title} pickerStyle="menu" value={value} onChanged={onChanged} disabled={disabled} frame={{ height: 34 }}>{values.map(([v, l]) => <Text key={v} tag={v}>{l}</Text>)}</Picker>
 }
 export function Range({ title, value, min, max, step = 1, suffix = "", divider = false, onChanged }: { title: string; value: number; min: number; max: number; step?: number; suffix?: string; divider?: boolean; onChanged: (n: number) => void }) {
   const [draft, setDraft] = useState(value)

@@ -859,7 +859,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) { const lazy = ['proxies','rules','connections'].includes(ids[i]) && ids[i] !== id; assert.equal(nodes(tree, types[i]).length, lazy ? 0 : 1); if (!lazy) assert.equal(nodes(tree, types[i])[0].props.selected, ids[i] === id) }
     }
-    assert.equal(api.VERSION, '1.25'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.26'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('独立导航栈保留业务owner和身份，只有选中页提供可见工具栏', () => {
     pref.savePreferences({ defaultPage: 'overview' })
@@ -1960,7 +1960,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       const diagnostic = logs.filter(x => x.startsWith('[preferences-icon]'))
       for (const stage of ['change','accepted','proxies-render','group-render']) assert.ok(diagnostic.some(x => x.includes('stage=' + stage) && x.includes('enabled=false')))
       assert.ok(diagnostic.every(x => !x.includes('private.invalid') && !x.includes('private-group-name') && !x.includes('secret-')))
-      assert.ok(diagnostic.every(x => x.includes('build=1.25') && /instance=[a-z0-9]+/.test(x)))
+      assert.ok(diagnostic.every(x => x.includes('build=1.26') && /instance=[a-z0-9]+/.test(x)))
       assert.equal(new Set(diagnostic.map(x => x.match(/instance=([^ ]+)/)[1])).size, 1)
     } finally { context.console = originalConsole; unmount(); pref.savePreferences({ customIcons: true, testURL: 'https://www.gstatic.com/generate_204' }) }
   })
@@ -2034,7 +2034,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
   await test('主页内存固定一位小数，流量默认精度不变', () => {
     assert.deepEqual(Array.from(api.fmtParts(128.56 * 1048576, false, 1)), ['128.6', 'MB'])
     assert.deepEqual(Array.from(api.fmtParts(128 * 1048576, false, 1)), ['128.0', 'MB'])
-    assert.deepEqual(Array.from(api.fmtParts(1.25 * 1073741824, false, 1)), ['1.3', 'GB'])
+    assert.deepEqual(Array.from(api.fmtParts(1.26 * 1073741824, false, 1)), ['1.3', 'GB'])
     assert.deepEqual(Array.from(api.fmtParts(128 * 1048576)), ['128.00', 'MB'])
     assert.ok(fs.readFileSync(path.join(root,'home-ui.tsx'),'utf8').includes('RamCard'))
   })
