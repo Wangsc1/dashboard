@@ -24,7 +24,7 @@ async function mount(){const node=render(plot.MountedCanvasPlot,props,true);awai
  await test('绘制层就绪前WebView透明，避免白块闪现；就绪后显示',async()=>{
   let node=render(plot.MountedCanvasPlot,props,true);await flush();const host=hosts.at(-1)
   assert.equal(nodes(node,'WebView')[0].props.opacity,0)
-  const grid=nodes(node,'Canvas')[0];assert.ok(grid,'native grid shown before the WebView is ready')
+  const grid=nodes(node,'Canvas')[0];assert.ok(grid,'native grid shown before the WebView is ready');assert.equal(grid.props.opaque,false,'opaque Canvas paints black')
   const ops=[],ctx={setLineDash:a=>ops.push(['dash',a]),beginPath(){},moveTo:(x,y)=>ops.push(['m',x,y]),lineTo:(x,y)=>ops.push(['l',x,y]),stroke:()=>ops.push(['s'])}
   grid.props.draw(ctx,{width:70,height:40});assert.equal(ctx.strokeStyle,'rgba(146,149,163,0.22)');assert.equal(ops.filter(o=>o[0]==='m').length,13);assert.equal(ops.filter(o=>o[0]==='l').length,13);assert.equal(JSON.stringify(ops[0]),'["dash",[3,3]]');assert.equal(JSON.stringify(ops.filter(o=>o[0]==='l')[7]),'["l",70,40]');assert.equal(JSON.stringify(ops.filter(o=>o[0]==='l')[12]),'["l",70,40]')
   host.handlers.plotReady();await flush();node=render(plot.MountedCanvasPlot,props)

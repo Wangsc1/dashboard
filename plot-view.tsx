@@ -55,5 +55,5 @@ export function MountedCanvasPlot({samples,tone,plotHeight=96,area=false,running
     host.pending={seq:++host.seq,samples:samples.filter(Number.isFinite).slice(-60),tone,area,running,percent,background:theme==='dark'?'#1c1c1e':'#f2f2f7'}
     host.flush()
   },[samples,tone,area,running,percent,theme,host])
-  return error?<Text font={11} foregroundStyle="secondaryLabel" frame={{height:plotHeight}}>{error}</Text>:<ZStack frame={{minHeight:plotHeight,maxHeight:plotHeight,minWidth:0,maxWidth:'infinity'}}>{shown?null:<Canvas draw={drawPlotGrid} frame={{minHeight:plotHeight,maxHeight:plotHeight,minWidth:0,maxWidth:'infinity'}}/>}<WebView controller={host.controller} disabled opacity={shown?1:0} frame={{minHeight:plotHeight,maxHeight:plotHeight,minWidth:0,maxWidth:'infinity'}}/></ZStack>
+  return error?<Text font={11} foregroundStyle="secondaryLabel" frame={{height:plotHeight}}>{error}</Text>:<ZStack frame={{minHeight:plotHeight,maxHeight:plotHeight,minWidth:0,maxWidth:'infinity'}}>{shown?null:<Canvas opaque={false} draw={drawPlotGrid} frame={{minHeight:plotHeight,maxHeight:plotHeight,minWidth:0,maxWidth:'infinity'}}/>}<WebView controller={host.controller} disabled opacity={shown?1:0} frame={{minHeight:plotHeight,maxHeight:plotHeight,minWidth:0,maxWidth:'infinity'}}/></ZStack>
 }
