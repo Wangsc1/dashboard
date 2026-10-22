@@ -26,6 +26,12 @@
 
 原生 Tab API 面向 iOS 18+；外观与手势由系统及 Scripting 版本决定。仓库配置了 `remoteResource`，实际导入和更新以 Scripting 的处理结果为准。配置编辑器的 CodeMirror/Lezer/YAML 静态 bundle 已嵌入现有 `dashboard-pages.tsx`；在线更新仍只需原有运行文件，不需 CDN、额外资源下载或在手机安装 npm 包。`editor/` 为构建源码、锁定依赖及许可证，非运行依赖。
 
+## 1.5.175 更新
+
+- 实际替换主页与 CPU 详情共用的曲线绘制层：不再使用 50ms 原生状态更新和整张 SVG 位图替换；改为内嵌 Canvas 与 requestAnimationFrame，仅新采样跨原生桥接。卡片、全部逻辑核、数值和弹窗导航保持原生。
+- 采样中断从最后已绘制点位继续；桥接串行合并到最新采样，隐藏槽卸载控制器，暂停停止动画。绘制文档无外部请求，不传服务器地址或凭据；新增运行文件 plot-view.tsx、plot-canvas.ts 随仓库在线更新。
+- 验证：真实 Chromium 与 WebKit 的 Canvas 像素、连续帧、中途接续、旧消息拒绝、停止和 32 文档绘制；模拟宿主验证准备就绪、串行更新及卸载。旧 SVG 专项断言迁移至 Canvas 测试，布局/全部核心/采样/数值回归保留。浏览器与模拟测试不能证明 iPhone WKWebView 实际帧率、触摸及大量控制器的资源表现，仍需真机验收。
+
 ## 1.5.174 更新
 
 - 详情弹窗采用固定的sheet.content及独立数据订阅：轮询只发布最新采样帧，内部已挂载组件接收数据，不再每秒重新构造弹窗内容对象及整层NavigationStack/ScrollView入口。

@@ -3,8 +3,9 @@ declare module "scripting" {
   const x: any
   // Official views/charts and view_modifiers/chart_mark_props.
   export const Chart:any, LineChart:any, AreaChart:any;
+  export const Device: {screen:{width:number;height:number;scale:number}};
   export const GeometryReader: any, gradient: any, Divider:any;
-  export function WebView(props: {controller:WebViewController;opacity?:number;disabled?:boolean;frame?:{maxWidth?:string;maxHeight?:string;minHeight?:number}}): any;
+  export function WebView(props: {controller:WebViewController;opacity?:number;disabled?:boolean;frame?:{maxWidth?:string|number;maxHeight?:string|number;minHeight?:number;minWidth?:number}}): any;
   export const AppEvents: { scenePhase: { addListener(fn: (phase: "active" | "inactive" | "background") => void): void; removeListener(fn: (phase: "active" | "inactive" | "background") => void): void } }, Safari: any, LazyVStack: any, TabView: any, Tab: any, Slider: any, Transition: any, Circle: any, Animation: any, withAnimation: any, ProgressView: any, RoundedRectangle: any, ScrollView: any, SVG: any, ZStack: any, modifiers: any, Image: any, Menu: any, Button: any, ForEach: any, Form: any, HStack: any, Label: any, Navigation: any, NavigationLink: any, NavigationStack: any, NavigationDestination: any, Picker: any, Script: any, Section: any, SecureField: any, Spacer: any, Text: any, TextField: any, Toggle: any, VStack: any
   export function useObservable<T>(v: T | (() => T)): { value: T; setValue(v: T): void; subscribe(fn: (v: T, old: T) => void): void; unsubscribe(fn: (v: T, old: T) => void): void }
   export function useColorScheme(): "light"|"dark";

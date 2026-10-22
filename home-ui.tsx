@@ -1,7 +1,7 @@
-import { HStack, VStack, Text, Image, RoundedRectangle, Spacer, ScrollView, LazyVStack, SVG, ZStack, Device, NavigationStack, modifiers, useState, useEffect, useMemo, GeometryReader, useColorScheme } from "scripting"
+import { HStack, VStack, Text, Image, RoundedRectangle, Spacer, ScrollView, LazyVStack, ZStack, Device, NavigationStack, modifiers, useState, useEffect, useMemo, GeometryReader, useColorScheme } from "scripting"
 import { Overview, WrtInfo, fmtBytes, fmtSpeed, fmtUptime } from "./api"
 import { CpuUsage, OverviewHistory } from "./openwrt-metrics"
-import { CHART_HISTORY, animateChart, scrollPoints, smoothPath } from "./chart"
+import { InlineCanvasPlot } from "./plot-view"
 export const HOME_BG = "systemBackground"
 const INK="label",PANEL="secondarySystemBackground"
 export function HomeCard({children,onOpen}:{children?:any;onOpen?:()=>void}) {
@@ -12,53 +12,14 @@ export function MetricNumber({value,unit="",pointSize=16,tone="label",digits=0,r
   const shown=value===undefined||!Number.isFinite(value)?"--":value.toFixed(digits)
   return <Text font={pointSize} fontWeight="semibold" foregroundStyle={tone} lineLimit={1} minimumScaleFactor={0.65}>{`${shown}${unit}`}</Text>
 }
-// One SVG, same rendering boundary as 1.5.166. The existing shared 50ms scheduler supplies
-// elapsed time to LOCAL curve state only. Offscreen/paused/unmounted curves unsubscribe.
+// Both pages use the same inline Canvas runtime; only samples cross the native bridge.
 const SCREEN_W:number|undefined=(Device as any)?.screen?.width
 const SIZED=typeof SCREEN_W==="number"&&SCREEN_W>112&&SCREEN_W<=600
 export const PLOT_FULL_W:number|undefined=SIZED?SCREEN_W-64:undefined
 export const PLOT_HALF_W:number|undefined=SIZED?(SCREEN_W-48)/2-32:undefined
 export const PLOT_STROKE=1.5
-export function GridPlot({samples,tone,plotHeight=96,area=false,running=true,percent=false,plotWidth}:{samples:number[];tone:string;plotHeight?:number;area?:boolean;running?:boolean;percent?:boolean;plotWidth?:number}) {
-  const [visible,setVisible]=useState(false)
-  const values=useMemo(()=>samples.slice(-CHART_HISTORY).filter(Number.isFinite),[samples])
-  const enabled=running&&visible
-  const W=plotWidth!==undefined&&Number.isFinite(plotWidth)&&plotWidth>0?plotWidth:336,H=plotHeight
-  const [track]=useState({previous:values,current:values,enabled,at:Date.now(),duration:1000,animating:false})
-  const [tick,setTick]=useState(Date.now())
-  // Prepare endpoints BEFORE rendering the new sample, so its first frame is progress=0,
-  // never an intermediate target-frame jump before an effect runs. No state setter here.
-  if(track.current!==values||track.enabled!==enabled){
-    const now=Date.now(),changed=track.current!==values
-    const reset=!enabled||!track.enabled||!values.length||values.length<track.current.length
-    track.previous=reset?values:track.current
-    track.current=values;track.enabled=enabled
-    track.duration=Math.max(500,Math.min(1500,now-track.at||1000))
-    track.at=now;track.animating=changed&&!reset&&values.length>=2
-  }
-  useEffect(()=>{
-    setTick(Date.now())
-    if(!track.animating)return
-    return animateChart(at=>{setTick(at);return at<track.at+track.duration})
-  },[values,enabled])
-  const staticSvg=useMemo(()=>{
-    const grid=[...Array.from({length:8},(_,i)=>`<path d="M ${i*W/7},0 V ${H}"/>`),...Array.from({length:5},(_,i)=>`<path d="M 0,${i*H/4} H ${W}"/>`)].join("")
-    return {head:`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"><g stroke="#9295a3" stroke-opacity="0.22" stroke-width="0.6" stroke-dasharray="3 3" fill="none">${grid}</g>`,tail:"</svg>"}
-  },[W,H])
-  const scales=useMemo(()=>({from:percent?100:Math.max(1024,...track.previous),to:percent?100:Math.max(1024,...values)}),[values,track.previous,enabled,percent])
-  const p=!enabled||track.current!==values?1:Math.max(0,Math.min(1,(tick-track.at)/track.duration))
-  // previous retains the outgoing sample even when source history has already trimmed to 60.
-  const code=useMemo(()=>{
-    const current=track.current===values?track.current:values,previous=track.current===values?track.previous:values
-    const points=scrollPoints(previous,current,p,W)
-    const scale=scales.from+(scales.to-scales.from)*p
-    const line=values.length<2?"":smoothPath(points,H,scale,2),first=points[0],last=points[points.length-1]
-    const fill=area&&line&&first&&last?`<path d="${line} L ${last.x},${H} L ${first.x},${H} Z" fill="${tone}" fill-opacity="0.10"/>`:""
-    const stroke=line?`<path d="${line}" fill="none" stroke="${tone}" stroke-width="${PLOT_STROKE}" stroke-linecap="round"/>`:""
-    const svg=staticSvg.head+fill+stroke+staticSvg.tail
-    return svg
-  },[values,track.previous,track.current,p,staticSvg,tone,area,scales])
-  return <SVG code={code} resizable frame={plotWidth!==undefined?{width:W,height:H}:{height:H}} onAppear={()=>setVisible(true)} onDisappear={()=>setVisible(false)}/>
+export function GridPlot(props:{samples:number[];tone:string;plotHeight?:number;area?:boolean;running?:boolean;percent?:boolean;plotWidth?:number}) {
+  return <InlineCanvasPlot {...props}/>
 }
 export function CpuBreakdown({cpu,running}:{cpu?:CpuUsage;running:boolean}) {
   return <HStack spacing={0} alignment="bottom"><HStack spacing={22}>{([['SYS',cpu?.system],['USER',cpu?.user],['STEAL',cpu?.steal]] as const).map(([title,value])=><VStack key={title} alignment="leading" spacing={3}><Text font={10} fontWeight="semibold" foregroundStyle="secondaryLabel" lineLimit={1}>{title}</Text><MetricNumber value={value} digits={1} pointSize={14} running={running}/></VStack>)}</HStack><Spacer/><HStack alignment="lastTextBaseline" spacing={2}><MetricNumber running={running} value={cpu?.usage} digits={1} pointSize={22} tone="#3485eb"/><Text font={11} foregroundStyle="#3485eb">%</Text></HStack></HStack>
@@ -154,7 +115,7 @@ export function CpuDetails({overview,histories,running}:{overview:Overview|null;
   return <NavigationStack presentationDetents={['large']} presentationDragIndicator="visible" presentationContentInteraction="scrolls"><ScrollView navigationTitle="CPU" navigationBarTitleDisplayMode="inline" background={HOME_BG}><LazyVStack spacing={16} padding={{horizontal:16,top:12,bottom:24}}><HomeCard><Text font={15} fontWeight="semibold">{w?.release||'系统版本未提供'}</Text><VStack spacing={5}>{info.map(([title,value])=><HStack key={title}><Text font={12} foregroundStyle="label">{title}</Text><Spacer/><Text font={12} foregroundStyle="label" multilineTextAlignment="trailing">{value}</Text></HStack>)}</VStack></HomeCard><DetailCpuSummary key="summary" w={w} history={histories.cpu.cpu??[]} running={running}/>{rows.map(row=><CoreRow key={`core-${row[0].id}`} cpus={row} w={w} histories={histories} running={running}/>)}{!cores.length?<Text font={12} foregroundStyle="secondaryLabel">/proc/stat未提供逻辑核数据或当前账号无读取权限。</Text>:null}</LazyVStack></ScrollView></NavigationStack>
 }
 // No whole-card/element snapshots: metadata and numeric values always use latest inputs.
-// Each GridPlot independently controls its animation subscription through SVG visibility.
+// Each shared plot mounts its browser drawing layer only while its native slot is displayed.
 export function CoreRow({cpus,w,histories,running}:{cpus:CpuUsage[];w?:WrtInfo;histories:OverviewHistory;running:boolean}) {
   return <HStack key={`core-${cpus[0]?.id}`} spacing={16} alignment="top">{cpus.map(c=><CoreCard key={c.id} cpu={c} w={w} history={histories.cpu[c.id]??[]} running={running}/>)}{cpus.length===1?<Spacer frame={{minWidth:0,maxWidth:'infinity'}}/>:null}</HStack>
 }

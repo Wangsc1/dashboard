@@ -24,18 +24,16 @@ function slot(n,height){
   assert.equal(n.props.fixedSize,undefined)
 }
 ;(async()=>{
- await test('home-ui AST: 无混合frame；单SVG始终保留高度/网格，无Chart/双阶段offset动画',async()=>{
+ await test('home-ui和Canvas槽AST: 无混合frame；固定高度/宽度，无原生逐帧timer',async()=>{
    const source=fs.readFileSync(path.join(root,'home-ui.tsx'),'utf8');deep(mixedFrames(source),[])
-   assert.equal(mixedFrames('<VStack frame={{height:28,maxWidth:"infinity"}}/>').length,1)
-   const plotSource=source.slice(source.indexOf('export function GridPlot'),source.indexOf('export function CpuBreakdown'))
-   for(const bad of ['<ZStack','offset=','clipped','Animation.','armed','setInterval','new Date','<Chart'])assert.ok(!plotSource.includes(bad),bad)
-   assert.ok(plotSource.includes('useMemo(()=>{'))
+   deep(mixedFrames(fs.readFileSync(path.join(root,'plot-view.tsx'),'utf8')),[])
    for(const plotWidth of [undefined,329,140.5])for(const height of [96,66,76])for(const samples of [[],[2],[1,2],[NaN,Infinity],Array(60).fill(100)]){
-     const out=render(home.GridPlot,{samples,tone:'#3485eb',plotHeight:height,running:true,plotWidth},true);await flush()
-     assert.equal(out.type,'SVG');deep(out.props.frame,plotWidth===undefined?{height}:{width:plotWidth,height})
-     assert.equal(out.props.animation,undefined);assert.equal(out.props.offset,undefined);assert.equal(out.props.modifiers,undefined)
-     assert.ok(out.props.code.includes('stroke-dasharray="3 3"'));assert.ok(!out.props.code.includes('NaN'));assert.ok(!out.props.code.includes('Infinity'))
-     assert.equal(intervals.size,0,'offscreen curve never subscribes')
+     const forwarded=home.GridPlot({samples,tone:'#3485eb',plotHeight:height,running:true,plotWidth})
+     assert.equal(forwarded.type,load('plot-view').InlineCanvasPlot)
+     const out=render(forwarded.type,forwarded.props,true);await flush()
+     deep(out.props.frame,plotWidth===undefined?{height}:{width:plotWidth,height})
+     assert.equal(nodes(out,load('plot-view').MountedCanvasPlot).length,0)
+     assert.equal(intervals.size,0)
    }unmount()
  })
  await test('共享调度: 所有订阅仅一个50ms timer，最后取消/到期即停止，无独立timer',()=>{
@@ -46,27 +44,7 @@ function slot(n,height){
    offA();assert.equal(intervals.size,1);offB();assert.equal(intervals.size,0)
    chart.animateChart(()=>false);for(const t of [...intervals.values()])t.fn();assert.equal(intervals.size,0)
  })
- await test('局部平滑: 可见后新样本连续左移、满60点保留previous，无伪造第61源点；停用/屏外/卸载取消',async()=>{
-   const line=o=>/<path d="(M [^"]+)" fill="none" stroke="#3485eb"/.exec(o.props.code)?.[1]
-   const start=o=>Number(/M ([\d.-]+),/.exec(line(o))[1])
-   let props={samples:Array.from({length:60},(_,i)=>i),tone:'#3485eb',percent:true,running:true,plotWidth:329,area:true}
-   let out=render(home.GridPlot,props,true);await flush();out.props.onAppear();out=render(home.GridPlot,props);await flush()
-   assert.equal(intervals.size,0,'becoming visible catches up without animating stale history')
-   const previousCode=out.props.code,grid=o=>o.props.code.split('</g>')[0]
-   now+=1000;props={...props,samples:[...props.samples.slice(1),60]};out=render(home.GridPlot,props);await flush();out=render(home.GridPlot,props)
-   assert.equal(intervals.size,1);assert.ok(Math.abs(start(out))<0.02)
-   const staticGrid=grid(out),first=line(out)
-   now+=500;for(const t of [...intervals.values()])t.fn();out=render(home.GridPlot,props);assert.ok(Math.abs(start(out)+329/59/2)<0.02);assert.notEqual(line(out),first);assert.equal(grid(out),staticGrid)
-   now+=500;for(const t of [...intervals.values()])t.fn();out=render(home.GridPlot,props);assert.equal(intervals.size,0);assert.ok(Math.abs(start(out)+329/59)<0.02)
-   const stable=render(home.GridPlot,props);assert.equal(stable.props.code,out.props.code)
-   now+=1000;props={...props,samples:[...props.samples.slice(1),61]};render(home.GridPlot,props);await flush();assert.equal(intervals.size,1)
-   out=render(home.GridPlot,props);out.props.onDisappear();render(home.GridPlot,props);await flush();assert.equal(intervals.size,0)
-   now+=1000;props={...props,samples:[...props.samples.slice(1),62]};render(home.GridPlot,props);await flush();assert.equal(intervals.size,0)
-   out=render(home.GridPlot,props);out.props.onAppear();render(home.GridPlot,props);await flush()
-   now+=1000;props={...props,samples:[...props.samples.slice(1),63]};render(home.GridPlot,props);await flush();assert.equal(intervals.size,1)
-   render(home.GridPlot,{...props,running:false});await flush();assert.equal(intervals.size,0)
-   render(home.GridPlot,props);await flush();now+=1000;props={...props,samples:[...props.samples.slice(1),64]};render(home.GridPlot,props);await flush();assert.equal(intervals.size,1);unmount();assert.equal(intervals.size,0)
- })
+ // Continuous geometry and native bridge lifecycle are exercised by plot-canvas-browser.cjs and plot-host.cjs.
  await test('契约(非实机): 负载条 GeometryReader 外有单次固定24pt容器，空值保留灰底条',()=>{
    for(const f of [undefined,NaN,-1,0,0.001,1,2]){
      const c=home.LoadBars({fraction:f,tone:'#17965b'});assert.equal(c.type,'ZStack');deep(c.props.frame,{height:24});assert.equal(c.props.modifiers,undefined)

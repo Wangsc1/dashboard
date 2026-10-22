@@ -15,25 +15,8 @@ chart.animateChart=cb=>{starts++;active++;let live=true;const end=()=>{if(live){
 const tick=async(plot,props,ms=50)=>{now+=ms;for(const t of [...intervals.values()])t.fn();return plot.draw(props)}
 const near=(a,b,msg)=>assert.ok(Math.abs(a-b)<0.00001,msg+': '+a+' vs '+b)
 ;(async()=>{
- await test('主页CPU与详情每核同输入同节奏：增长/满窗/重复值/不等间隔逐帧几何一致',async()=>{
-  for(const length of [58,60]){
-   const front=instance(home.GridPlot),detail=instance(home.GridPlot)
-   let history=Array.from({length},(_,i)=>i%40)
-   const frontProps=()=>nodes(home.CpuCard({history,running:true}),home.GridPlot)[0].props
-   const detailProps=()=>home.SampledCpuPlot({samples:history,running:true}).props
-   // Normalize only visual size/color; callers retain the same actual function and algorithm.
-   const norm=p=>({...p,tone:'#3485eb',plotWidth:300,plotHeight:76})
-   const compare=async()=>{const a=await front.draw(norm(frontProps())),b=await detail.draw(norm(detailProps()));assert.equal(a.type,b.type);assert.equal(a.props.code,b.props.code);return [a,b]}
-   let pair=await compare();pair[0].props.onAppear();pair[1].props.onAppear();await compare()
-   for(let cycle=0;cycle<8;cycle++){
-    now+=[900,1100,950,1050][cycle%4];history=[...history,cycle%2?10:50].slice(-60);await compare()
-    for(let f=0;f<20;f++){now+=50;for(const t of [...intervals.values()])t.fn();await compare()}
-   }
-   pair=await compare();pair[0].props.onDisappear();pair[1].props.onDisappear();await compare();assert.equal(active,0)
-   front.close();detail.close();assert.equal(intervals.size,0)
-  }
-  const src=fs.readFileSync(path.join(root,'home-ui.tsx'),'utf8');assert.ok(!src.includes('stableSamples'));assert.ok(!src.includes('track.motion'));assert.ok(!src.includes('track.shown'))
- })
+ // The old SVG geometry equivalence test is replaced by the real Canvas/rAF
+ // test in plot-canvas-browser.cjs and shared component contract in plot-host.cjs.
  await test('CPU/RAM等全部MetricNumber也逐采样显示，无补间timer',async()=>{
   const number=instance(home.MetricNumber)
   for(const running of [true,false])for(const [value,unit,digits] of [[0,'%',1],[87.5,'%',1],[599,' MB',0],[15.5,' GB',1],[undefined,'',0]]){
@@ -50,7 +33,7 @@ const near=(a,b,msg)=>assert.ok(Math.abs(a-b)<0.00001,msg+': '+a+' vs '+b)
     const parts=rate===undefined?null:api.fmtSpeed(rate).split(' '),v=parts?Number(parts[0]):undefined,expected=parts?v.toFixed(v<100?1:0)+' '+parts.slice(1).join(' '):'--'
     now+=1000;const displayed=await number.draw(n.props);assert.equal(text(displayed),expected)
     assert.equal([...intervals.values()].filter(t=>t.ms===16).length,0)
-    curve=await plot.draw(g.props);curve.props.onAppear();await plot.draw(g.props)
+    curve=await plot.draw(g.props);assert.equal(curve.type,load('plot-view').InlineCanvasPlot)
     for(let i=0;i<5;i++){now+=50;for(const t of [...intervals.values()])t.fn();assert.equal(text(await number.draw(n.props)),expected)}
    }
    number.close();plot.close();assert.equal(intervals.size,0)
