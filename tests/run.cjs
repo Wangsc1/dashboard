@@ -5,11 +5,13 @@ const ts = require(process.env.TYPESCRIPT_PATH || '/tmp/chk/node_modules/typescr
 const root = path.resolve(__dirname, '..')
 const store = new Map(), secrets = new Map(), calls = [], cache = new Map(), files = new Map()
 let now = 1800000000000, failNextState = false, failStorage = false, responder = () => ({ body: {} }), hooks = [], hookIndex = 0, effects = [], confirms = [], alerts = [], clipboard = '', haptics = 0, openedURLs = [], intervals = new Map(), nextInterval = 1, cleanups = new Map()
+let mockColorScheme="light"
 const sceneListeners = new Set()
 const emitScene = phase => { for (const fn of [...sceneListeners]) fn(phase) }
 const clone = v => v === undefined ? undefined : JSON.parse(JSON.stringify(v))
 const h = (type, props, ...children) => ({ type, props: { ...props, children: children.flat(Infinity).filter(x => x !== null && x !== undefined && x !== false) } })
 const scripting = new Proxy({
+  useColorScheme:()=>mockColorScheme,
   gradient: (kind, spec) => ({ kind, ...spec }),
   AppEvents: { scenePhase: { addListener: fn => sceneListeners.add(fn), removeListener: fn => sceneListeners.delete(fn) } },
   useMemo(fn, deps) { const i = hookIndex++, old = hooks[i]; if (!old || deps.some((v, j) => v !== old.deps[j])) hooks[i] = { deps, value: fn() }; return hooks[i].value },
@@ -24,10 +26,12 @@ const scripting = new Proxy({
   useEffect(fn, deps) { const i = hookIndex++, old = hooks[i]; if (!old || deps.some((v, j) => v !== old[j])) { hooks[i] = deps; effects.push(() => { cleanups.get(i)?.(); cleanups.delete(i); const c = fn(); if (typeof c === "function") cleanups.set(i, c) }) } },
   Safari: { async openURL(url) { openedURLs.push(url); return true } },
   Navigation: { useDismiss: () => () => {} },
-  Animation: { easeOut: () => ({}) }, withAnimation: (_a, body) => { (body || _a)(); return Promise.resolve() }, Transition: { opacity: () => ({ combined: () => ({}) }), scale: () => ({}), move: () => ({}) },
+  Animation: { linear: () => ({}), easeOut: () => ({}) }, withAnimation: (_a, body) => { (body || _a)(); return Promise.resolve() }, Transition: { opacity: () => ({ combined: () => ({}) }), scale: () => ({}), move: () => ({}) },
   modifiers: () => { const steps=[];const chain=new Proxy({steps},{get:(o,k)=>k==='steps'?steps:(...args)=>{steps.push([k,...args]);return chain}});return chain },
 }, { get: (o, k) => k in o ? o[k] : k })
 const context = {
+  AbortController:class {constructor(){this.signal={aborted:false}} abort(){this.signal.aborted=true}},
+  Data:{fromUint8Array:bytes=>({toRawString:()=>{try{return new (require('node:util').TextDecoder)('utf-8',{fatal:true}).decode(bytes)}catch{return null}}})},
   h, React: { Fragment: 'Fragment' }, console, Date: class extends Date { static now() { return now } },
   Storage: { get: k => clone(store.get(k) ?? null), set: (k, v) => { if (failStorage) return false; store.set(k, clone(v)); return true }, remove: k => store.delete(k), getData: k => store.get(k), setData: (k, v) => store.set(k, v) },
   Keychain: { get: k => secrets.get(k) ?? null, set: (k, v) => { secrets.set(k, v); return true }, remove: k => secrets.delete(k) },
@@ -46,7 +50,9 @@ const context = {
     } else r = responder(url, init)
     if (r.throw) throw Error(r.throw)
     const status = r.status ?? 200
-    return { ok: status >= 200 && status < 300, status, headers: { get: () => r.contentType ?? 'application/json' }, text: async () => { if(r.wait) await r.wait; return r.text !== undefined ? r.text : JSON.stringify(r.body ?? {}) }, data: async () => { if (r.imageWait) await r.imageWait; return r.data ?? 'fake-image-data' } }
+    const responseText=r.text!==undefined?r.text:JSON.stringify(r.body??{})
+    const encoded=require('node:buffer').Buffer.from(responseText);let delivered=false
+    return {body:{getReader:()=>({read:async()=>{if(r.wait)await r.wait;if(delivered)return {done:true};delivered=true;return {done:false,value:new Uint8Array(encoded)}},cancel:async()=>{},releaseLock(){}})}, ok: status >= 200 && status < 300, status, headers: { get: name => name.toLowerCase()==='content-length'?(r.contentLength??null):(r.contentType ?? 'application/json') }, text: async () => { if(r.wait) await r.wait; return r.text !== undefined ? r.text : JSON.stringify(r.body ?? {}) }, data: async () => { if (r.imageWait) await r.imageWait; return r.data ?? 'fake-image-data' } }
   },
 }
 context.WebViewController = require('./webview-mock.cjs').MockWebViewController
@@ -670,7 +676,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) { const lazy = ['proxies','rules','connections'].includes(ids[i]) && ids[i] !== id; assert.equal(nodes(tree, types[i]).length, lazy ? 0 : 1); if (!lazy) assert.equal(nodes(tree, types[i])[0].props.selected, ids[i] === id) }
     }
-    assert.equal(api.VERSION, '1.5.161'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.5.162'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('独立导航栈保留业务owner和身份，只有选中页提供可见工具栏', () => {
     pref.savePreferences({ defaultPage: 'overview' })
@@ -1701,7 +1707,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       const diagnostic = logs.filter(x => x.startsWith('[preferences-icon]'))
       for (const stage of ['change','accepted','proxies-render','group-render']) assert.ok(diagnostic.some(x => x.includes('stage=' + stage) && x.includes('enabled=false')))
       assert.ok(diagnostic.every(x => !x.includes('private.invalid') && !x.includes('private-group-name') && !x.includes('secret-')))
-      assert.ok(diagnostic.every(x => x.includes('build=1.5.161') && /instance=[a-z0-9]+/.test(x)))
+      assert.ok(diagnostic.every(x => x.includes('build=1.5.162') && /instance=[a-z0-9]+/.test(x)))
       assert.equal(new Set(diagnostic.map(x => x.match(/instance=([^ ]+)/)[1])).size, 1)
     } finally { context.console = originalConsole; unmount(); pref.savePreferences({ customIcons: true, testURL: 'https://www.gstatic.com/generate_204' }) }
   })
@@ -1781,7 +1787,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
   })
   await test('首页关键行为（速度图表、数字动画）', () => {
     const source=fs.readFileSync(path.join(root,'index.tsx'),'utf8')
-    assert.ok(!source.includes('title="下载速率"'));assert.ok(!source.includes('title="上传速率"'));assert.ok(source.includes('>速度</Text>'));assert.ok(source.includes('<HomeDashboard overview={shownOv}'));assert.ok(fs.readFileSync(path.join(root,'home-ui.tsx'),'utf8').includes('useSmoothPlot'));assert.ok(source.includes('(Date.now() - at) / span'));assert.ok(source.includes('}, 16)'))
+    assert.ok(!source.includes('title="下载速率"'));assert.ok(!source.includes('title="上传速率"'));assert.ok(source.includes('>速度</Text>'));assert.ok(source.includes('<HomeDashboard overview={homeFrame.overview}'));assert.ok(fs.readFileSync(path.join(root,'home-ui.tsx'),'utf8').includes('<LineChart marks={marks}'));assert.ok(source.includes('(Date.now() - at) / span'));assert.ok(source.includes('}, 16)'))
   })
   console.log(`\n${count} tests passed. All fetch, Storage, Keychain, iCloud and UI bindings were mocked; no device/remote effects executed.`)
 })().catch(e => { console.error(e); process.exitCode = 1 })

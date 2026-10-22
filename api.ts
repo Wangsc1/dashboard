@@ -1,7 +1,7 @@
 import { CpuSampler, CpuUsage, CpuMeta, parseCpuInfo, thermalCelsius } from "./openwrt-metrics"
 
 import { getPreferences, customHeaders, recordEvent, controllerHealth, feedback } from "./preferences"
-export const VERSION = "1.5.161"
+export const VERSION = "1.5.162"
 
 export type Kind = "clash" | "openwrt"
 export type Plugin = "openclash" | "nikki" | "mihomo"
@@ -219,7 +219,54 @@ const cpuSamplers: Record<string,CpuSampler>={}
 const ratePrevious: Record<string,{t:number;rx:number;tx:number;up:number;down:number;uptime:number}>={}
 const samplingEpoch:Record<string,number>={}
 const overviewPending:Record<string,Promise<Overview>|undefined>={}
-export function resetOverviewSampling(c:Controller) { const key=overviewSource(c);delete cpuSamplers[key];delete ratePrevious[key];samplingEpoch[key]=(samplingEpoch[key]??0)+1 }
+// rpcd file.read reads only 4096 bytes for st_size=0 (/proc). Never use it for cpuinfo.
+// Fixed path only; does not relax Nikki's path validation or grant any new ACL.
+const CPUINFO_MAX_BYTES=2*1024*1024
+const cpuInfoCache:Record<string,{at:number;ids:string;meta:ReturnType<typeof parseCpuInfo>;pending?:Promise<void>;abort?:AbortController}>={}
+async function readCompleteCpuInfo(c:Controller,ids:string[],abort:AbortController):Promise<ReturnType<typeof parseCpuInfo>> {
+  let sid=sessions[c.id]?.sid
+  if(!sid||sessions[c.id].auth!==overviewSource(c)||Date.now()-sessions[c.id].at>50*60*1000)sid=await wrtLogin(c)
+  if(abort.signal.aborted)throw new Error("CPU读取已取消")
+  const r=await fetch(c.url+"/cgi-bin/cgi-download",{method:"POST",headers:{...customHeaders(),"Content-Type":"application/x-www-form-urlencoded"},
+    body:"sessionid="+enc(sid)+"&path="+enc("/proc/cpuinfo"),allowInsecureRequest:true,timeout:getPreferences().requestTimeout,signal:abort.signal} as any)
+  if(!r.ok)throw new Error("CPU完整读取不可用")
+  const reader=r.body?.getReader?.()
+  if(!reader)throw new Error("CPU完整读取需要流式响应")
+  const chunks:Uint8Array[]=[];let length=0
+  // proc stat size may be zero: only compare a positive HTTP Content-Length, never file stat.
+  const declared=Number(r.headers.get("Content-Length"))
+  try{
+    if(Number.isFinite(declared)&&declared>CPUINFO_MAX_BYTES)throw new Error("CPU信息超过读取上限")
+    while(true){const {done,value}=await reader.read();if(done)break
+      if(abort.signal.aborted)throw new Error("CPU读取已取消")
+      if(value){length+=value.byteLength;if(length>CPUINFO_MAX_BYTES)throw new Error("CPU信息超过读取上限");chunks.push(value)}
+    }
+    if(abort.signal.aborted||(Number.isFinite(declared)&&declared>0&&declared!==length))throw new Error("CPU读取未完整")
+    const bytes=new Uint8Array(length);let offset=0;for(const chunk of chunks){bytes.set(chunk,offset);offset+=chunk.byteLength}
+    const text=Data.fromUint8Array(bytes)?.toRawString("utf-8")
+    if(!text||text.includes("\u0000")||!text.endsWith("\n"))throw new Error("CPU信息不是完整文本")
+    const meta=parseCpuInfo(text)
+    // Presence, not frequency/cache equality: legitimate missing fields remain unknown.
+    if(!ids.length||ids.some(id=>!Object.prototype.hasOwnProperty.call(meta.cores,id)))throw new Error("CPU逻辑核信息不完整")
+    return meta
+  }catch(e){try{await reader.cancel()}catch{}throw e}finally{reader.releaseLock?.()}
+}
+function cpuInfoSnapshot(c:Controller,ids:string[],epoch:number):ReturnType<typeof parseCpuInfo> {
+  const key=overviewSource(c),identity=ids.join(",")
+  let entry=cpuInfoCache[key]
+  if(!entry||entry.ids!==identity){entry?.abort?.abort();entry={at:0,ids:identity,meta:{cores:{}}};cpuInfoCache[key]=entry}
+  if(!entry.pending&&Date.now()-entry.at>=5000&&ids.length){
+    const current=entry,abort=new AbortController();current.abort=abort;current.at=Date.now()
+    const pending=readCompleteCpuInfo(c,ids,abort).then(meta=>{
+      if(cpuInfoCache[key]===current&&!abort.signal.aborted&&(samplingEpoch[key]??0)===epoch)current.meta=meta
+    }).catch(()=>{if(cpuInfoCache[key]===current&&!abort.signal.aborted){current.meta={cores:{}};current.at=Date.now()+10000}}).finally(()=>{
+      if(current.pending===pending){current.pending=undefined;current.abort=undefined}
+    });current.pending=pending
+  }
+  // Metadata IO never delays the one-second usage sampling loop.
+  return entry.meta
+}
+export function resetOverviewSampling(c:Controller) { const key=overviewSource(c);delete cpuSamplers[key];delete ratePrevious[key];samplingEpoch[key]=(samplingEpoch[key]??0)+1;const info=cpuInfoCache[key];if(info){info.abort?.abort();info.at=0} }
 function mountUsage(r:any):DiskUsage|null {
   const list:any[]=Array.isArray(r?.result)?r.result:[]
   const m=list.find(x=>x.mount==="/overlay")??list.find(x=>x.mount==="/")
@@ -228,11 +275,10 @@ function mountUsage(r:any):DiskUsage|null {
 async function wrtOverview(c: Controller): Promise<Overview> {
   const key=overviewSource(c), cached=slowCache[key], stale=!cached||Date.now()-cached.at>60000
   const epoch=samplingEpoch[key]??0, sampler=cpuSamplers[key]??(cpuSamplers[key]=new CpuSampler())
-  if(Object.keys(cpuSamplers).length>16){const old=Object.keys(cpuSamplers).find(k=>k!==key);if(old){delete cpuSamplers[old];delete ratePrevious[old];delete slowCache[old]}}
+  if(Object.keys(cpuSamplers).length>16){const old=Object.keys(cpuSamplers).find(k=>k!==key);if(old){delete cpuSamplers[old];delete ratePrevious[old];delete slowCache[old];cpuInfoCache[old]?.abort?.abort();delete cpuInfoCache[old]}}
   const zones=cached?.thermal??[]
   const calls:UbusCall[]=[
     ["system","info"],["network.device","status"],["file","read",{path:"/proc/stat"}],["file","read",{path:"/proc/sys/net/netfilter/nf_conntrack_count"}],
-    ["file","read",{path:"/proc/cpuinfo"}],
     ...zones.flatMap(z=>[["file","read",{path:`/sys/class/thermal/${z}/type`}],["file","read",{path:`/sys/class/thermal/${z}/temp`}]] as UbusCall[]),
     ...(stale?[["system","board"],["network.interface","dump"],["file","list",{path:"/sys/class/thermal"}],["file","read",{path:"/etc/openwrt_release"}],["luci","getMountPoints"]] as UbusCall[]:[]),
   ]
@@ -241,12 +287,12 @@ async function wrtOverview(c: Controller): Promise<Overview> {
   // 同id改地址/认证后返回的旧响应不得进入任何新来源缓存。
   if(overviewSource(c)!==key||(samplingEpoch[key]??0)!==epoch)throw new Error("来源或采样代次已改变")
   if(stale){
-    const i=5+zones.length*2
+    const i=4+zones.length*2
     if(!r[i]&&!cached)throw new Error("路由器未返回系统信息")
     const names=(r[i+2]?.entries??[]).map((x:any)=>String(x.name??"" )).filter((x:string)=>/^thermal_zone\d+$/.test(x)).slice(0,32)
     const arch=/^DISTRIB_ARCH=['"]?([^'"\s]+)["']?$/m.exec(String(r[i+3]?.data??""))?.[1]
     slowCache[key]={at:Date.now(),board:r[i]??cached?.board??{},dump:r[i+1]??cached?.dump??{},thermal:names,disk:mountUsage(r[i+4]),arch}
-    if(Object.keys(slowCache).length>16){const oldest=Object.keys(slowCache).find(k=>k!==key);if(oldest){delete slowCache[oldest];delete ratePrevious[oldest];delete cpuSamplers[oldest]}}
+    if(Object.keys(slowCache).length>16){const oldest=Object.keys(slowCache).find(k=>k!==key);if(oldest){delete slowCache[oldest];delete ratePrevious[oldest];delete cpuSamplers[oldest];cpuInfoCache[oldest]?.abort?.abort();delete cpuInfoCache[oldest]}}
   }
   const slow=slowCache[key]??cached!,board=slow.board,dump=slow.dump,wan=pickWan(dump),st=devs?.[wan.device]?.statistics??{}
   const rx=num(st.rx_bytes),tx=num(st.tx_bytes),now=Date.now(),prev=ratePrevious[key]
@@ -256,9 +302,9 @@ async function wrtOverview(c: Controller): Promise<Overview> {
     if(dt<0.5){up=prev.up;down=prev.down;keep=true}else{down=(rx-prev.rx)/dt;up=(tx-prev.tx)/dt;if(down>MAX_RATE||up>MAX_RATE){up=prev.up;down=prev.down}}
   }
   if(!keep)ratePrevious[key]={t:now,rx,tx,up,down,uptime:num(info.uptime)}
-  const cpus=sampler.sample(String(stat.data??""),typeof info.uptime==="number"?info.uptime:undefined),meta=parseCpuInfo(String(r[4]?.data??""))
+  const cpus=sampler.sample(String(stat.data??""),typeof info.uptime==="number"?info.uptime:undefined),meta=cpuInfoSnapshot(c,cpus.filter(x=>x.id!=="cpu").map(x=>x.id),epoch)
   let temperature:number|undefined
-  for(let i=0;i<zones.length;i++){const value=thermalCelsius(String(r[5+i*2]?.data??""),String(r[6+i*2]?.data??""));if(value!==undefined){temperature=value;break}}
+  for(let i=0;i<zones.length;i++){const value=thermalCelsius(String(r[4+i*2]?.data??""),String(r[5+i*2]?.data??""));if(value!==undefined){temperature=value;break}}
   return {version:String(board.release?.description??""),mode:"",traffic:{up,down},upTotal:tx,downTotal:rx,
     connCount:parseInt(String(ct.data??"0"),10)||0,
     wrt:{model:String(board.model??board.hostname??""),release:String(board.release?.description??""),uptime:num(info.uptime),

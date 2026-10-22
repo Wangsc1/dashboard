@@ -205,6 +205,11 @@ function OverviewPage({ active, version, onSwitch, onClose, selected = true }: {
   }, [source, prefs.connectionBackground, showCharts])
   const shownOv=sampleSource===source?ov:null
   const shownHistory=sampleSource===source?histories:newHistory()
+  // Freeze the obscured home chart subtree while the sheet consumes live samples.
+  const [homeFrame]=useState(()=>({source:"",overview:null as Overview|null,histories:newHistory()}))
+  if(!cpuOpen||homeFrame.source!==source){homeFrame.source=source;homeFrame.overview=shownOv;homeFrame.histories=shownHistory}
+  const openCpu=useMemo(()=>()=>setCpuOpen(true),[])
+  const homeContent=useMemo(()=><HomeDashboard overview={homeFrame.overview} histories={homeFrame.histories} running={showCharts&&visible&&!cpuOpen} onCpu={openCpu}/>,[homeFrame.overview,homeFrame.histories,showCharts&&visible&&!cpuOpen,openCpu])
   const statusText = err ? "连接失败" : ov ? "运行正常" : "连接中", statusColor = err ? "systemRed" : "systemGreen"
   const toolbar = useMemo(() => ({ ...rootToolbar("home", onClose, <NavigationLink destination={<SettingsPage active={active} onChanged={onSwitch} />}><Image systemName="ellipsis.circle" /></NavigationLink>),
     principal: <VStack spacing={1}>
@@ -214,12 +219,12 @@ function OverviewPage({ active, version, onSwitch, onClose, selected = true }: {
   if (!active) return <Form navigationTitle="dashboard" navigationBarTitleDisplayMode="inline" toolbar={toolbar} onAppear={() => setVisible(true)} onDisappear={() => setVisible(false)}><NoController /></Form>
   const closeCpu=(value:boolean)=>{setCpuOpen(value);if(!value)setVisible(true)}
   return <VStack spacing={0} navigationTitle={active.name} navigationBarTitleDisplayMode="inline" toolbar={toolbar} onAppear={() => setVisible(true)} onDisappear={() => setVisible(false)}
-    sheet={{isPresented:cpuOpen,onChanged:closeCpu,content:<CpuDetails overview={shownOv} histories={shownHistory} running={showCharts&&cpuOpen} onDismiss={()=>closeCpu(false)}/>}}>
+    sheet={{isPresented:cpuOpen,onChanged:closeCpu,content:<CpuDetails overview={shownOv} histories={shownHistory} running={showCharts&&cpuOpen}/>}}>
     <ScrollView background={HOME_BG}>
       <VStack spacing={16} padding={{horizontal:16,top:12,bottom:24}}>
         {all.length>1?<Card><Picker title="当前路由器" pickerStyle="menu" value={active.id} onChanged={(v:string)=>{setActive(v);onSwitch()}}>{all.map(c=><Text key={c.id} tag={c.id}>{c.name}</Text>)}</Picker></Card>:null}
         {err?<Text font={12} foregroundStyle="systemRed">{err}</Text>:null}
-        <HomeDashboard overview={shownOv} histories={shownHistory} running={showCharts&&visible&&!cpuOpen} onCpu={()=>setCpuOpen(true)}/>
+        {homeContent}
         <Card><HStack><Badge icon="link" color="#A855F7"/><Text font={13}>活动连接</Text><Spacer/><Text font={13}>{shownOv?String(shownOv.connCount):"--"}</Text></HStack>{hosts.length?<Text font={10} foregroundStyle="secondaryLabel" lineLimit={1}>{hosts.join(" · ")}</Text>:null}</Card>
       </VStack>
     </ScrollView>

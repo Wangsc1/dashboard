@@ -28,13 +28,15 @@
 
 ## 主页与 CPU 详情
 
-主页按 CPU → 上传/下载 → RAM/负载 → 磁盘排序，不显示 Swap 或重复全宽负载。CPU 蓝色曲线，上传绿色、下载青色面积曲线，RAM 和负载共用头部、图表与双行底栏槽位，卡片等宽等高，随文本理想高度伸展而非固定裁切。主页与 CPU 详情统一使用 `systemBackground` 底色、`secondarySystemBackground` 灰卡，与其他页面一致并随系统适配深色，无渐变或阴影。RAM 仍以亮起的段数表示容量比例；负载为真实 1/5/15 分钟值（两位小数），每组每根淡色背景条从底部按负载/逻辑核数连续填充高度，非 CPU 百分比。低负载不取整为零、不设虚假最小高度；0 不填充，未知显示 `--`，超核数时仅柱高封顶，数值保留真实负载。磁盘只展示 LuCI 实际返回的根/overlay 挂载点、设备路径和容量，不推断硬件型号或 NVMe。
+主页按 CPU → 上传/下载 → RAM/负载 → 磁盘排序，不显示 Swap 或重复全宽负载。CPU 蓝色曲线，上传绿色、下载青色面积曲线，RAM 和负载共用头部、图表与双行底栏槽位，卡片等宽等高，随文本理想高度伸展而非固定裁切。主页与 CPU 详情统一使用 `systemBackground` 底色、`secondarySystemBackground` 灰卡，与其他页面一致并随系统适配深色，无渐变或阴影。RAM 仍以亮起的段数表示容量比例；负载为真实 1/5/15 分钟值（两位小数），每组每根淡色背景条从底部按负载/逻辑核数连续填充高度，非 CPU 百分比。低负载不取整为零、不设虚假最小高度；0 不填充，未知显示 `--`，超核数时仅柱高封顶，数值保留真实负载。磁盘只展示 LuCI 实际返回的根/overlay 挂载点、设备路径和容量，不推断硬件型号或 NVMe；已用细条按真实 used/size 连续填充，低于一段的比例也不量化。负载绿/橙/蓝按日夜采用更鲜明主色，仍不改变真实填充高度。
 
-CPU 详情是原生大尺寸可下拉关闭 sheet（单一 X），系统版本/运行时间/Arch/逻辑核数/Kernel/Board、CPU 型号及总曲线，下方双列显示 `/proc/stat` 中全部唯一逻辑核 ID，无分页或重复物理分组。频率和缓存仅取 `/proc/cpuinfo` 的 MHz/KB；缓存是内核报告值，可能共享，不能视为每线程独占。未报告显示 `--`，不使用 BogoMIPS 推断。
+CPU 详情是原生大尺寸可下拉关闭 sheet（拖动指示器，无右上 X），系统版本/运行时间/Arch/逻辑核数/Kernel/Board、CPU 型号及总曲线，下方双列显示 `/proc/stat` 中全部唯一逻辑核 ID，无分页或重复物理分组。频率和缓存仅取每个逻辑核自身 `/proc/cpuinfo` 的 MHz/KB；未报告显示 `--`，不复制其他核字段、不使用 BogoMIPS 推断。只读认证 CGI download 流式读取固定路径 `/proc/cpuinfo`，最多 2MiB；5 秒刷新、单飞、不阻塞 1 秒使用率采样，失败后 15 秒重试。虚拟文件 size=0 不代表空文件，不用 stat 大小核验长度；只接受流读到 EOF、正 HTTP 长度一致且覆盖当前全部逻辑核的结果，截断、超限、权限或读取失败时舍弃元数据。该专用读取不改变 Nikki 文件路径核验。
+
+主页与 CPU 详情的所有曲线均为原生 `Chart` + 数据 `LineChart`/`AreaChart` marks；RAM/负载/磁盘条使用原生圆角形状，不使用 SVG、WebView 或 Canvas。CPU 固定 0–100 量程、无坐标文字虚线格、真实样本从右侧积累，统一原生 1.5pt 线宽。总曲线以官方 `animation` 属性做原生过渡（不调用 `withAnimation`）；每核按真实样本刷新，不建立 16ms 数字或 20fps JS 绘图订阅，避免滚动时多核持续重建图形。详情打开时冻结被遮挡主页图表的节点/数据（详情仍实时），关闭后接回最新样本；总览卡离屏也关闭原生动画；实际动画和滚动表现仍需真机确认。SYS/USER/STEAL 共用等宽弹性槽，总百分比独立靠右。
 
 采样沿用唯一主页轮询，详情不再开启第二条请求流；后台、隐藏 Tab、导航离开或卸载停止采样/曲线动画，打开 CPU sheet 只暂停被遮挡主页的曲线。每个来源独立保存有界真实样本（不零填充）；URL/认证来源变化隔离历史和旧响应。首次、暂停恢复、重启、计数回退、热插拔或不可读时先建立 CPU 差分基线，显示未知而非伪造 0%。CPU 总量只累加前八项 jiffies（guest 已包含于 user/nice），USER=user+nice，SYS=system+irq+softirq，STEAL=steal，使用率剔除 idle+iowait；定义依据 Linux `/proc/stat`。
 
-新增访问仅为既有认证后的只读 ubus：`system info/board`、`network.device status`、`network.interface dump`、`luci getMountPoints`、`file read`（`/proc/stat`、`/proc/cpuinfo`、`/etc/openwrt_release` 和 CPU/SOC 类型 thermal zone）及 `file list /sys/class/thermal`。温度只采纳有 CPU/SOC/package 类型且范围合理的毫摄氏度，不将 GPU 或任意未知传感器当 CPU。ACL 不允许或字段缺失时降级未知；不安装包、不修改权限、路由器配置或执行 shell。磁盘容量和系统静态信息约每分钟更新，其余与已有实时采样同频。
+新增访问仅为既有认证后的只读 ubus：`system info/board`、`network.device status`、`network.interface dump`、`luci getMountPoints`、`file read`（`/proc/stat`、`/etc/openwrt_release` 和 CPU/SOC 类型 thermal zone）及 `file list /sys/class/thermal`，以及已有认证下的 `cgi-download /proc/cpuinfo`（需要该路径和 CGI download 的只读 ACL，不扩大权限）。温度只采纳有 CPU/SOC/package 类型且范围合理的毫摄氏度，不将 GPU 或任意未知传感器当 CPU。ACL 不允许或字段缺失时降级未知；不安装包、不修改权限、路由器配置或执行 shell。磁盘容量和系统静态信息约每分钟更新，其余与已有实时采样同频。
 
 ## 代理页模式
 
@@ -111,6 +113,9 @@ node tests/nikki-editor-browser.cjs
 node tests/proxy-mode.cjs
 node tests/chart-download.cjs
 node tests/home-dashboard.cjs
+node tests/cpuinfo-complete.cjs
+node tests/cpu-details-performance.cjs
+node tests/home-polish.cjs
 git diff --check
 ```
 
@@ -126,3 +131,5 @@ git diff --check
 - [rpcd 源码](https://github.com/openwrt/rpcd/tree/d99f703e4035d03fbcfbada3cb697db346c2b984)：`file.c / uci.c`；OpenWrt24.10 使用的 `bba95191ff2f22c9118a1ba1355b83afaa277ae3` 同样在 commit 时发出配置事件。
 - [cgi-io 源码](https://github.com/openwrt/cgi-io/tree/31cb3c89f02d918d7f17bf62a80c852fc38a1ca1)：完整文件下载。
 - [Scripting 官方文档](https://scriptingapp.github.io/)。
+
+CPU 元数据读取依据：[rpcd file.c 固定源码](https://github.com/openwrt/rpcd/blob/d99f703e4035d03fbcfbada3cb697db346c2b984/file.c) 的 `RPC_FILE_MIN_SIZE=4096`、`rpc_file_read()` 对 size=0 单次 `read()`；[cgi-io main_download](https://github.com/openwrt/cgi-io/blob/master/main.c) 对 size=0 循环读至 EOF。25KiB/16 核真实格式 fixture 复现旧 4KiB 路径仅解析出前部核心；这证实代码路径风险，不代表已确认用户真机运行的 rpcd 版本或实际响应。

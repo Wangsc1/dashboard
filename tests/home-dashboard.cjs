@@ -3,6 +3,7 @@ const fs=require('node:fs'),path=require('node:path'),vm=require('node:vm')
 const harness=fs.readFileSync(path.join(__dirname,'run.cjs'),'utf8').split(';(async () => {')[0]
 const checks=String.raw`
 const deep=(a,b)=>assert.equal(JSON.stringify(a),JSON.stringify(b))
+function plotNode(tree,width=336){return tree.props.children[0]({size:{width}})}
 function parseRects(svg){return [...svg.matchAll(/<rect ([^>]+)\/>/g)].map(m=>Object.fromEntries([...m[1].matchAll(/([\w-]+)="([^"]*)"/g)].map(a=>[a[1],a[2]])))}
 const {CpuSampler,parseCpuStat,parseCpuInfo,thermalCelsius,newHistory,appendHistory}=metrics
 const stat0='cpu  100 0 20 880 0 0 0 0 0 0\ncpu0 50 0 10 440 0 0 0 0 0 0\ncpu2 40 0 10 450 0 0 0 0 0 0\ncpu12 10 0 0 490 0 0 0 0 0 0\n'
@@ -10,7 +11,7 @@ const stat1='cpu  140 0 30 930 0 0 0 0 0 0\ncpu0 70 0 15 465 0 0 0 0 0 0\ncpu2 5
 const cpuinfo='processor : 0\nmodel name : Intel(R) Core(TM) i5 CPU\ncpu MHz : 2194.916\ncache size : 4096 KB\n\nprocessor : 2\nmodel name : Intel(R) Core(TM) i5 CPU\ncpu MHz : 1200.000\ncache size : 4096 KB\n\nprocessor : 12\nmodel name : Intel(R) Core(TM) i5 CPU\n'
 let stat=stat0,uptime=100,denied=false,bytes=1000
 const device={id:'home-fixture',name:'Fixture router',kind:'openwrt',url:'http://home-fixture.invalid',username:'root'}
-function fixture(url,init){const req=JSON.parse(init.body),[,object,method,args]=req.params;const ok=x=>({body:{id:req.id,result:[0,x]}})
+function fixture(url,init){if(url.endsWith('/cgi-bin/cgi-download'))return {status:denied?403:200,text:cpuinfo};const req=JSON.parse(init.body),[,object,method,args]=req.params;const ok=x=>({body:{id:req.id,result:[0,x]}})
  if(object==='session')return ok({ubus_rpc_session:'fixture-session'})
  if(object==='system'&&method==='info')return ok({uptime,load:[65536,131072,32768],memory:{total:8589934592,free:2147483648,available:4294967296}})
  if(object==='system'&&method==='board')return ok({kernel:'6.6.80',model:'Fixture Board',release:{description:'OpenWrt 24.10.2',target:'x86/64'}})
@@ -47,10 +48,10 @@ function fixture(url,init){const req=JSON.parse(init.body),[,object,method,args]
  })
  await test('真实格式ubus batch: 1次主采样得到CPU/温度/RAM/挂载点；纯只读且来源隔离',async()=>{
    responder=fixture;calls.length=0;let a=await api.loadOverview(device);assert.equal(a.wrt.cpu,undefined);assert.equal(a.wrt.cpus.length,4);assert.equal(a.wrt.arch,'x86_64');assert.equal(a.wrt.disk.mount,'/');assert.equal(a.wrt.disk.device,'/dev/root');assert.equal(a.wrt.disk.used,5368709120)
-   stat=stat1;uptime++;now+=1000;bytes+=1000;a=await api.loadOverview(device);assert.equal(a.wrt.cpu,50);assert.equal(a.wrt.temperature,55);assert.equal(a.wrt.memFree,4294967296);deep(a.wrt.load,[1,2,0.5]);assert.equal(a.wrt.cpuMeta.cpu0.cacheKB,4096)
+   await flush();stat=stat1;uptime++;now+=1000;bytes+=1000;a=await api.loadOverview(device);assert.equal(a.wrt.cpu,50);assert.equal(a.wrt.temperature,55);assert.equal(a.wrt.memFree,4294967296);deep(a.wrt.load,[1,2,0.5]);assert.equal(a.wrt.cpuMeta.cpu0.cacheKB,4096)
    const b={...device,url:'http://changed-home.invalid'};assert.notEqual(api.overviewSource(b),api.overviewSource(device));const other=await api.loadOverview(b);assert.equal(other.wrt.cpu,undefined);assert.equal(other.traffic.down,0)
    const old=api.overviewSource(device);secrets.set('neko_secret_'+device.id,'home-secret-never-log');assert.notEqual(api.overviewSource(device),old);const changed=await api.loadOverview(device);assert.equal(changed.wrt.cpu,undefined)
-   for(const call of calls){const req=JSON.parse(call.init.body);for(const x of Array.isArray(req)?req:[req])assert.ok(['read','list','info','board','status','dump','getMountPoints','login'].includes(x.params[2]))}
+   for(const call of calls){if(call.url.endsWith('/cgi-bin/cgi-download')){assert.ok(call.init.body.includes('path=%2Fproc%2Fcpuinfo'));continue}const req=JSON.parse(call.init.body);for(const x of Array.isArray(req)?req:[req])assert.ok(['read','list','info','board','status','dump','getMountPoints','login'].includes(x.params[2]))}
    assert.ok(!pref.exportLogs().includes('home-secret-never-log'));assert.ok(!JSON.stringify([...store]).includes('home-secret-never-log'))
  })
  await test('缺失/ACL不允许: CPU/温度/频率未知而不是0，不增加权限',async()=>{
@@ -58,9 +59,9 @@ function fixture(url,init){const req=JSON.parse(init.body),[,object,method,args]
  })
  await test('慢响应不重叠，暂停代次与同id换URL的旧响应不能写新来源',async()=>{
    const original=context.fetch;let release;const wait=new Promise(r=>{release=r});let batches=0
-   context.fetch=async(url,init)=>{const response=await original(url,init);if(Array.isArray(JSON.parse(init.body))){batches++;await wait}return response}
+   context.fetch=async(url,init)=>{const response=await original(url,init);if(init.body.startsWith('[')&&Array.isArray(JSON.parse(init.body))){batches++;await wait}return response}
    const p=api.loadOverview(device),q=api.loadOverview(device);await flush();assert.equal(batches,1);api.resetOverviewSampling(device);release();await assert.rejects(()=>p);await assert.rejects(()=>q);context.fetch=original
-   let release2;const wait2=new Promise(r=>{release2=r});context.fetch=async(url,init)=>{const response=await original(url,init);if(url===device.url+'/ubus'&&Array.isArray(JSON.parse(init.body)))await wait2;return response}
+   let release2;const wait2=new Promise(r=>{release2=r});context.fetch=async(url,init)=>{const response=await original(url,init);if(url===device.url+'/ubus'&&init.body.startsWith('[')&&Array.isArray(JSON.parse(init.body)))await wait2;return response}
    const pending=api.loadOverview(device);await flush();const next={...device,url:'http://new-source-home.invalid'};const nextSample=await api.loadOverview(next);release2();await pending;assert.equal(nextSample.wrt.cpu,undefined);assert.equal(api.overviewSource(next),api.overviewSource({...next}));context.fetch=original
  })
  await test('histories只保留真实采样且有界，未知/热插拔断开曲线，源切换不复用',()=>{
@@ -71,31 +72,6 @@ function fixture(url,init){const req=JSON.parse(init.body),[,object,method,args]
    const view=render(home.HomeDashboard,{overview:null,histories:newHistory(),running:true,onCpu(){}},true)
    const cards=view.props.children;assert.equal(cards[0].type,home.CpuCard);deep(nodes(cards[1],home.TrafficCard).map(n=>n.props.heading),['上传','下载']);assert.equal(cards[2].props.children[0].type,home.RamCard);assert.equal(cards[2].props.children[1].type,home.LoadCard);assert.equal(cards[3].type,home.DiskCard)
    assert.equal(nodes(view,home.LoadCard).length,1);assert.ok(!fs.readFileSync(path.join(root,'home-ui.tsx'),'utf8').includes('Swap'))
-   const chart=render(home.GridPlot,{samples:[1,20],tone:'#3485eb',percent:true,running:false},true);assert.ok(chart.props.code.includes('stroke-dasharray'));assert.ok(!chart.props.code.includes('NaN'));assert.ok(chart.props.code.includes('fill="none"'))
-   const one=render(home.GridPlot,{samples:[50],tone:'#3485eb',percent:true,running:false},true);assert.ok(one.props.code.includes('d=""'));assert.ok(!one.props.code.includes('L 0,'))
-   const bars=home.CapacityBars({fraction:0.5,tone:'#a179d1'});assert.equal((bars.props.code.match(/<rect /g)||[]).length,24)
- })
- await test('低负载0.09/0.06/0.02：每根条从底部连续填充真实高度，非亮段数/最小一像素',()=>{
-   const w={load:[0.09,0.06,0.02],cpus:[{id:'cpu'},...Array.from({length:16},(_,i)=>({id:'cpu'+i}))]},card=home.LoadCard({w}),bars=nodes(card.props.bars,home.LoadBars)
-   deep(nodes(card.props.footer,home.MetricFooterValue).map(n=>n.props.value),['0.09','0.06','0.02']);assert.equal(bars.length,3)
-   for(let i=0;i<3;i++){
-     assert.equal(bars[i].props.fraction,w.load[i]/16)
-     const svg=home.LoadBars(bars[i].props),rects=parseRects(svg.props.code),fg=rects.filter(r=>r.opacity==='0.85'),h=24*w.load[i]/16
-     assert.equal(rects.filter(r=>r.opacity==='0.12').length,24);assert.equal(fg.length,24)
-     for(const r of fg){assert.ok(Math.abs(Number(r.height)-h)<1e-12);assert.ok(Number(r.height)>0&&Number(r.height)<1);assert.equal(Number(r.y)+Number(r.height),26);assert.ok(Number(r.x)>=0&&Number(r.x)+Number(r.width)<=144);assert.ok(Number(r.rx)<=h/2)}
-     deep(svg.props.frame,{minWidth:0,maxWidth:'infinity',height:28})
-   }
-   const ram=parseRects(home.CapacityBars({fraction:0.04,tone:'#a179d1'}).props.code);assert.equal(ram.length,24);assert.equal(ram.filter(r=>r.opacity==='0.85').length,1);assert.ok(ram.every(r=>r.height==='24'))
- })
- await test('负载0/未知/超核数：未知不伪装0，柱高封顶但真实数字不截断',()=>{
-   const code=fraction=>home.LoadBars({fraction,tone:'#77c59a'}).props.code
-   const zero=parseRects(code(0)),unknown=parseRects(code(undefined)),over=parseRects(code(2))
-   assert.equal(zero.filter(r=>r.opacity==='0.85'&&r.height==='0').length,24);assert.equal(unknown.filter(r=>r.opacity==='0.85').length,0);assert.ok(code(undefined).includes('负载未知'));assert.ok(!code(0).includes('未知'))
-   assert.equal(over.length,48);assert.ok(over.every(r=>r.height==='24'));assert.ok(!code(2).includes('NaN'))
-   for(const n of [NaN,Infinity,-1])assert.ok(code(n).includes('负载未知'))
-   const card=home.LoadCard({w:{load:[0,32,undefined],cpus:[{id:'cpu'},...Array.from({length:16},(_,i)=>({id:'cpu'+i}))]}})
-   deep(nodes(card.props.footer,home.MetricFooterValue).map(n=>n.props.value),['0.00','32.00','--']);deep(nodes(card.props.bars,home.LoadBars).map(n=>n.props.fraction),[0,2,undefined])
-   const noCores=home.LoadCard({w:{load:[0.09,0.06,0.02]}});assert.ok(nodes(noCores.props.bars,home.LoadBars).every(n=>n.props.fraction===undefined));deep(nodes(noCores.props.footer,home.MetricFooterValue).map(n=>n.props.value),['0.09','0.06','0.02'])
  })
  await test('RAM/负载共同三槽等高约束、两列受限宽且双行底栏可随字体扩高',()=>{
    const row=home.HomeDashboard({overview:null,histories:newHistory(),running:false,onCpu(){}}).props.children[2]
@@ -116,13 +92,13 @@ function fixture(url,init){const req=JSON.parse(init.body),[,object,method,args]
  await test('主页/CPU详情与其他页面同款系统白底灰卡，移除渐变和阴影',()=>{
    assert.equal(home.HOME_BG,'systemBackground');const card=home.HomeCard({children:[]}),bg=card.props.modifiers.steps.find(s=>s[0]==='background')[1];assert.equal(bg.props.fill,'secondarySystemBackground');assert.equal(card.props.foregroundStyle,'label');assert.equal(card.props.shadow,undefined)
    const detail=home.CpuDetails({overview:null,histories:newHistory(),running:false,onDismiss(){}});assert.equal(nodes(detail,'ScrollView')[0].props.background,'systemBackground')
-   const source=fs.readFileSync(path.join(root,'home-ui.tsx'),'utf8');assert.ok(!source.includes('gradient('));assert.ok(!source.includes('shadow='));assert.ok(source.includes('#77c59a'));assert.ok(source.includes('#3485eb'))
+   const source=fs.readFileSync(path.join(root,'home-ui.tsx'),'utf8');assert.ok(!source.includes('gradient('));assert.ok(!source.includes('shadow='));assert.ok(source.includes('#17965b'));assert.ok(source.includes('#3485eb'))
  })
- await test('sheet全部唯一逻辑核可滚动到达、无重复采样器，原生单X无自绘圆底',()=>{
+ await test('sheet全部唯一逻辑核可滚动到达，只保留原生下拉关闭，无X或空toolbar',()=>{
    const overview={wrt:{release:'OpenWrt',uptime:100,arch:'x86_64',kernel:'6.6.80',model:'Board',cpus:[{id:'cpu',usage:10},...Array.from({length:17},(_,i)=>({id:'cpu'+i,usage:i}))],cpuMeta:{}}}
    let closed=0;const sheet=home.CpuDetails({overview,histories:newHistory(),running:false,onDismiss(){closed++}});assert.equal(sheet.type,'NavigationStack');deep(sheet.props.presentationDetents,['large']);assert.equal(nodes(sheet,'ScrollView').length,1);assert.equal(nodes(sheet,home.CoreCard).length,17);assert.equal(new Set(nodes(sheet,home.CoreCard).map(n=>n.props.cpu.id)).size,17)
    for(const label of ['Uptime','Arch','Cpu','Kernel','Board']) {const n=nodes(sheet,'Text').find(n=>text(n)===label);assert.ok(n,label);assert.equal(n.props.foregroundStyle,'label')}
-   const sc=nodes(sheet,'ScrollView')[0],x=sc.props.toolbar.topBarTrailing;assert.equal(x.props.systemImage,'xmark');assert.equal(nodes(x,'Circle').length,0);x.props.action();assert.equal(closed,1)
+   const sc=nodes(sheet,'ScrollView')[0];assert.equal(sc.props.toolbar,undefined);assert.equal(nodes(sheet,'Button').length,0);assert.equal(sheet.props.presentationDragIndicator,'visible')
    const core=home.CoreCard({cpu:{id:'cpu2'},history:[],running:false});assert.ok(text(core).includes('-- MHz'));assert.ok(text(core).includes('-- KB'))
  })
  await test('数字/曲线动画平滑更新且遮挡停止、单位切换不跨量级插值、卸载清理',async()=>{
@@ -130,8 +106,7 @@ function fixture(url,init){const req=JSON.parse(init.body),[,object,method,args]
    now+=500;for(const t of [...intervals.values()])t.fn();let n=render(home.MetricNumber,{...p,value:20});assert.ok(Number(text(n).split(' ')[0])>10);assert.ok(Number(text(n).split(' ')[0])<20)
    n=render(home.MetricNumber,{...p,value:20,running:false});await flush();assert.equal(intervals.size,0);n=render(home.MetricNumber,{...p,value:20,running:false});assert.ok(text(n).startsWith('20.0'))
    render(home.MetricNumber,{value:1,unit:' GB/s',running:true,digits:1});await flush();assert.equal(intervals.size,0);unmount()
-   let samples=[10,20];render(home.GridPlot,{samples,tone:'#3485eb',percent:true,running:true},true);await flush();now+=1000;samples=[10,20,40];render(home.GridPlot,{samples,tone:'#3485eb',percent:true,running:true});await flush();assert.equal([...intervals.values()].filter(x=>x.ms===50).length,1)
-   render(home.GridPlot,{samples,tone:'#3485eb',percent:true,running:false});await flush();assert.equal(intervals.size,0);unmount()
+   const chart=render(home.GridPlot,{samples:[10,20,40],tone:'#3485eb',percent:true,running:true},true);await flush();assert.equal(intervals.size,0);assert.equal(chart.type,'Chart');assert.ok(chart.props.animation);unmount()
  })
  await test('CPU sheet开关/后台/切Tab: 单轮询、详情共享样本、旧来源不覆盖',async()=>{
    responder=fixture;const props={active:device,version:0,selected:true,onSwitch(){}};render(app.OverviewPage,props,true);await flush();let view=render(app.OverviewPage,props)

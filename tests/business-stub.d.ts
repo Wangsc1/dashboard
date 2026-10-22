@@ -1,10 +1,13 @@
 // 业务检查桩，不是完整 Scripting UI 类型；新增签名按官方文档核对。
 declare module "scripting" {
   const x: any
+  // Official views/charts and view_modifiers/chart_mark_props.
+  export const Chart:any, LineChart:any, AreaChart:any;
   export const GeometryReader: any, gradient: any, Divider:any;
   export function WebView(props: {controller:WebViewController;opacity?:number;disabled?:boolean;frame?:{maxWidth?:string;maxHeight?:string;minHeight?:number}}): any;
   export const AppEvents: { scenePhase: { addListener(fn: (phase: "active" | "inactive" | "background") => void): void; removeListener(fn: (phase: "active" | "inactive" | "background") => void): void } }, Safari: any, LazyVStack: any, TabView: any, Tab: any, Slider: any, Transition: any, Circle: any, Animation: any, withAnimation: any, ProgressView: any, RoundedRectangle: any, ScrollView: any, SVG: any, ZStack: any, modifiers: any, Image: any, Menu: any, Button: any, ForEach: any, Form: any, HStack: any, Label: any, Navigation: any, NavigationLink: any, NavigationStack: any, NavigationDestination: any, Picker: any, Script: any, Section: any, SecureField: any, Spacer: any, Text: any, TextField: any, Toggle: any, VStack: any
   export function useObservable<T>(v: T | (() => T)): { value: T; setValue(v: T): void; subscribe(fn: (v: T, old: T) => void): void; unsubscribe(fn: (v: T, old: T) => void): void }
+  export function useColorScheme(): "light"|"dark";
   export function useMemo<T>(fn: () => T, deps: any[]): T
   export function useEffect(f: any, d?: any): void
   export function useState<T>(v: T | (() => T)): [T, (v: T | ((p: T) => T)) => void]
@@ -16,6 +19,8 @@ declare class WebSocket { constructor(u: string); addEventListener(e: string, f:
 declare namespace JSX { interface IntrinsicElements { [k: string]: any } interface ElementChildrenAttribute { children: {} } interface IntrinsicAttributes { key?: any } }
 declare function clearTimeout(t: any): void;
 declare class AbortController { signal: any; abort(): void }
+// Official data/zh.md: strict UTF-8 decoding of bounded streamed bytes.
+declare var Data: { fromUint8Array(bytes:Uint8Array): {toRawString(encoding?:string):string|null}|null };
 declare class TextDecoder { decode(b: any, o?: any): string }
 
 declare var HapticFeedback: { selection(): void };
