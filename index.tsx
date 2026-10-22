@@ -21,11 +21,18 @@ import { getPreferences, controllerHealth, cachedIcon, feedback, recordEvent } f
 
 const msg = (e: any) => String(e?.message ?? e ?? "未知错误")
 
-function useInterval(fn: () => void, ms: number, deps: any[]) {
+function useInterval(fn: (current: () => boolean) => Promise<void>, ms: number, deps: any[]) {
   useEffect(() => {
-    fn()
-    const t = setInterval(fn, ms)
-    return () => clearInterval(t)
+    let alive = true, busy = false
+    const current = () => alive
+    async function refresh() {
+      if (!alive || busy) return
+      busy = true
+      try { await fn(current) } finally { busy = false }
+    }
+    void refresh()
+    const t = setInterval(refresh, ms)
+    return () => { alive = false; clearInterval(t) }
   }, deps)
 }
 
@@ -238,7 +245,7 @@ function OverviewPage({ active, version, onSwitch, onClose, selected = true }: {
 function WrtInterfacesPage({ active, version }: { active: Controller; version: number }) {
   const [list, setList] = useState<WrtIface[]>([])
   const [err, setErr] = useState("")
-  useInterval(() => { loadWrtInterfaces(active).then(l => { setList(l); setErr("") }).catch(e => setErr(msg(e))) }, 5000, [active.id, version])
+  useInterval(current => loadWrtInterfaces(active).then(l => { if (current()) { setList(l); setErr("") } }).catch(e => { if (current()) setErr(msg(e)) }), 5000, [overviewSource(active), version])
   return <Form navigationTitle="网络接口" navigationBarTitleDisplayMode="inline">
     {err ? <Section><Text foregroundStyle="systemRed">{err}</Text></Section> : null}
     <Section>
@@ -252,7 +259,7 @@ function WrtInterfacesPage({ active, version }: { active: Controller; version: n
 function WrtLeasesPage({ active, version }: { active: Controller; version: number }) {
   const [list, setList] = useState<WrtLease[]>([])
   const [err, setErr] = useState("")
-  useInterval(() => { loadWrtLeases(active).then(l => { setList(l); setErr("") }).catch(e => setErr(msg(e))) }, 10000, [active.id, version])
+  useInterval(current => loadWrtLeases(active).then(l => { if (current()) { setList(l); setErr("") } }).catch(e => { if (current()) setErr(msg(e)) }), 10000, [overviewSource(active), version])
   return <Form navigationTitle={`在线设备 (${list.length})`} navigationBarTitleDisplayMode="inline">
     {err ? <Section><Text foregroundStyle="systemRed">{err}</Text></Section> : null}
     <Section footer={<Text>来自 DHCP 租约，不含静态地址设备。</Text>}>

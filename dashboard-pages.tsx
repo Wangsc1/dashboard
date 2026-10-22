@@ -42,7 +42,6 @@ async function updateAllProviders(c:Controller,kind:"proxies"|"rules",ps:Provide
   const list=ps.filter(x=>["http","file"].includes(x.vehicleType.toLowerCase()))
   if(!list.length)return
   await attempt(async()=>{const rs=await Promise.allSettled(list.map(x=>updateProvider(c,kind,x.name)));done();if(rs.some(r=>r.status==="rejected"))throw new Error("partial")})
-  done()
 }
 // Same visual label for provider and Nikki refresh actions; color stays caller-owned.
 function providerRefreshLabel(busy:boolean,color:string="systemBlue") {return busy?<ProgressView progressViewStyle="circular" frame={{width:34,height:34}} background={<Circle fill="tertiarySystemFill"/>}/>:<Image systemName="arrow.triangle.2.circlepath" font={14} foregroundStyle={color} frame={{width:34,height:34}} background={<Circle fill="tertiarySystemFill"/>}/>}
@@ -174,7 +173,45 @@ export function ConnectionsPage({active,version,onClose,selected=true}:{active:C
   useEffect(()=>{const changed=(phase:string)=>{scene.active=phase==="active";scene.epoch++;setForeground(scene.active);if(scene.active){setErr("");setFresh({})}};AppEvents.scenePhase.addListener(changed);return()=>AppEvents.scenePhase.removeListener(changed)},[])
   useEffect(()=>{if(!active)return;seenBox.seen.clear();seenBox.init=false;setFresh({});setLabels(clientLabels(active));setConns([]);setClosed(historyFor(active).closed);setClient("")},[active&&sourceKey(active)])
   useEffect(()=>{if(active&&!paused&&visible&&foreground)historyFor(active).resume()},[active&&sourceKey(active),paused,visible,foreground])
-  useEffect(()=>{if(!active||paused||!visible||!foreground)return;let alive=true,busy=false;const epoch=scene.epoch,current=()=>alive&&scene.active&&epoch===scene.epoch;setErr("");const h=historyFor(active);async function refresh(){if(!current()||busy)return;busy=true;try{const xs=await loadConnections(active!);if(current()){h.sample(xs,Date.now());setConns([...h.active]);setClosed([...h.closed]);setErr("");const ids=[...h.active.map(x=>"a:"+x.id),...h.closed.map(x=>"c:"+x.id)];if(seenBox.init){const nw=ids.filter(id=>!seenBox.seen.has(id));if(nw.length){setFresh(f=>({...f,...Object.fromEntries(nw.map(id=>[id,1]))}));nw.forEach((id,i)=>setTimeout(()=>{if(current())setFresh(f=>{const o={...f};delete o[id];return o})},60*(Math.min(i,9)+1)))}}for(const id of ids)seenBox.seen.add(id);seenBox.init=true}}catch{if(current())setErr(safeError())}finally{busy=false}}void refresh();const t=setInterval(refresh,1500);return()=>{alive=false;clearInterval(t)}},[active&&sourceKey(active),version,paused,visible,tick,foreground])
+  useEffect(()=>{
+    // Delays belong to this poll owner, not to the retained page. A restart must
+    // reveal rows whose previous owner's callbacks can no longer complete.
+    setFresh({})
+    if(!active||paused||!visible||!foreground)return
+    let alive=true,busy=false
+    const timers=new Set<ReturnType<typeof setTimeout>>()
+    const epoch=scene.epoch,current=()=>alive&&scene.active&&epoch===scene.epoch
+    setErr("");const h=historyFor(active)
+    async function refresh(){
+      if(!current()||busy)return
+      busy=true
+      try{
+        const xs=await loadConnections(active!)
+        if(current()){
+          h.sample(xs,Date.now());setConns([...h.active]);setClosed([...h.closed]);setErr("")
+          const ids=[...h.active.map(x=>"a:"+x.id),...h.closed.map(x=>"c:"+x.id)]
+          if(seenBox.init){
+            const nw=ids.filter(id=>!seenBox.seen.has(id))
+            if(nw.length){
+              setFresh(f=>({...f,...Object.fromEntries(nw.map(id=>[id,1]))}))
+              // Preserve the existing 60..600ms stagger, but batch rows sharing
+              // a deadline instead of creating one timer/state update per row.
+              for(let i=0;i<Math.min(nw.length,10);i++){
+                const batch=i===9?nw.slice(i):[nw[i]]
+                let timer:ReturnType<typeof setTimeout>
+                timer=setTimeout(()=>{timers.delete(timer);if(current())setFresh(f=>{const o={...f};for(const id of batch)delete o[id];return o})},60*(i+1))
+                timers.add(timer)
+              }
+            }
+          }
+          // Closed history is already bounded; do not retain every ID ever seen.
+          seenBox.seen=new Set(ids);seenBox.init=true
+        }
+      }catch{if(current())setErr(safeError())}finally{busy=false}
+    }
+    void refresh();const t=setInterval(refresh,1500)
+    return()=>{alive=false;clearInterval(t);for(const timer of timers)clearTimeout(timer);timers.clear()}
+  },[active&&sourceKey(active),version,paused,visible,tick,foreground])
   const sortFns:Record<string,(a:Conn,b:Conn)=>number>={new:(a,b)=>(b.start||0)-(a.start||0),old:(a,b)=>(a.start||0)-(b.start||0),down:(a,b)=>(b.downSpeed??0)-(a.downSpeed??0),up:(a,b)=>(b.upSpeed??0)-(a.upSpeed??0),traffic:(a,b)=>(b.up+b.down)-(a.up+a.down)}
   const shown=[...filterConnections((tab==="active"?conns:closed).filter(x=>!fresh[(tab==="active"?"a:":"c:")+x.id]),q,client,labels)].sort(sortFns[sort]),clients=Array.from(new Set([...conns,...closed].map(x=>x.sourceIP??"").filter(Boolean)))
   async function close(x?:Conn){if(!active)return;await attempt(async()=>{if(await confirmed(active.name,x?`断开到 ${x.host} 的连接（${x.src}）。应用可能重新建立连接。`:`断开此Mihomo内核的全部活动连接（当前观察 ${conns.length} 条）。应用可能重新建立连接。`,()=>x?closeConnection(active,x.id):closeAllConnections(active)))setTick(t=>t+1)})}

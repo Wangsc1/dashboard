@@ -27,7 +27,7 @@ export function traceIconPreference(stage: "change" | "accepted" | "global-rende
   try {
     const raw = Storage.get<Partial<Preferences>>(KEY)
     const stored = typeof raw?.customIcons === "boolean" ? raw.customIcons : "unavailable"
-    console.log(`[preferences-icon] build=1.5.188 instance=${preferenceInstance} revision=${preferenceRevision} stage=${stage} enabled=${enabled} snapshot=${getPreferences().customIcons} stored=${stored}`)
+    console.log(`[preferences-icon] build=1.5.189 instance=${preferenceInstance} revision=${preferenceRevision} stage=${stage} enabled=${enabled} snapshot=${getPreferences().customIcons} stored=${stored}`)
   } catch { console.log("[preferences-icon] diagnostic-unavailable") }
 }
 export function preferenceTrace(stage: string) { console.log(`[preferences] revision=${preferenceRevision} ${stage}`) }
@@ -129,13 +129,20 @@ export const controllerHealth: Record<string, boolean | undefined> = {}
 
 const IMAGE_INDEX = "dashboard_image_index_v140"
 let imageGeneration = 0
+const pendingIcons = new Map<string, Promise<any>>()
 export async function cachedIcon(url: string): Promise<any> {
 
   if (!/^https:\/\//i.test(url) || /[?#]/.test(url) || /^https:\/\/[^/]*@/i.test(url)) return null
   const key = "dashboard_image_v140_" + encodeURIComponent(url)
   const data = Storage.getData(key)
   if (data) return UIImage.fromData(data)
-  const generation = imageGeneration
+  const pending = pendingIcons.get(key)
+  if (pending) return pending
+  const request = loadIcon(url, key, imageGeneration)
+  pendingIcons.set(key, request)
+  try { return await request } finally { if (pendingIcons.get(key) === request) pendingIcons.delete(key) }
+}
+async function loadIcon(url: string, key: string, generation: number): Promise<any> {
   const r = await fetch(url, { timeout: getPreferences().requestTimeout })
   if (!r.ok) return null
   const content = r.headers.get("content-type") ?? ""
@@ -151,6 +158,9 @@ export async function cachedIcon(url: string): Promise<any> {
 }
 export function clearImageCache() {
   imageGeneration++
+  // New reads must not join a pre-clear download. Its generation still prevents
+  // stale bytes from being persisted when that download eventually completes.
+  pendingIcons.clear()
   const keys = Storage.get<string[]>(IMAGE_INDEX) ?? []
   for (const k of keys) if (k.startsWith("dashboard_image_v140_")) Storage.remove(k)
   Storage.remove(IMAGE_INDEX); recordEvent("cache", true)
