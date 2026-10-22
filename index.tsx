@@ -18,7 +18,7 @@ import { confirmed } from "./dashboard-model"
 import { DOCKER_PNG_BASE64 } from "./docker-icon"
 import { useSmoothPlot } from "./chart-ui"
 import { CHART_HISTORY } from "./chart"
-import { panelRowBackground, PanelSettingsSections, LogsPage, KernelConfigPage, usePreferences } from "./settings-ui"
+import { panelRowBackground, PanelSettingsSections, LogsPage, KernelConfigPage, usePageColorScheme, usePreferences } from "./settings-ui"
 import { getPreferences, controllerHealth, cachedIcon, feedback, recordEvent } from "./preferences"
 
 const msg = (e: any) => String(e?.message ?? e ?? "未知错误")
@@ -338,7 +338,9 @@ function OverviewPage({ active, version, onSwitch, onClose, selected = true }: {
 function WrtInterfacesPage({ active, version }: { active: Controller; version: number }) {
   const page=useDetailPage()
   const {value:list,error:err}=useRouterDetail(active,"interfaces",()=>detailReads.interfaces(active),version,5000,page)
-  return <Form onAppear={page.onAppear} onDisappear={page.onDisappear} background="systemBackground" scrollContentBackground="hidden" navigationTitle="网络接口" navigationBarTitleDisplayMode="inline">
+
+  const pageScheme = usePageColorScheme(page)
+  return <Form preferredColorScheme={pageScheme} onAppear={page.onAppear} onDisappear={page.onDisappear} background="systemBackground" scrollContentBackground="hidden" navigationTitle="网络接口" navigationBarTitleDisplayMode="inline">
     {!list&&!err?<Text>正在读取…</Text>:null}
     {err ? <Section listRowBackground={panelRowBackground()}><Text foregroundStyle="systemRed">{err}</Text></Section> : null}
     <Section listRowBackground={panelRowBackground()}>
@@ -352,7 +354,9 @@ function WrtInterfacesPage({ active, version }: { active: Controller; version: n
 function WrtLeasesPage({ active, version }: { active: Controller; version: number }) {
   const page=useDetailPage()
   const {value:list,error:err}=useRouterDetail(active,"leases",()=>detailReads.leases(active),version,10000,page)
-  return <Form onAppear={page.onAppear} onDisappear={page.onDisappear} background="systemBackground" scrollContentBackground="hidden" navigationTitle={list ? `在线设备 (${list.length})` : "在线设备"} navigationBarTitleDisplayMode="inline">
+
+  const pageScheme = usePageColorScheme(page)
+  return <Form preferredColorScheme={pageScheme} onAppear={page.onAppear} onDisappear={page.onDisappear} background="systemBackground" scrollContentBackground="hidden" navigationTitle={list ? `在线设备 (${list.length})` : "在线设备"} navigationBarTitleDisplayMode="inline">
     {!list&&!err?<Text>正在读取…</Text>:null}
     {err ? <Section listRowBackground={panelRowBackground()}><Text foregroundStyle="systemRed">{err}</Text></Section> : null}
     <Section listRowBackground={panelRowBackground()} footer={<Text>来自 DHCP 租约，不含静态地址设备。</Text>}>
@@ -388,7 +392,9 @@ function DockerPage({ active }: { active: Controller }) {
     if (busy) return
     void guarded(setBusy, async () => { await confirmed(`${active.name} · ${x.name}`, `${label}容器；会影响该容器承载的服务。`, () => detailWrite(active,"docker",() => dockerAction(active, x.id, action))); setTick(t => t + 1) })
   }
-  return <Form onAppear={page.onAppear} onDisappear={page.onDisappear} background="systemBackground" scrollContentBackground="hidden" navigationTitle="Docker 管理" navigationBarTitleDisplayMode="inline">
+
+  const pageScheme = usePageColorScheme(page)
+  return <Form preferredColorScheme={pageScheme} onAppear={page.onAppear} onDisappear={page.onDisappear} background="systemBackground" scrollContentBackground="hidden" navigationTitle="Docker 管理" navigationBarTitleDisplayMode="inline">
     {!ov&&!overviewError?<Text>正在读取 Docker 概览…</Text>:null}
     {overviewError?<Text foregroundStyle="systemRed">{overviewError}</Text>:null}
     {!list&&!err?<Text>正在读取容器…</Text>:null}
@@ -449,7 +455,10 @@ function Row({ title, value }: { title: string; value: string }) { return <VStac
 function ImagePage({ active, x, onDone }: { active: Controller; x: DockerImage; onDone: () => void }) {
   const dismiss = Navigation.useDismiss(), [busy, setBusy] = useState(false)
   const del = (force: boolean) => guarded(setBusy, async () => { if (await confirmed(`${active.name} · ${x.tags[0] ?? x.id.slice(7, 19)}`, `${force ? "强制" : ""}删除镜像；${x.containers.length ? "仍有容器使用它，" : ""}不可恢复。`, () => detailWrite(active,"docker",() => dockerImageRemove(active, x.id, force)))) { onDone(); dismiss() } })
-  return <Form background="systemBackground" scrollContentBackground="hidden" navigationTitle="镜像" navigationBarTitleDisplayMode="inline">
+
+  const page=useDetailPage()
+  const pageScheme = usePageColorScheme(page)
+  return <Form onAppear={page.onAppear} onDisappear={page.onDisappear} preferredColorScheme={pageScheme} background="systemBackground" scrollContentBackground="hidden" navigationTitle="镜像" navigationBarTitleDisplayMode="inline">
     <Section listRowBackground={panelRowBackground()} header={<Text>镜像文件概览</Text>}>
       <Row title="标签" value={x.tags.join("\n")} />
       <Row title="容器" value={x.containers.join(", ")} />
@@ -473,7 +482,9 @@ function ContainerPage({ active, x }: { active: Controller; x: DockerContainer }
   useEffect(()=>{if(d&&policy===orig){setPolicy(d.policy);setOrig(d.policy)}},[d])
   const op = (label: string, effect: string, fn: () => Promise<any>, leave = false) => guarded(setBusy, async () => { if (await confirmed(`${active.name} · ${x.name}`, effect, fn)) { if (leave) dismiss(); else setTimeout(() => setTick(t => t + 1), 800) } })
   const save = () => guarded(setBusy, async () => { await confirmed(`${active.name} · ${x.name}`, `将重启策略改为 ${policy}，不重启容器。`, () => detailWrite(active,"docker",() => saveContainerPolicy(active, x.id, policy))); setOrig(policy) })
-  return <Form onAppear={page.onAppear} onDisappear={page.onDisappear} background="systemBackground" scrollContentBackground="hidden" navigationTitle={x.name} navigationBarTitleDisplayMode="inline">
+
+  const pageScheme = usePageColorScheme(page)
+  return <Form preferredColorScheme={pageScheme} onAppear={page.onAppear} onDisappear={page.onDisappear} background="systemBackground" scrollContentBackground="hidden" navigationTitle={x.name} navigationBarTitleDisplayMode="inline">
     {!d&&!err?<Text>正在读取…</Text>:null}
     {err ? <Section listRowBackground={panelRowBackground()}><Text foregroundStyle="systemRed">{err}</Text></Section> : null}
     {d ? <Section listRowBackground={panelRowBackground()} header={<Text>容器概览</Text>}>
@@ -514,7 +525,9 @@ function DockerSettingsPage({ active }: { active: Controller }) {
   useEffect(()=>{if(remote&&dirtySource!==source)setS(remote)},[remote,source])
   const set = (k: keyof DockerSettings, v: string) => {setDirtySource(source);setS(o => o ? { ...o, [k]: v } : o)}
   const save = () => s && guarded(setBusy, async () => { await confirmed(`${active.name} · dockerd`, "保存后将重启 Docker 服务，所有容器会短暂中断。", () => detailWrite(active,"docker",() => saveDockerSettings(active, s))) })
-  return <Form onAppear={page.onAppear} onDisappear={page.onDisappear} background="systemBackground" scrollContentBackground="hidden" navigationTitle="Docker 参数" navigationBarTitleDisplayMode="inline">
+
+  const pageScheme = usePageColorScheme(page)
+  return <Form preferredColorScheme={pageScheme} onAppear={page.onAppear} onDisappear={page.onDisappear} background="systemBackground" scrollContentBackground="hidden" navigationTitle="Docker 参数" navigationBarTitleDisplayMode="inline">
     {!s&&!err?<Text>正在读取…</Text>:null}
     {err ? <Section listRowBackground={panelRowBackground()}><Text foregroundStyle="systemRed">{err}</Text></Section> : null}
     {s ? <Section listRowBackground={panelRowBackground()} header={<Text>常规</Text>} footer={<Text>数据目录为只读（改动会让现有容器消失）。保存会重启 Docker。</Text>}>
@@ -541,7 +554,9 @@ function FrpPage({ active }: { active: Controller }) {
     void guarded(setBusy, async () => { await confirmed(`${active.name} · frpc`, `${label} frp 客户端；穿透服务会短暂中断。`, () => detailWrite(active,"frp",() => frpAction(active, action))); setTimeout(() => setTick(t => t + 1), 1500) })
   }
   const reload = () => setTimeout(() => setTick(t => t + 1), 1500)
-  return <Form onAppear={page.onAppear} onDisappear={page.onDisappear} background="systemBackground" scrollContentBackground="hidden" navigationTitle="FRP 管理" navigationBarTitleDisplayMode="inline">
+
+  const pageScheme = usePageColorScheme(page)
+  return <Form preferredColorScheme={pageScheme} onAppear={page.onAppear} onDisappear={page.onDisappear} background="systemBackground" scrollContentBackground="hidden" navigationTitle="FRP 管理" navigationBarTitleDisplayMode="inline">
     {!info&&!err?<Text>正在读取…</Text>:null}
     {err ? <Section listRowBackground={panelRowBackground()}><Text foregroundStyle="systemRed">{err}</Text></Section> : null}
     {info ? <Section listRowBackground={panelRowBackground()} header={<Text>服务</Text>}>
@@ -569,7 +584,10 @@ function FrpCommonPage({ active, info, onDone }: { active: Controller; info: Frp
   const dismiss = Navigation.useDismiss()
   const [addr, setAddr] = useState(info.common.addr), [port, setPort] = useState(info.common.port), [tls, setTls] = useState(info.common.tls), [token, setToken] = useState(info.common.token), [busy, setBusy] = useState(false)
   const save = () => guarded(setBusy, async () => { if (await confirmed(`${active.name} · frpc`, "保存服务端参数并重启 frpc；穿透会短暂中断，参数错误会导致断连。", () => detailWrite(active,"frp",() => saveFrpCommon(active, { addr: addr.trim(), port: port.trim(), tls, token: token.trim() })))) { onDone(); dismiss() } })
-  return <Form background="systemBackground" scrollContentBackground="hidden" navigationTitle="服务端参数" navigationBarTitleDisplayMode="inline">
+
+  const page=useDetailPage()
+  const pageScheme = usePageColorScheme(page)
+  return <Form onAppear={page.onAppear} onDisappear={page.onDisappear} preferredColorScheme={pageScheme} background="systemBackground" scrollContentBackground="hidden" navigationTitle="服务端参数" navigationBarTitleDisplayMode="inline">
     <Section listRowBackground={panelRowBackground()}>
       <Field title="服务器地址" value={addr} onChanged={setAddr} />
       <Field title="服务器端口" value={port} onChanged={setPort} />
@@ -588,7 +606,10 @@ function FrpProxyPage({ active, initial, onDone }: { active: Controller; initial
   const [lip, setLip] = useState(initial ? rawLocal.slice(0, idx) : "10.0.0.1"), [lport, setLport] = useState(initial ? rawLocal.slice(idx + 1) : "")
   const [rport, setRport] = useState(initial?.remote ?? ""), [busy, setBusy] = useState(false)
   const save = () => guarded(setBusy, async () => { if (await confirmed(`${active.name} · ${name || "新规则"}`, `${initial ? "修改" : "添加"}穿透规则并重启 frpc。`, () => detailWrite(active,"frp",() => saveFrpProxy(active, { id: initial?.id, name: name.trim(), type, local_ip: lip.trim(), local_port: lport.trim(), remote_port: rport.trim() })))) { onDone(); dismiss() } })
-  return <Form background="systemBackground" scrollContentBackground="hidden" navigationTitle={initial ? initial.name : "添加规则"} navigationBarTitleDisplayMode="inline">
+
+  const page=useDetailPage()
+  const pageScheme = usePageColorScheme(page)
+  return <Form onAppear={page.onAppear} onDisappear={page.onDisappear} preferredColorScheme={pageScheme} background="systemBackground" scrollContentBackground="hidden" navigationTitle={initial ? initial.name : "添加规则"} navigationBarTitleDisplayMode="inline">
     <Section listRowBackground={panelRowBackground()}>
       <Field title="名称" value={name} onChanged={setName} />
       <Picker title="类型" pickerStyle="menu" value={type} onChanged={setType}><Text tag="tcp">TCP</Text><Text tag="udp">UDP</Text></Picker>
@@ -629,7 +650,9 @@ function SoftwarePage({ active }: { active: Controller }) {
     ? [...(p.upgradeTo ? [<Button title="升级" tint="systemBlue" action={() => run(p.name, `升级到 ${p.upgradeTo}；可能重启相关服务。`, () => detailWrite(active,"software",() => pkgUpgrade(active, [p.name])))} />] : []),
        <Button title="卸载" tint="systemRed" action={() => run(p.name, "卸载软件包及其不再需要的依赖；可能导致依赖它的功能失效。", () => detailWrite(active,"software",() => pkgRemove(active, [p.name])))} />]
     : [<Button title="安装" tint="systemBlue" action={() => run(p.name, "下载并安装；会改动系统。", () => detailWrite(active,"software",() => pkgInstall(active, [p.name])))} />]
-  return <Form onAppear={page.onAppear} onDisappear={page.onDisappear} background="systemBackground" scrollContentBackground="hidden" navigationTitle="软件管理" navigationBarTitleDisplayMode="inline">
+
+  const pageScheme = usePageColorScheme(page)
+  return <Form preferredColorScheme={pageScheme} onAppear={page.onAppear} onDisappear={page.onDisappear} background="systemBackground" scrollContentBackground="hidden" navigationTitle="软件管理" navigationBarTitleDisplayMode="inline">
     {installedError||availableError?<Text foregroundStyle="systemRed">{installedError||availableError}</Text>:null}
     {err ? <Section listRowBackground={panelRowBackground()}><Text foregroundStyle="systemRed">{err}</Text></Section> : null}
     <Section listRowBackground={panelRowBackground()} header={<Text>磁盘空间</Text>} footer={<Text>软件包操作可能破坏系统，请谨慎。</Text>}><Text foregroundStyle="secondaryLabel">{disk || (diskData===undefined?"正在读取…":"-")}</Text></Section>
@@ -654,7 +677,9 @@ function SoftwarePage({ active }: { active: Controller }) {
 }
 
 function HelpPage() {
-  return <Form background="systemBackground" scrollContentBackground="hidden" navigationTitle="使用说明" navigationBarTitleDisplayMode="inline">
+
+  const pageScheme = usePageColorScheme()
+  return <Form preferredColorScheme={pageScheme} background="systemBackground" scrollContentBackground="hidden" navigationTitle="使用说明" navigationBarTitleDisplayMode="inline">
     <Section listRowBackground={panelRowBackground()} header={<Text>OpenWrt</Text>}>
       <Text>地址填路由器 LuCI 后台的 IP，端口为 LuCI 的端口（默认 80；开启 HTTPS 时通常 443）。用户名、密码是登录 LuCI 的账号。</Text>
     </Section>
@@ -705,7 +730,9 @@ function EditController({ initial, onDone }: { initial?: Controller; onDone: () 
       onDone(); if(!auto)dismiss()
     } catch (e) { setErr(msg(e)) } finally { entry.busy=false }
   }
-  return <Form background="systemBackground" scrollContentBackground="hidden" navigationTitle={initial ? "编辑 OpenWrt" : "添加 OpenWrt"} navigationBarTitleDisplayMode="inline"
+
+  const pageScheme = usePageColorScheme()
+  return <Form preferredColorScheme={pageScheme} background="systemBackground" scrollContentBackground="hidden" navigationTitle={initial ? "编辑 OpenWrt" : "添加 OpenWrt"} navigationBarTitleDisplayMode="inline"
     onDisappear={()=>save(true)}>
     <Section listRowBackground={panelRowBackground()} header={<Text>基本信息</Text>}>
       <TextField title="名称" value={name} onChanged={change("name",setName)} prompt="例如：家庭路由" />
@@ -745,7 +772,9 @@ function SettingsPage({ active, onChanged }: { active: Controller | null; onChan
     setList(listControllers())
     setTimeout(onChanged, 500)
   }
-  return <Form background="systemBackground" scrollContentBackground="hidden" navigationTitle="面板设置" navigationBarTitleDisplayMode="inline">
+
+  const pageScheme = usePageColorScheme()
+  return <Form preferredColorScheme={pageScheme} background="systemBackground" scrollContentBackground="hidden" navigationTitle="面板设置" navigationBarTitleDisplayMode="inline">
     <Section listRowBackground={panelRowBackground()} header={<HStack><Text>OpenWrt</Text><Spacer /><Text font={12} foregroundStyle="secondaryLabel">{`v${VERSION}`}</Text></HStack>}>
       {list.map(c => <NavigationLink key={c.id} destination={<EditController initial={c} onDone={reload} />}
           contextMenu={controllerHealth[c.id] === false && !revealed.includes(c.id) ? {menuItems:<Button title="展开地址" action={() => setRevealed(ids => ids.includes(c.id) ? ids : [...ids, c.id])} />} : undefined}

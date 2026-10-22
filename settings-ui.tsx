@@ -1,6 +1,6 @@
 import { useDetailPage, routerDetailsStatus } from "./router-details"
 import { cadenceSummary } from "./cadence-diagnostics"
-import { ScrollView, Button, Circle, GeometryReader, ZStack, RoundedRectangle, gradient, Form, HStack, Image, Menu, Picker, Section, Spacer, Text, TextField, Toggle, VStack, useEffect, useState } from "scripting"
+import { AppEvents, Device, useColorScheme, ScrollView, Button, Circle, GeometryReader, ZStack, RoundedRectangle, gradient, Form, HStack, Image, Menu, Picker, Section, Spacer, Text, TextField, Toggle, VStack, useEffect, useState } from "scripting"
 import { Controller, ClashConfig, LOG_LEVELS, TUN_STACKS, tunStackLabel, loadConfig, cachedKernelConfig, forgetKernelConfig, patchConfig, validateConfigPatch } from "./api"
 import { Preferences, AppLog, LogLevel, getPreferences, savePreferences, subscribePreferences, preferenceTrace, traceIconPreference, feedback, getLogs, clearLogs, exportLogs, logTime, getHeaderText, saveHeaders, clearImageCache } from "./preferences"
 
@@ -27,6 +27,27 @@ export function usePreferences(keys?: (keyof Preferences)[], enabled = true, tra
     return () => { unsubscribe(); if (trace) preferenceTrace("global-unsubscribe") }
   }, [signature, enabled, trace])
   return p
+}
+// Native navigation destinations can retain their own hosting environment after
+// backgrounding. Bind their appearance locally, not only on the root shell.
+export function usePageColorScheme(page?: ReturnType<typeof useDetailPage>): "light" | "dark" {
+  const { theme } = usePreferences(["theme"])
+  const system = useColorScheme()
+  const [resume, setResume] = useState(() => ({ scheme: system }))
+  useEffect(() => {
+    const active = (phase: string) => {
+      if (phase === "active") setResume({ scheme: Device.colorScheme === "dark" ? "dark" : "light" })
+    }
+    const visible = (shown: boolean) => {
+      AppEvents.scenePhase.removeListener(active)
+      if (shown) { active("active"); AppEvents.scenePhase.addListener(active) }
+    }
+    page?.listeners.add(visible)
+    if (!page || page.visible) AppEvents.scenePhase.addListener(active)
+    return () => { page?.listeners.delete(visible); AppEvents.scenePhase.removeListener(active) }
+  }, [page])
+  useEffect(() => { setResume({ scheme: system }) }, [system])
+  return theme === "system" ? resume.scheme : theme
 }
 function update(patch: Partial<Preferences>) { if (typeof patch.customIcons === "boolean") traceIconPreference("change", patch.customIcons); preferenceTrace("changed"); try { savePreferences(patch); feedback() } catch { void Dialog.alert({ message: "本地设置保存失败，请重试" }) } }
 export { update as updatePreference, Choice }
@@ -152,7 +173,9 @@ function IconsPage() {
       savePreferences({ groupIcons: icons }); setErr("已保存；启用自定义代理组图标后生效")
     } catch (e: any) { setErr(String(e.message)) }
   }
-  return <Form background="systemBackground" scrollContentBackground="hidden" navigationTitle="自定义代理组图标" navigationBarTitleDisplayMode="inline"><Section footer={<Text>本地替代：按组名配置 SF Symbols；未覆盖时使用内核提供的 HTTPS 图标（仅脚本管理的缓存）。不修改内核配置。</Text>}><TextField title="图标映射 JSON" value={text} onChanged={setText} prompt={'{"节点选择":"globe"}'} /><Button title="保存图标" action={save} /><Text foregroundStyle="secondaryLabel">{err}</Text></Section></Form>
+
+  const pageScheme = usePageColorScheme()
+  return <Form preferredColorScheme={pageScheme} background="systemBackground" scrollContentBackground="hidden" navigationTitle="自定义代理组图标" navigationBarTitleDisplayMode="inline"><Section footer={<Text>本地替代：按组名配置 SF Symbols；未覆盖时使用内核提供的 HTTPS 图标（仅脚本管理的缓存）。不修改内核配置。</Text>}><TextField title="图标映射 JSON" value={text} onChanged={setText} prompt={'{"节点选择":"globe"}'} /><Button title="保存图标" action={save} /><Text foregroundStyle="secondaryLabel">{err}</Text></Section></Form>
 }
 function HeaderFields({ icon }: { icon: any }) {
   const p = usePreferences()
@@ -296,7 +319,9 @@ export function KernelConfigPage({ c }: { c: Controller }) {
   const toggle = (key: string, title: string) => provided(key)
     ? <Toggle title={title} value={key === "tun" ? (dirty.tun?.enable ?? cfg?.tun?.enable) : (dirty[key] ?? (cfg as any)?.[key])} onChanged={(v: boolean) => change(key, key === "tun" ? { enable: v } : v)} disabled={busy} frame={{height:31}} />
     : <HStack frame={{minHeight:31,maxHeight:31,maxWidth:"infinity"}}><Text>{title}</Text><Spacer /><Text font={14} foregroundStyle="secondaryLabel">{busy ? "" : "未提供"}</Text></HStack>
-  return <ScrollView onAppear={silentRefresh} navigationTitle="代理配置" navigationBarTitleDisplayMode="inline" background="systemBackground">
+
+  const pageScheme = usePageColorScheme()
+  return <ScrollView preferredColorScheme={pageScheme} onAppear={silentRefresh} navigationTitle="代理配置" navigationBarTitleDisplayMode="inline" background="systemBackground">
     <VStack alignment="leading" spacing={10} padding={{ horizontal: 20, vertical: 16 }} frame={{maxWidth:"infinity",alignment:"leading"}}>
       {heading("端口配置")}
       {card(([ ["mixed-port", "混合端口"], ["port", "HTTP 端口"], ["socks-port", "SOCKS5 端口"], ["redir-port", "透明代理端口"], ["tproxy-port", "TProxy 端口"] ]).map(([key, title], i) => <VStack key={key} spacing={0}>
@@ -387,7 +412,9 @@ function CloudSettingsPage() {
       Storage.set("dashboard_cloud_last", text); setStatus(text)
     } catch { setStatus("操作失败，请检查备份格式、iCloud 文件、网络与权限；若本地存储失败，可能已部分合并，请检查控制器。未确认云端同步") } finally { setBusy(false) }
   }
-  return <Form background="systemBackground" scrollContentBackground="hidden" navigationTitle="iCloud 设置备份" navigationBarTitleDisplayMode="inline"><Section footer={<Text>非原样同步：采用官方 FileManager 的 iCloud 文档，手动备份/恢复控制器地址与设置；不支持自动跨设备冲突合并或账号凭据同步。系统负责上传，脚本无法保证其他设备立即收到。</Text>}><Text>{status}</Text><Button title="立即备份" disabled={busy} action={() => transfer(false)} /><Button title="从 iCloud 恢复" disabled={busy} action={() => transfer(true)} /></Section></Form>
+
+  const pageScheme = usePageColorScheme()
+  return <Form preferredColorScheme={pageScheme} background="systemBackground" scrollContentBackground="hidden" navigationTitle="iCloud 设置备份" navigationBarTitleDisplayMode="inline"><Section footer={<Text>非原样同步：采用官方 FileManager 的 iCloud 文档，手动备份/恢复控制器地址与设置；不支持自动跨设备冲突合并或账号凭据同步。系统负责上传，脚本无法保证其他设备立即收到。</Text>}><Text>{status}</Text><Button title="立即备份" disabled={busy} action={() => transfer(false)} /><Button title="从 iCloud 恢复" disabled={busy} action={() => transfer(true)} /></Section></Form>
 }
 const LEVELS: [LogLevel, string, string][] = [["info", "信息", "systemBlue"], ["success", "成功", "systemGreen"], ["warning", "警告", "systemOrange"], ["error", "错误", "systemRed"]]
 export function LogsPage() {
@@ -402,7 +429,9 @@ export function LogsPage() {
   },[page])
   const shown = logs.filter(l => levels.includes(l.level) && (!query || (l.title + l.detail + l.category).toLowerCase().includes(query.toLowerCase()))).slice().reverse()
   async function clear() { if (await Dialog.confirm({ title: "清空运行日志", message: "将删除本脚本的全部应用日志，无法撤销。", confirmLabel: "清空" })) { clearLogs(); setLogs([]) } }
-  return <Form onAppear={page.onAppear} onDisappear={page.onDisappear} background="systemBackground" scrollContentBackground="hidden" navigationTitle="运行日志" navigationBarTitleDisplayMode="inline" toolbar={{ topBarTrailing: <Menu label={<Image systemName="ellipsis.circle" />}>
+
+  const pageScheme = usePageColorScheme(page)
+  return <Form preferredColorScheme={pageScheme} onAppear={page.onAppear} onDisappear={page.onDisappear} background="systemBackground" scrollContentBackground="hidden" navigationTitle="运行日志" navigationBarTitleDisplayMode="inline" toolbar={{ topBarTrailing: <Menu label={<Image systemName="ellipsis.circle" />}>
     <Button title={search ? "隐藏搜索" : "搜索日志"} systemImage="magnifyingglass" action={() => setSearch(!search)} />
     {LEVELS.map(([v, title]) => <Button key={v} title={`${levels.includes(v) ? "✓ " : ""}${title}`} action={() => setLevels(s => s.includes(v) ? s.filter(x => x !== v) : [...s, v])} />)}
     <Button title="刷新" systemImage="arrow.clockwise" action={() => setLogs(getLogs())} />

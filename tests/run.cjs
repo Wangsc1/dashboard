@@ -860,7 +860,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) { const lazy = ['proxies','rules','connections'].includes(ids[i]) && ids[i] !== id; assert.equal(nodes(tree, types[i]).length, lazy ? 0 : 1); if (!lazy) assert.equal(nodes(tree, types[i])[0].props.selected, ids[i] === id) }
     }
-    assert.equal(api.VERSION, '1.31'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.32'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('独立导航栈保留业务owner和身份，只有选中页提供可见工具栏', () => {
     pref.savePreferences({ defaultPage: 'overview' })
@@ -1055,6 +1055,24 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       for (const section of nodes(tree, 'Section')) assert.equal(section.props.listRowBackground.props.fill, 'secondarySystemBackground')
       unmount()
     }
+  })
+  await test('导航子页恢复前台保持独立主题绑定，跟随系统重读外观且不清空草稿', async () => {
+    const before=pref.getPreferences(),listeners=sceneListeners.size
+    for(const theme of ['dark','light','system']) {
+      mockColorScheme='dark'; scripting.Device.colorScheme='dark'; pref.savePreferences({theme})
+      let tree=render(app.EditController,{onDone(){}},true); await flush()
+      tree=render(app.EditController,{onDone(){}})
+      assert.equal(tree.props.preferredColorScheme,theme==='light'?'light':'dark')
+      nodes(tree,'TextField').find(n=>n.props.title==='名称').props.onChanged('保留中的编辑')
+      emitScene('background'); scripting.Device.colorScheme='light'; emitScene('active')
+      tree=render(app.EditController,{onDone(){}});await flush();tree=render(app.EditController,{onDone(){}})
+      assert.equal(tree.props.preferredColorScheme,theme==='dark'?'dark':'light')
+      assert.equal(nodes(tree,'TextField').find(n=>n.props.title==='名称').props.value,'保留中的编辑')
+      unmount(); assert.equal(sceneListeners.size,listeners)
+    }
+    const src=fs.readFileSync(path.join(root,'index.tsx'),'utf8'),scope=src.slice(src.indexOf('function WrtInterfacesPage'),src.indexOf('type RootTab'))
+    assert.ok((scope.match(/<Form\b[^>]*>/g)||[]).every(form=>form.includes('preferredColorScheme={pageScheme}')))
+    mockColorScheme='light';delete scripting.Device.colorScheme;pref.savePreferences(before)
   })
   await test('外观壳响应浅深色与跟随系统，主题更新保持根导航元素身份', async () => {
     pref.savePreferences({ theme: 'system' })
@@ -1967,7 +1985,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       const diagnostic = logs.filter(x => x.startsWith('[preferences-icon]'))
       for (const stage of ['change','accepted','proxies-render','group-render']) assert.ok(diagnostic.some(x => x.includes('stage=' + stage) && x.includes('enabled=false')))
       assert.ok(diagnostic.every(x => !x.includes('private.invalid') && !x.includes('private-group-name') && !x.includes('secret-')))
-      assert.ok(diagnostic.every(x => x.includes('build=1.31') && /instance=[a-z0-9]+/.test(x)))
+      assert.ok(diagnostic.every(x => x.includes('build=1.32') && /instance=[a-z0-9]+/.test(x)))
       assert.equal(new Set(diagnostic.map(x => x.match(/instance=([^ ]+)/)[1])).size, 1)
     } finally { context.console = originalConsole; unmount(); pref.savePreferences({ customIcons: true, testURL: 'https://www.gstatic.com/generate_204' }) }
   })
@@ -2041,7 +2059,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
   await test('主页内存固定一位小数，流量默认精度不变', () => {
     assert.deepEqual(Array.from(api.fmtParts(128.56 * 1048576, false, 1)), ['128.6', 'MB'])
     assert.deepEqual(Array.from(api.fmtParts(128 * 1048576, false, 1)), ['128.0', 'MB'])
-    assert.deepEqual(Array.from(api.fmtParts(1.31 * 1073741824, false, 1)), ['1.3', 'GB'])
+    assert.deepEqual(Array.from(api.fmtParts(1.32 * 1073741824, false, 1)), ['1.3', 'GB'])
     assert.deepEqual(Array.from(api.fmtParts(128 * 1048576)), ['128.00', 'MB'])
     assert.ok(fs.readFileSync(path.join(root,'home-ui.tsx'),'utf8').includes('RamCard'))
   })
