@@ -2,7 +2,7 @@ import { TimingToken, timingToken, timing, timingReadContext, timingSpan } from 
 import { CpuSampler, CpuUsage, CpuMeta, parseCpuInfo, thermalCelsius } from "./openwrt-metrics"
 
 import { getPreferences, customHeaders, recordEvent, controllerHealth, feedback } from "./preferences"
-export const VERSION = "1.18"
+export const VERSION = "1.19"
 
 export type Kind = "clash" | "openwrt"
 export type Plugin = "openclash" | "nikki" | "mihomo"
@@ -649,6 +649,7 @@ export function validateConfigPatch(patch: Partial<ClashConfig>): Partial<ClashC
     } else if (k === "allow-lan" || k === "ipv6") { if (typeof v !== "boolean") throw new Error("网络开关无效") }
     else if (k === "bind-address") { if (typeof v !== "string" || !v.trim() || v.length > 253 || /[\s/?#@]/.test(v)) throw new Error("绑定地址无效") }
     else if (k === "tun") { if (!v || typeof v !== "object" || Array.isArray(v) || typeof v.enable !== "boolean" || Object.keys(v).some(key=>key!=="enable")) throw new Error("仅支持修改 TUN 开关") }
+    else if (k === "tun.stack") { if (!TUN_STACKS.some(([value]) => value === v)) throw new Error("Tun 堆栈值无效") }
     else if (k === "log-level") { if (!LOG_LEVELS.includes(String(v))) throw new Error("日志级别无效") }
     else if (k === "mode") { if (!CLASH_MODES.some(x => x[0] === v)) throw new Error("模式无效") }
     else throw new Error("不支持修改该配置字段")
@@ -658,11 +659,14 @@ export function validateConfigPatch(patch: Partial<ClashConfig>): Partial<ClashC
   return out
 }
 export async function patchConfig(c: Controller, patch: Partial<ClashConfig>) {
-  const body = validateConfigPatch(patch)
-  try { await http(await cc(c), "/configs", { method: "PATCH", body }); recordEvent("config", true);observeMode(c,body.mode);{ const known = cachedKernelConfig(c); if (known) rememberKernelConfig(c, { ...known, ...body, ...(body.tun ? { tun: { enable: body.tun.enable } } : {}) }) } }
+  const { "tun.stack": stack, ...flat } = patch as any
+  const flatBody = validateConfigPatch("tun.stack" in (patch as any) ? { ...flat, "tun.stack": stack } : patch)
+  const body = "tun.stack" in flatBody ? { ...flatBody, "tun.stack": undefined, tun: { enable: (flat as any).tun?.enable ?? !!cachedKernelConfig(c)?.tun?.enable, stack: flatBody["tun.stack"] } } as any : flatBody
+  try { await http(await cc(c), "/configs", { method: "PATCH", body }); recordEvent("config", true);observeMode(c,body.mode);{ const known = cachedKernelConfig(c); if (known) rememberKernelConfig(c, { ...known, ...body, ...(body.tun ? { tun: { ...known.tun, enable: body.tun.enable, ...(body.tun as any).stack !== undefined ? { stack: (body.tun as any).stack } : {} } } : {}) }) } }
   catch (e) { recordEvent("config", false); throw e }
 }
 export const LOG_LEVELS = ["silent", "error", "warning", "info", "debug"]
+export const TUN_STACKS: [string, string][] = [["gVisor", "gVisor"], ["system", "System"], ["mixed", "Mixed"], ["mips", "Mips"]]
 
 export function fmtBytes(n: number): string {
   if (!n || n < 0) return "0 B"

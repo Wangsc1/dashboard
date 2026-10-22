@@ -1,7 +1,7 @@
 import { useDetailPage, routerDetailsStatus } from "./router-details"
 import { cadenceSummary } from "./cadence-diagnostics"
 import { ScrollView, Button, Circle, GeometryReader, ZStack, RoundedRectangle, gradient, Form, HStack, Image, Menu, Picker, Section, Spacer, Text, TextField, Toggle, VStack, useEffect, useState } from "scripting"
-import { Controller, ClashConfig, LOG_LEVELS, loadConfig, cachedKernelConfig, forgetKernelConfig, patchConfig, validateConfigPatch } from "./api"
+import { Controller, ClashConfig, LOG_LEVELS, TUN_STACKS, loadConfig, cachedKernelConfig, forgetKernelConfig, patchConfig, validateConfigPatch } from "./api"
 import { Preferences, AppLog, LogLevel, getPreferences, savePreferences, subscribePreferences, preferenceTrace, traceIconPreference, feedback, getLogs, clearLogs, exportLogs, logTime, getHeaderText, saveHeaders, clearImageCache } from "./preferences"
 
 import { makeBackup, restoreBackup, validateBackup } from "./cloud-backup"
@@ -213,7 +213,7 @@ export function KernelConfigPage({ c }: { c: Controller }) {
     })()
     return () => { session.active = false; session.pending.clear() }
   }, [session])
-  const provided = (key: string) => key === "tun" ? typeof session.cfg?.tun?.enable === "boolean" : (session.cfg as any)?.[key] !== undefined
+  const provided = (key: string) => key === "tun" ? typeof session.cfg?.tun?.enable === "boolean" : key === "tun.stack" ? typeof (session.cfg as any)?.tun?.stack === "string" : (session.cfg as any)?.[key] !== undefined
   async function drain() {
     if (!current() || session.loading || session.saving) return
     session.saving = true; paint()
@@ -222,14 +222,14 @@ export function KernelConfigPage({ c }: { c: Controller }) {
         const batch = new Map(session.pending); session.pending.clear()
         const patch: any = {}
         for (const [key, edit] of batch) {
-          const previous = key === "tun" ? session.cfg?.tun?.enable : (session.cfg as any)?.[key]
+          const previous = key === "tun" ? session.cfg?.tun?.enable : key === "tun.stack" ? (session.cfg as any)?.tun?.stack : (session.cfg as any)?.[key]
           const next = key === "tun" ? edit.value.enable : edit.value
           if (next !== previous) patch[key] = edit.value
         }
         try {
           if (Object.keys(patch).length) await patchConfig(session.controller, patch)
           if (!current()) return
-          session.cfg = { ...session.cfg, ...patch, ...(patch.tun ? { tun: { ...session.cfg?.tun, enable: patch.tun.enable } } : {}) }
+          session.cfg = { ...session.cfg, ...patch, ...(patch.tun ? { tun: { ...session.cfg?.tun, enable: patch.tun.enable } } : {}), ...("tun.stack" in patch ? { tun: { ...session.cfg?.tun, stack: patch["tun.stack"] } } : {}) }
           for (const [key, edit] of batch) {
             if (session.revisions[key] === edit.revision) { delete session.dirty[key]; delete session.errors[key] }
           }
@@ -294,7 +294,15 @@ export function KernelConfigPage({ c }: { c: Controller }) {
         <HStack spacing={12} padding={{ vertical: 12 }}>{icon("link", "systemGreen")}<Text>绑定地址</Text><Spacer />{field("bind-address", "绑定地址", false)}</HStack>
       </>)}
       {heading("TUN 模式")}
-      {card(<HStack spacing={12} padding={{ vertical: 12 }}>{icon("shield", "systemPurple")}{toggle("tun", "TUN 模式")}</HStack>)}
+      {card(<>
+        <HStack spacing={12} padding={{ vertical: 12 }}>{icon("shield", "systemPurple")}{toggle("tun", "TUN 模式")}</HStack>
+        {separator()}
+        <HStack spacing={12} padding={{ vertical: 12 }}>{icon("stack", "systemIndigo")}<Text>Tun 堆栈</Text><Spacer />
+          <Menu disabled={busy || !provided("tun.stack")} label={<HStack spacing={6}><Text foregroundStyle="secondaryLabel">{TUN_STACKS.find(([value]) => value === (dirty["tun.stack"] ?? (cfg as any)?.tun?.stack))?.[1] ?? (busy ? "" : "未知")}</Text><Image systemName="chevron.up.chevron.down" font={12} foregroundStyle="secondaryLabel" /></HStack>}>
+            {TUN_STACKS.map(([value, label]) => <Button key={value} title={label + ((dirty["tun.stack"] ?? (cfg as any)?.tun?.stack) === value ? " ✓" : "")} action={() => change("tun.stack", value)} />)}
+          </Menu>
+        </HStack>
+      </>)}
       {heading("日志")}
       {card(<HStack spacing={12} padding={{ vertical: 12 }}>{icon("doc.text", "systemGray")}<Text>日志级别</Text><Spacer />
         <Menu disabled={busy || !provided("log-level")} label={<HStack spacing={6}><Text foregroundStyle="secondaryLabel">{({silent:"静默",error:"错误",warning:"警告",info:"信息",debug:"调试"} as Record<string,string>)[dirty["log-level"] ?? cfg?.["log-level"] ?? ""] ?? (busy ? "" : "未提供")}</Text><Image systemName="chevron.up.chevron.down" font={12} foregroundStyle="secondaryLabel" /></HStack>}>

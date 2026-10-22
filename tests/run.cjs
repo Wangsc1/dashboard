@@ -499,11 +499,13 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     const valid = { 'redir-port': 0, 'tproxy-port': 65535, ipv6: false, 'bind-address': '::', tun: { enable: true } }
     responder = () => ({}); calls.length = 0
     await api.patchConfig(c, valid); assert.deepEqual(JSON.parse(calls[0].init.body), valid)
+    responder = () => ({ body: { mode: 'rule', tun: { enable: true, stack: 'legacy' } } }); calls.length = 0
+    await api.patchConfig(c, { 'tun.stack': 'mixed' }); assert.deepEqual(JSON.parse(calls[0].init.body), { tun: { enable: true, stack: 'mixed' } }, 'cached tun.enable is preserved when only the stack changes')
     for (const key of ['port', 'socks-port', 'mixed-port', 'redir-port', 'tproxy-port']) {
       for (const value of [0, 65535]) assert.equal(api.validateConfigPatch({ [key]: value })[key], value)
       for (const value of [-1, 65536, 1.5, '', '80', null, undefined]) assert.throws(() => api.validateConfigPatch({ [key]: value }))
     }
-    for (const patch of [{ ipv6: 0 }, { ipv6: null }, { 'bind-address': '' }, { 'bind-address': ' ' }, { 'bind-address': 'bad address' }, { 'bind-address': 'http://host' }, { 'bind-address': 'a'.repeat(254) }, { tun: {} }, { tun: { enable: 1 } }, { tun: { enable: false, stack: 'system' } }, { tun: null }, { tun: [] }]) await assert.rejects(() => api.patchConfig(c, patch))
+    for (const patch of [{ ipv6: 0 }, { ipv6: null }, { 'bind-address': '' }, { 'bind-address': ' ' }, { 'bind-address': 'bad address' }, { 'bind-address': 'http://host' }, { 'bind-address': 'a'.repeat(254) }, { tun: {} }, { tun: { enable: 1 } }, { tun: { enable: false, stack: 'system' } }, { 'tun.stack': 'bogus' }, { tun: null }, { tun: [] }]) await assert.rejects(() => api.patchConfig(c, patch))
     assert.equal(calls.length, 1)
     for (const address of ['*', '0.0.0.0', '::', '127.0.0.1']) assert.equal(api.validateConfigPatch({ 'bind-address': address })['bind-address'], address)
   })
@@ -539,7 +541,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       [() => nodes(tree, 'Toggle').find(n => n.props.title === 'IPv6').props.onChanged(false), { ipv6: false }],
       [() => nodes(tree, 'Toggle').find(n => n.props.title === '允许局域网连接').props.onChanged(true), { 'allow-lan': true }],
       [() => nodes(tree, 'Toggle').find(n => n.props.title === 'TUN 模式').props.onChanged(true), { tun: { enable: true } }],
-      [() => button(nodes(tree, 'Menu')[0], '调试').props.action(), { 'log-level': 'debug' }],
+      [() => button(nodes(tree, 'Menu').find(n => text(n.props.label).trim() === '信息'), '调试').props.action(), { 'log-level': 'debug' }],
     ]
     for (const [action, patch] of actions) { action(); await flush(); assert.deepEqual(JSON.parse(calls.at(-1).init.body), patch); tree = render(ui.KernelConfigPage, { c }) }
     assert.deepEqual(clone(hooks[0].current.cfg.tun), { enable: true, stack: 'mixed', mtu: 9000 })
@@ -552,9 +554,9 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'Toggle').length, 0); assert.match(text(tree), /未提供/)
       assert.ok(nodes(tree, 'TextField').every(n => n.props.value === '' && n.props.disabled))
       assert.ok(!nodes(tree, 'Button').some(n => ['规则模式', '全局模式', '直连模式'].includes(text(n))))
-      assert.equal(nodes(tree, 'Menu')[0].props.disabled, true)
+      assert.equal(nodes(tree, 'Menu').at(-1).props.disabled, true, 'missing log-level stays disabled')
       assert.equal(nodes(tree, 'Image').filter(n => n.props.systemName === 'checkmark').length, 0)
-      const field = nodes(tree, 'TextField')[0]; field.props.onChanged('1234'); field.props.onBlur(); button(nodes(tree, 'Menu')[0], '调试').props.action()
+      const field = nodes(tree, 'TextField')[0]; field.props.onChanged('1234'); field.props.onBlur(); button(nodes(tree, 'Menu').at(-1), '调试').props.action()
       await flush(); assert.equal(calls.length, 1)
     }
     unmount()
@@ -612,6 +614,42 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     const writes = calls.filter(n => n.init.method === 'PATCH').length
     release(); await flush(); assert.equal(calls.filter(n => n.init.method === 'PATCH').length, writes)
     assert.deepEqual(clone(hooks[0].current.cfg.tun), { enable: true, stack: 'system' }); assert.equal(confirms.length, before); unmount()
+  })
+  await test('Tun堆栈：读取已知/未知值、选择写回嵌套补丁、缓存保留enable、失败重试与TUN关闭可显示', async () => {
+    const cfg = { mode: 'rule', tun: { enable: false, stack: 'mixed' } }
+    const stackMenu = tree => nodes(tree, 'Menu').find(n => ['gVisor', 'System', 'Mixed', 'Mips', '未知'].includes(text(n.props.label).trim()))
+    const pick = (tree, title) => nodes(stackMenu(tree), 'Button').find(b => b.props.title === title || b.props.title === title + ' ✓')?.props.action
+    responder = () => ({ body: cfg }); calls.length = 0
+    render(ui.KernelConfigPage, { c }, true); await flush(); let tree = render(ui.KernelConfigPage, { c })
+    assert.ok(text(tree).includes('Tun 堆栈'))
+    const menu = stackMenu(tree)
+    assert.ok(menu, 'known stack renders current value'); assert.equal(menu.props.disabled, false)
+    assert.deepEqual(nodes(menu, 'Button').map(b => b.props.title), ['gVisor', 'System', 'Mixed ✓', 'Mips'], 'current value is ticked, others plain')
+    pick(tree, 'System')(); await flush(); await flush()
+    assert.deepEqual(JSON.parse(calls.filter(n => n.init.method === 'PATCH').at(-1)?.init.body), { tun: { enable: false, stack: 'system' } }, 'cached tun.enable is preserved')
+    assert.deepEqual(clone(hooks[0].current.cfg.tun), { enable: false, stack: 'system' })
+    tree = render(ui.KernelConfigPage, { c })
+    assert.deepEqual(nodes(stackMenu(tree), 'Button').map(b => b.props.title), ['gVisor', 'System ✓', 'Mixed', 'Mips'])
+    pick(tree, 'System')(); await flush()
+    assert.equal(calls.filter(n => n.init.method === 'PATCH').length, 1, 'same value writes nothing')
+    unmount()
+    responder = () => ({ body: { mode: 'rule', tun: { enable: true, stack: 'legacy' } } }); calls.length = 0
+    render(ui.KernelConfigPage, { c }, true); await flush(); tree = render(ui.KernelConfigPage, { c })
+    const unknown = stackMenu(tree)
+    assert.equal(text(unknown.props.label).trim(), '未知', 'unknown stack never pretends to be selected')
+    assert.equal(unknown.props.disabled, false); assert.equal(nodes(tree, 'Image').filter(n => n.props.systemName === 'checkmark').length, 0)
+    pick(tree, 'gVisor')(); await flush(); await flush()
+    assert.deepEqual(JSON.parse(calls.filter(n => n.init.method === 'PATCH').at(-1)?.init.body), { tun: { enable: true, stack: 'gVisor' } })
+    unmount()
+    responder = (_u, init) => init.method === 'PATCH' ? { status: 500 } : { body: cfg }; calls.length = 0
+    render(ui.KernelConfigPage, { c }, true); await flush(); tree = render(ui.KernelConfigPage, { c })
+    const retry = stackMenu(tree)
+    pick(tree, 'Mips')(); await flush(); await flush(); assert.equal(calls.filter(n => n.init.method === 'PATCH').length, 1)
+    tree = render(ui.KernelConfigPage, { c }); assert.ok(text(tree).includes('保存失败'))
+    responder = () => ({ body: cfg }); pick(tree, 'Mips')(); await flush(); await flush()
+    tree = render(ui.KernelConfigPage, { c })
+    assert.deepEqual(clone(hooks[0].current.cfg.tun), { enable: false, stack: 'mips' }); assert.ok(!text(tree).includes('保存失败'))
+    unmount()
   })
   await test('代理配置来源切换/离页隔离旧GET、PATCH、排队操作及原生回调', async () => {
     let release; let waiting = new Promise(resolve => { release = resolve })
@@ -750,7 +788,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) { const lazy = ['proxies','rules','connections'].includes(ids[i]) && ids[i] !== id; assert.equal(nodes(tree, types[i]).length, lazy ? 0 : 1); if (!lazy) assert.equal(nodes(tree, types[i])[0].props.selected, ids[i] === id) }
     }
-    assert.equal(api.VERSION, '1.18'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.19'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('独立导航栈保留业务owner和身份，只有选中页提供可见工具栏', () => {
     pref.savePreferences({ defaultPage: 'overview' })
@@ -1851,7 +1889,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       const diagnostic = logs.filter(x => x.startsWith('[preferences-icon]'))
       for (const stage of ['change','accepted','proxies-render','group-render']) assert.ok(diagnostic.some(x => x.includes('stage=' + stage) && x.includes('enabled=false')))
       assert.ok(diagnostic.every(x => !x.includes('private.invalid') && !x.includes('private-group-name') && !x.includes('secret-')))
-      assert.ok(diagnostic.every(x => x.includes('build=1.18') && /instance=[a-z0-9]+/.test(x)))
+      assert.ok(diagnostic.every(x => x.includes('build=1.19') && /instance=[a-z0-9]+/.test(x)))
       assert.equal(new Set(diagnostic.map(x => x.match(/instance=([^ ]+)/)[1])).size, 1)
     } finally { context.console = originalConsole; unmount(); pref.savePreferences({ customIcons: true, testURL: 'https://www.gstatic.com/generate_204' }) }
   })
