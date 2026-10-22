@@ -17,7 +17,7 @@ import { DOCKER_PNG_BASE64 } from "./docker-icon"
 import { useSmoothPlot } from "./chart-ui"
 import { CHART_HISTORY } from "./chart"
 import { panelRowBackground, PanelSettingsSections, LogsPage, KernelConfigPage, usePreferences } from "./settings-ui"
-import { getPreferences, controllerHealth, cachedIcon, feedback, recordEvent } from "./preferences"
+import { getPreferences, controllerHealth, cachedIcon, feedback, recordEvent, HomeDiagnostic } from "./preferences"
 
 const msg = (e: any) => String(e?.message ?? e ?? "未知错误")
 
@@ -164,6 +164,22 @@ function useForeground() {
   return foreground
 }
 
+// Diagnostic failures must never affect requests, sampling or native navigation.
+function homeDiagnostic(home: HomeDiagnostic, ok = true) {
+  try { recordEvent("homeDiagnostic", ok, { home }) } catch {}
+}
+function homeFailure(e: unknown): HomeDiagnostic["reason"] {
+  try {
+    const text = typeof (e as any)?.message === "string" ? (e as any).message as string : ""
+    if (text === "来源或采样代次已改变") return "epoch"
+    if (/ACCESS|认证失败|登录失败|没有权限/.test(text)) return "auth"
+    if (/timeout|timed out|超时/i.test(text)) return "timeout"
+    if (/HTTP \d{3}/.test(text)) return "http"
+    if (/返回|ubus 错误|ubus 调用失败/.test(text)) return "response"
+    return "other"
+  } catch { return "other" }
+}
+
 // First home sample is requested at launch, before any tab exists, so a non-launch home tab can show data on its first frame.
 const overviewPrime = new Map<string, Overview>()
 const overviewPrimeListeners = new Set<(source:string,o:Overview)=>void>()
@@ -172,11 +188,13 @@ function primeOverview(active: Controller | null) {
   if (!active || active.kind !== "openwrt") return
   const source = overviewSource(active)
   if(overviewPrimePending.has(source))return overviewPrimePending.get(source)
+  homeDiagnostic({stage:"prime-start",active:active.kind,cache:overviewPrime.has(source)})
   const pending=loadOverview(active).then(o=>{
-    if(overviewSource(active)!==source)return
+    if(overviewSource(active)!==source){homeDiagnostic({stage:"prime-discard"});return}
     overviewPrime.set(source,o)
+    homeDiagnostic({stage:"prime-success",cache:true})
     for(const fn of overviewPrimeListeners)fn(source,o)
-  }).catch(()=>{}).finally(()=>{overviewPrimePending.delete(source)})
+  }).catch(e=>{homeDiagnostic({stage:"prime-failure",reason:homeFailure(e)},false)}).finally(()=>{overviewPrimePending.delete(source)})
   overviewPrimePending.set(source,pending)
   return pending
 }
@@ -197,9 +215,11 @@ function OverviewPage({ active, version, onSwitch, onClose, selected = true }: {
   // A home tab that is not the launch tab still loads its first data right away, then pauses until it is selected.
   const priming = foreground && !selected && !ov
   const live = showCharts || priming
+  useEffect(()=>{homeDiagnostic({stage:"home-mount",active:active?.kind??"none",selected,cache:overviewPrime.has(source),ov:!!ov})},[])
+  useEffect(()=>{homeDiagnostic({stage:"home-state",selected,foreground,cache:overviewPrime.has(source),ov:!!ov,pending:overviewPrimePending.has(source)})},[source,selected,foreground,!!ov])
   useEffect(() => { setHistories(newHistory()); setOv(overviewPrime.get(source) ?? null); setSampleSource(source); setCpuOpen(false) }, [source])
   useEffect(()=>{
-    const receive=(key:string,o:Overview)=>{if(key===source){setOv(o);setSampleSource(key);setErr("")}}
+    const receive=(key:string,o:Overview)=>{if(key===source){homeDiagnostic({stage:"home-receive",cache:true});setOv(o);setSampleSource(key);setErr("")}}
     overviewPrimeListeners.add(receive)
     const cached=overviewPrime.get(source);if(cached)receive(source,cached)
     return()=>{overviewPrimeListeners.delete(receive)}
@@ -209,7 +229,7 @@ function OverviewPage({ active, version, onSwitch, onClose, selected = true }: {
     if (!active || !live) return
     if (active.kind !== "openwrt") { setErr("主页仅支持 OpenWrt 路由器数据，请在设置添加 OpenWrt"); return }
     // Do not invalidate the launch request that loadOverview deduplicates with this reader.
-    if(!overviewPrimePending.has(source))resetOverviewSampling(active)
+    if(!overviewPrimePending.has(source)){homeDiagnostic({stage:"sampling-reset",pending:false});resetOverviewSampling(active)}
     // Rebase after a pause: a delta spanning the hidden interval is not a live
     // sample. Keep the last same-source CPU display until the next valid delta.
     const previousCpu = sampleSource === source ? ov?.wrt : undefined
@@ -220,6 +240,7 @@ function OverviewPage({ active, version, onSwitch, onClose, selected = true }: {
       try {
         const o = await loadOverview(active!)
         if (alive && overviewSource(active!)===source) {
+          homeDiagnostic({stage:"refresh-success"})
           const cpus = o.wrt?.cpus ?? []
           const keepCpu = baselining && previousCpu && o.wrt && o.wrt.uptime >= previousCpu.uptime && cpus.length > 0 && cpus.length === previousCpu.cpus?.length && cpus.every((c,i)=>c.usage===undefined && c.id===previousCpu.cpus?.[i]?.id)
           baselining = false
@@ -235,11 +256,12 @@ function OverviewPage({ active, version, onSwitch, onClose, selected = true }: {
             return next
           })
         }
-      } catch (e) { if (alive) setErr(msg(e)) }
+        else homeDiagnostic({stage:"refresh-discard"})
+      } catch (e) { homeDiagnostic({stage:"refresh-failure",reason:homeFailure(e)},false);if (alive) setErr(msg(e)) }
       finally { refreshing = false }
     }
     void refresh(); const t = setInterval(refresh, 1000)
-    return () => { alive = false; clearInterval(t);resetOverviewSampling(active!) }
+    return () => { alive = false; clearInterval(t);homeDiagnostic({stage:"sampling-reset",pending:overviewPrimePending.has(source)});resetOverviewSampling(active!) }
   }, [source, version, live])
   useEffect(() => {
     setHosts([])
@@ -265,6 +287,7 @@ function OverviewPage({ active, version, onSwitch, onClose, selected = true }: {
   if(!cpuOpen||homeFrame.source!==source){homeFrame.source=source;homeFrame.overview=shownOv;homeFrame.histories=shownHistory}
   const openCpu=useMemo(()=>()=>setCpuOpen(true),[])
   const homeContent=useMemo(()=><HomeDashboard overview={homeFrame.overview} histories={homeFrame.histories} running={showCharts&&visible&&!cpuOpen} onCpu={openCpu}/>,[homeFrame.overview,homeFrame.histories,showCharts&&visible&&!cpuOpen,openCpu])
+  useEffect(()=>{homeDiagnostic({stage:"home-ui",selected,ov:!!shownOv,ui:!!homeFrame.overview})},[source,selected,!!shownOv,!!homeFrame.overview])
   const statusText = err ? "连接失败" : ov ? "运行正常" : "连接中", statusColor = err ? "systemRed" : "systemGreen"
   const toolbar = useMemo(() => ({ ...rootToolbar("home", onClose, <NavigationLink destination={<SettingsPage active={active} onChanged={onSwitch} />}><Image systemName="ellipsis.circle" /></NavigationLink>),
     principal: <VStack spacing={1}>
@@ -726,11 +749,13 @@ function Root() {
     // Native tabs may not mount home at all. Launch is only a first attempt:
     // recover transient failures (including an invalidated sampling epoch) here,
     // and also handle a controller that becomes available after run().
+    homeDiagnostic({stage:"root-state",active:active?.kind??"none",foreground,cache:overviewPrime.has(homeSource),pending:overviewPrimePending.has(homeSource)})
     if (!active || active.kind !== "openwrt" || !foreground || overviewPrime.has(homeSource)) return
     let alive = true
     const retry = () => {
       if (!alive) return
       if (overviewPrime.has(homeSource)) { clearInterval(timer); return }
+      homeDiagnostic({stage:"root-retry",foreground:true,pending:overviewPrimePending.has(homeSource)})
       void primeOverview(active)?.then(() => {
         if (alive && overviewPrime.has(homeSource)) clearInterval(timer)
       })
@@ -779,6 +804,7 @@ function AppearanceRoot() {
 
 async function run() {
   recordEvent("start", true)
+  homeDiagnostic({stage:"launch",active:getActive()?.kind??"none"})
   // Begin the proxy request before the first screen exists so a proxy launch page has data sooner.
   prefetchProxies(getActive())
   prefetchRules(getActive())
