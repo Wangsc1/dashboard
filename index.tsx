@@ -178,10 +178,13 @@ function OverviewPage({ active, version, onSwitch, onClose, selected = true }: {
   const [visible, setVisible] = useState(true)
   const foreground = useForeground()
   const showCharts = foreground && selected && (visible || cpuOpen)
+  // A home tab that is not the launch tab still loads its first data right away, then pauses until it is selected.
+  const priming = foreground && !selected && !ov
+  const live = showCharts || priming
   useEffect(() => { setHistories(newHistory()); setOv(null); setSampleSource(source); setCpuOpen(false) }, [source])
   useEffect(()=>{if(selected)setVisible(true);else setCpuOpen(false)},[selected])
   useEffect(() => {
-    if (!active || !showCharts) return
+    if (!active || !live) return
     if (active.kind !== "openwrt") { setErr("主页仅支持 OpenWrt 路由器数据，请在设置添加 OpenWrt"); return }
     resetOverviewSampling(active)
     // Rebase after a pause: a delta spanning the hidden interval is not a live
@@ -214,7 +217,7 @@ function OverviewPage({ active, version, onSwitch, onClose, selected = true }: {
     }
     void refresh(); const t = setInterval(refresh, 1000)
     return () => { alive = false; clearInterval(t);resetOverviewSampling(active!) }
-  }, [source, version, showCharts])
+  }, [source, version, live])
   useEffect(() => {
     setHosts([])
     if (!active || !prefs.connectionBackground || !showCharts) return
@@ -734,6 +737,8 @@ function AppearanceRoot() {
 
 async function run() {
   recordEvent("start", true)
+  // Begin the proxy request before the first screen exists so a proxy launch page has data sooner.
+  prefetchProxies(getActive())
   await Navigation.present({ element: <AppearanceRoot />, modalPresentationStyle: "fullScreen" })
   Script.exit()
 }

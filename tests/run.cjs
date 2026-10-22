@@ -737,7 +737,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) { const lazy = ['proxies','rules','connections'].includes(ids[i]) && ids[i] !== id; assert.equal(nodes(tree, types[i]).length, lazy ? 0 : 1); if (!lazy) assert.equal(nodes(tree, types[i])[0].props.selected, ids[i] === id) }
     }
-    assert.equal(api.VERSION, '1.5.206'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.5.207'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('独立导航栈保留业务owner和身份，只有选中页提供可见工具栏', () => {
     pref.savePreferences({ defaultPage: 'overview' })
@@ -876,17 +876,58 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     pref.savePreferences({ haptics: true }); pref.feedback(); assert.equal(pref.getPreferences().haptics, false); assert.equal(haptics, beforeHaptics)
     unmount(); pref.savePreferences(before)
   })
-  await test('默认启动页非主页后切到主页：选中即恢复可见并开始读取，不依赖onAppear', async () => {
+  await test('默认启动页非主页后切到主页：选中即恢复可见并开始轮询，不依赖onAppear', async () => {
     const router = api.listControllers().find(x => x.kind === 'openwrt'); assert.ok(router)
+    let uptime = 1
+    responder = (_url, init) => {
+      const body = JSON.parse(init.body)
+      if (body.params?.[1] === 'session') return { body: { id: body.id, result: [0, { ubus_rpc_session: 'sel-test' }] } }
+      return { body: { id: body.id, result: [0, { uptime: uptime++, load: [0,0,0], memory: { total: 100, free: 50 }, interface: [], data: '2' }] } }
+    }
+    const polling = () => [...intervals.values()].filter(x => x.ms === 1000)
     const props = { active: router, version: 0, onSwitch() {}, selected: false }
+    render(app.OverviewPage, props, true); await flush()
+    for (let i = 0; i < 5; i++) await flush()
+    render(app.OverviewPage, props); await flush(); render(app.OverviewPage, props); await flush()
+    assert.equal(polling().length, 0)
+    render(app.OverviewPage, { ...props, selected: true }); await flush(); render(app.OverviewPage, { ...props, selected: true }); await flush()
+    assert.equal(polling().length, 1, 'selecting home must start polling')
+    unmount()
+  })
+  await test('启动页非主页：主页未选中也先取一次首屏数据，取到后停止轮询；选中后正常轮询', async () => {
+    const router = api.listControllers().find(x => x.kind === 'openwrt'); assert.ok(router)
+    let uptime = 1
+    responder = (_url, init) => {
+      const body = JSON.parse(init.body)
+      if (body.params?.[1] === 'session') return { body: { id: body.id, result: [0, { ubus_rpc_session: 'prime-test' }] } }
+      return { body: { id: body.id, result: [0, { uptime: uptime++, load: [0,0,0], memory: { total: 100, free: 50 }, interface: [], data: '2' }] } }
+    }
+    const props = { active: router, version: 0, onSwitch() {}, selected: false }
+    const polling = () => [...intervals.values()].filter(x => x.ms === 1000)
     calls.length = 0
     let tree = render(app.OverviewPage, props, true); await flush()
-    tree.props.onDisappear(); render(app.OverviewPage, props); await flush()
-    assert.equal(calls.length, 0)
-    render(app.OverviewPage, { ...props, selected: true }); await flush()
-    render(app.OverviewPage, { ...props, selected: true }); await flush()
-    assert.ok(calls.length > 0, 'selecting home must start overview reads')
+    assert.ok(calls.length > 0, 'unselected home primes its first data')
+    for (let i = 0; i < 5; i++) await flush()
+    tree = render(app.OverviewPage, props); await flush()
+    assert.equal(polling().length, 0, 'no polling once primed while unselected')
+    const primed = calls.length; render(app.OverviewPage, props); await flush(); assert.equal(calls.length, primed)
+    tree = render(app.OverviewPage, { ...props, selected: true }); await flush(); tree = render(app.OverviewPage, { ...props, selected: true }); await flush()
+    assert.equal(polling().length, 1, 'selected home polls')
     unmount()
+  })
+  await test('代理页数据落盘：重启后首帧直接显示上次的策略组，来源不符不使用', async () => {
+    const router = api.listControllers().find(x => x.kind === 'openwrt'); assert.ok(router)
+    const key = [router.id, router.url, router.plugin, router.auto, router.cport].join('|')
+    const names = tree => nodes(tree, pages.GroupSection).map(n => n.props.g.name)
+    store.set('dashboard_proxy_snapshot_v1', { key, groups: [{ name: 'SNAP', type: 'Selector', now: 'a', all: ['a'], delays: {} }], providers: [] })
+    responder = () => ({ status: 500, body: {} })
+    let tree = render(pages.ProxiesPage, { active: router, version: 0 }, true)
+    assert.equal(names(tree).join(','), 'SNAP', 'first frame uses the saved list before any request returns')
+    unmount()
+    const other = { ...router, id: 'snap-other', url: 'http://snap-other.invalid' }
+    tree = render(pages.ProxiesPage, { active: other, version: 0 }, true)
+    assert.equal(names(tree).length, 0, 'a snapshot for a different source is not shown')
+    unmount(); store.delete('dashboard_proxy_snapshot_v1')
   })
   await test('代理页预取：首次进入前请求并写入缓存，空控制器不请求', async () => {
     const router = api.listControllers().find(x => x.kind === 'openwrt'); assert.ok(router)
@@ -1835,7 +1876,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       const diagnostic = logs.filter(x => x.startsWith('[preferences-icon]'))
       for (const stage of ['change','accepted','proxies-render','group-render']) assert.ok(diagnostic.some(x => x.includes('stage=' + stage) && x.includes('enabled=false')))
       assert.ok(diagnostic.every(x => !x.includes('private.invalid') && !x.includes('private-group-name') && !x.includes('secret-')))
-      assert.ok(diagnostic.every(x => x.includes('build=1.5.206') && /instance=[a-z0-9]+/.test(x)))
+      assert.ok(diagnostic.every(x => x.includes('build=1.5.207') && /instance=[a-z0-9]+/.test(x)))
       assert.equal(new Set(diagnostic.map(x => x.match(/instance=([^ ]+)/)[1])).size, 1)
     } finally { context.console = originalConsole; unmount(); pref.savePreferences({ customIcons: true, testURL: 'https://www.gstatic.com/generate_204' }) }
   })

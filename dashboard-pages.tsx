@@ -146,20 +146,32 @@ export function ProxyTestSettings() {
   </>
 }
 const proxyCache=new Map<string,{groups:Group[];providers:Provider[]}>()
-const proxyPrefetch=new Set<string>()
-// Warm the per-source cache before the proxy tab is first opened; failures stay silent and the page loads normally.
+const PROXY_SNAPSHOT_KEY="dashboard_proxy_snapshot_v1"
+let proxySnapshotText=""
+// Keep the last proxy list on this device so the first frame after launch shows it while the live request refreshes it.
+function setProxyCache(key:string,value:{groups:Group[];providers:Provider[]}){
+  proxyCache.set(key,value)
+  try{const snapshot={key,groups:value.groups,providers:value.providers},text=JSON.stringify(snapshot);if(text===proxySnapshotText||text.length>800000)return;proxySnapshotText=text;Storage.set(PROXY_SNAPSHOT_KEY,snapshot)}catch{}
+}
+function hydrateProxyCache(key:string){
+  const known=proxyCache.get(key);if(known||!key)return known
+  try{const raw=Storage.get<any>(PROXY_SNAPSHOT_KEY);if(raw?.key===key&&Array.isArray(raw.groups)){const value={groups:raw.groups as Group[],providers:Array.isArray(raw.providers)?raw.providers as Provider[]:[]};proxyCache.set(key,value);return value}}catch{}
+  return undefined
+}
+const proxyPrefetch=new Set<string>(),proxyPrefetched=new Set<string>()
+// Start loading as early as possible (before the first screen) and fill the cache; failures stay silent and the page loads normally.
 export function prefetchProxies(active:Controller|null){
-  if(!active)return;const key=sourceKey(active);if(proxyCache.has(key)||proxyPrefetch.has(key))return;proxyPrefetch.add(key)
+  if(!active)return;const key=sourceKey(active);hydrateProxyCache(key);if(proxyPrefetched.has(key)||proxyPrefetch.has(key))return;proxyPrefetch.add(key)
   void Promise.all([loadGroups(active,{includeGlobal:false}).catch(()=>null),loadProviders(active,"proxies").catch(()=>null)]).then(([groups,providers])=>{
-    const old=proxyCache.get(key);if(groups||providers)proxyCache.set(key,{groups:old?.groups??groups??[],providers:old?.providers??providers??[]})
+    const old=proxyCache.get(key);if(groups||providers){proxyPrefetched.add(key);setProxyCache(key,{groups:groups??old?.groups??[],providers:providers??old?.providers??[]})}
   }).finally(()=>{proxyPrefetch.delete(key)})
 }
 export function ProxiesPage({active,version,onClose,selected=true}:{active:Controller|null;version:number;onClose?:()=>void;selected?:boolean}) {
-  const p=usePreferences(),cacheKey=active?sourceKey(active):"",cached=proxyCache.get(cacheKey),[groups,setGroups]=useState<Group[]>(cached?.groups??[]),[providers,setProviders]=useState<Provider[]>(cached?.providers??[]),[loaded,setLoaded]=useState(!!cached),[err,setErr]=useState(""),[tick,setTick]=useState(0),[expanded,setExpanded]=useState(false),[showProviders,setShowProviders]=useState(true),[limit,setLimit]=useState(40),[visible,setVisible]=useState(selected),[confirmedMode,setConfirmedMode]=useState<{key:string;mode:string|null}>(()=>({key:cacheKey,mode:proxyModeCache.get(cacheKey)??null})),globalMode=confirmedMode.key===cacheKey&&confirmedMode.mode==="global"
+  const p=usePreferences(),cacheKey=active?sourceKey(active):"",cached=hydrateProxyCache(cacheKey),[groups,setGroups]=useState<Group[]>(cached?.groups??[]),[providers,setProviders]=useState<Provider[]>(cached?.providers??[]),[loaded,setLoaded]=useState(!!cached),[err,setErr]=useState(""),[tick,setTick]=useState(0),[expanded,setExpanded]=useState(false),[showProviders,setShowProviders]=useState(true),[limit,setLimit]=useState(40),[visible,setVisible]=useState(selected),[confirmedMode,setConfirmedMode]=useState<{key:string;mode:string|null}>(()=>({key:cacheKey,mode:proxyModeCache.get(cacheKey)??null})),globalMode=confirmedMode.key===cacheKey&&confirmedMode.mode==="global"
   traceIconPreference("proxies-render", p.customIcons)
-  useEffect(()=>{const c=proxyCache.get(cacheKey);setGroups(c?.groups??[]);setProviders(c?.providers??[]);setLoaded(!!c)},[cacheKey])
-  useEffect(()=>{if(!active||!visible)return;let alive=true;setErr("");loadGroups(active,{includeGlobal:globalMode}).then(x=>{if(alive){setGroups(x);setLoaded(true);setErr("");proxyCache.set(cacheKey,{groups:x,providers:proxyCache.get(cacheKey)?.providers??[]})}}).catch(()=>{if(alive)setErr(safeError())});return()=>{alive=false}},[active&&sourceKey(active),version,tick,p.showHidden,p.showGlobal,globalMode,p.nestedDelay,visible])
-  useEffect(()=>{if(!active||!showProviders||!visible)return;let alive=true;loadProviders(active,"proxies").then(x=>{if(alive){setProviders(x);proxyCache.set(cacheKey,{groups:proxyCache.get(cacheKey)?.groups??[],providers:x})}}).catch(()=>{if(alive)setErr("代理来源读取不可用：当前内核不支持或权限不足；显示的0是已加载数量，不代表远端总数。")});return()=>{alive=false}},[active&&sourceKey(active),tick,showProviders,visible])
+  useEffect(()=>{const c=hydrateProxyCache(cacheKey);setGroups(c?.groups??[]);setProviders(c?.providers??[]);setLoaded(!!c)},[cacheKey])
+  useEffect(()=>{if(!active||!visible)return;let alive=true;setErr("");loadGroups(active,{includeGlobal:globalMode}).then(x=>{if(alive){setGroups(x);setLoaded(true);setErr("");setProxyCache(cacheKey,{groups:x,providers:proxyCache.get(cacheKey)?.providers??[]})}}).catch(()=>{if(alive)setErr(safeError())});return()=>{alive=false}},[active&&sourceKey(active),version,tick,p.showHidden,p.showGlobal,globalMode,p.nestedDelay,visible])
+  useEffect(()=>{if(!active||!showProviders||!visible)return;let alive=true;loadProviders(active,"proxies").then(x=>{if(alive){setProviders(x);setProxyCache(cacheKey,{groups:proxyCache.get(cacheKey)?.groups??[],providers:x})}}).catch(()=>{if(alive)setErr("代理来源读取不可用：当前内核不支持或权限不足；显示的0是已加载数量，不代表远端总数。")});return()=>{alive=false}},[active&&sourceKey(active),tick,showProviders,visible])
   const remote=providers.filter(x=>x.vehicleType.toLowerCase()==="http")
   const shownGroups=groups.filter(g=>g.name!=="GLOBAL"||p.showGlobal||globalMode)
   const menu=<Menu label={<Image systemName="ellipsis.circle"/>}><Picker title="节点排序" pickerStyle="menu" value={p.nodeSort} onChanged={(v:string)=>savePreferences({nodeSort:v as any})}>{NODE_SORT_OPTIONS.map(([key, label]) => <Text key={key} tag={key}>{label}</Text>)}</Picker><Toggle title="展示全部代理组" value={expanded} onChanged={setExpanded}/><Toggle title="显示代理来源" value={showProviders} onChanged={setShowProviders}/><Toggle title="显示隐藏组" value={p.showHidden} onChanged={(v:boolean)=>savePreferences({showHidden:v})}/><Toggle key="customIcons" title="显示图标" value={p.customIcons} onChanged={(v:boolean)=>updatePreference({customIcons:v})}/><Toggle key="disconnectOnSwitch" title="自动断开旧连接" value={p.disconnectOnSwitch} onChanged={(v:boolean)=>updatePreference({disconnectOnSwitch:v})}/></Menu>
