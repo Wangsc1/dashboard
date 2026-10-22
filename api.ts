@@ -2,7 +2,7 @@ import { TimingToken, timingToken, timing, timingReadContext, timingSpan } from 
 import { CpuSampler, CpuUsage, CpuMeta, parseCpuInfo, thermalCelsius } from "./openwrt-metrics"
 
 import { getPreferences, customHeaders, recordEvent, controllerHealth, feedback } from "./preferences"
-export const VERSION = "1.35"
+export const VERSION = "1.36"
 
 export type Kind = "clash" | "openwrt"
 export type Plugin = "openclash" | "nikki" | "mihomo"
@@ -486,7 +486,8 @@ export async function loadGroups(c0: Controller, options: { includeGlobal?: bool
       return { name: current, ...(provider ? { provider } : {}), ...(typeof node?.type === "string" ? { type: node.type } : {}) }
     }
     const order: string[] = all.GLOBAL?.all ?? Object.keys(all)
-    const names = [...order.filter(n => all[n]?.all), ...Object.keys(all).filter(n => all[n]?.all && !order.includes(n))]
+    const ordered = new Set(order)
+    const names = [...order.filter(n => all[n]?.all), ...Object.keys(all).filter(n => all[n]?.all && !ordered.has(n))]
     const prefs = getPreferences()
     function lastDelay(node: any): number | undefined {
       const h = node?.history
@@ -517,9 +518,17 @@ export async function loadGroups(c0: Controller, options: { includeGlobal?: bool
       if (node?.all && node?.now) return protocolOf(String(node.now), seen) ?? (typeof node.type === "string" ? node.type : undefined)
       return typeof node?.type === "string" ? node.type : undefined
     }
+    // Request-local, top-level results only: shared members need one traversal,
+    // while recursive cycle detection keeps its original per-start semantics.
+    const members = new Map<string, { delay: number | undefined; type: string; target: ProxyTestTarget }>()
     return visible.map(n => {
       const g = all[n]; const delays: Record<string, number> = {}, types: Record<string, string> = {}, testTargets: Record<string, ProxyTestTarget> = {}
-      for (const m of g.all as string[]) { const delay = delayOf(m); if (delay !== undefined) delays[m] = delay; const t = protocolOf(m); types[m] = t || (nodes[m] ? "无type字段" : "无节点信息"); testTargets[m] = targetOf(m) }
+      for (const m of g.all as string[]) {
+        let member = members.get(m)
+        if (!member) { member = { delay: delayOf(m), type: protocolOf(m) || (nodes[m] ? "无type字段" : "无节点信息"), target: targetOf(m) }; members.set(m, member) }
+        if (member.delay !== undefined) delays[m] = member.delay
+        types[m] = member.type; testTargets[m] = { ...member.target }
+      }
       return { name: n, type: String(g.type ?? ""), now: String(g.now ?? ""), all: g.all, delays, types, testTargets, hidden: !!g.hidden, icon: typeof g.icon === "string" ? g.icon : undefined, testUrl: typeof g.testUrl === "string" && /^https?:\/\/[^\s]+$/i.test(g.testUrl) ? g.testUrl : undefined }
     })
   }

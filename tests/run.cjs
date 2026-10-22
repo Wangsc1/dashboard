@@ -860,7 +860,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) { const lazy = ['proxies','rules','connections'].includes(ids[i]) && ids[i] !== id; assert.equal(nodes(tree, types[i]).length, lazy ? 0 : 1); if (!lazy) assert.equal(nodes(tree, types[i])[0].props.selected, ids[i] === id) }
     }
-    assert.equal(api.VERSION, '1.35'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.36'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('独立导航栈保留业务owner和身份，只有选中页提供可见工具栏', () => {
     pref.savePreferences({ defaultPage: 'overview' })
@@ -924,6 +924,11 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     assert.equal(nodes(group.props.toolbar,'ToolbarItem').filter(n=>n.props.key?.endsWith('.close')).length,0)
     const dns=render(pages.DNSPage,{c},true);assert.equal(dns.props.toolbar,undefined)
     const management=render(pages.ManagementPage,{c,kind:'profile'},true);assert.equal(nodes(management.props.toolbar,'Button').filter(n=>n.props.systemImage==='xmark').length,0)
+  })
+  await test('全dashboard性能回归（工作量、排序筛选失效及连接历史等价）', () => {
+    const result = require('node:child_process').spawnSync(process.execPath, [path.join(__dirname,'dashboard-performance.cjs')], {env:process.env,encoding:'utf8'})
+    assert.equal(result.status,0,result.stdout+'\n'+result.stderr)
+    console.log(result.stdout.trim())
   })
   await test('Root前台跨Tab采样有效生命周期（真实API差分、单请求链、后台恢复与来源隔离）', () => {
     const result = require('node:child_process').spawnSync(process.execPath, [path.join(__dirname,'home-root-sampling.cjs')], {env:process.env,encoding:'utf8'})
@@ -2008,7 +2013,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       const diagnostic = logs.filter(x => x.startsWith('[preferences-icon]'))
       for (const stage of ['change','accepted','proxies-render','group-render']) assert.ok(diagnostic.some(x => x.includes('stage=' + stage) && x.includes('enabled=false')))
       assert.ok(diagnostic.every(x => !x.includes('private.invalid') && !x.includes('private-group-name') && !x.includes('secret-')))
-      assert.ok(diagnostic.every(x => x.includes('build=1.35') && /instance=[a-z0-9]+/.test(x)))
+      assert.ok(diagnostic.every(x => x.includes('build=1.36') && /instance=[a-z0-9]+/.test(x)))
       assert.equal(new Set(diagnostic.map(x => x.match(/instance=([^ ]+)/)[1])).size, 1)
     } finally { context.console = originalConsole; unmount(); pref.savePreferences({ customIcons: true, testURL: 'https://www.gstatic.com/generate_204' }) }
   })

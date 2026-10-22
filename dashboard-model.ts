@@ -17,9 +17,19 @@ export class ConnectionHistory {
   active: Conn[] = []; closed: Conn[] = []; private at = 0
   sample(xs: Conn[], at: number) {
     const prev = new Map(this.active.map(x => [x.id, x])), ids = new Set(xs.map(x => x.id)), dt = (at - this.at) / 1000
-    for (const old of this.active) if (!ids.has(old.id)) this.closed.unshift({ ...old, upSpeed: 0, downSpeed: 0, closedAt: at })
+    // Head insertion used to move the whole history once per disappeared row.
+    // Read backwards to preserve that order and materialize only retained rows.
+    const closed: Conn[] = []
+    for (let i = this.active.length - 1; i >= 0 && closed.length < 300; i--) {
+      const old = this.active[i]
+      if (!ids.has(old.id)) closed.push({ ...old, upSpeed: 0, downSpeed: 0, closedAt: at })
+    }
+    for (const old of this.closed) {
+      if (closed.length >= 300) break
+      if (at - (old.closedAt ?? at) < 3600000) closed.push(old)
+    }
     this.active = xs.map(x => { const p = prev.get(x.id); return { ...x, upSpeed: p && dt > 0 ? Math.max(0, x.up-p.up)/dt : 0, downSpeed: p && dt > 0 ? Math.max(0, x.down-p.down)/dt : 0 } })
-    this.closed = this.closed.filter(x => at-(x.closedAt ?? at)<3600000).slice(0,300); this.at = at
+    this.closed = closed; this.at = at
   }
 
   resume() { this.active = []; this.at = 0 }
