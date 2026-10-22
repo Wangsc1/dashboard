@@ -26,7 +26,7 @@ export function MountedCanvasPlot({samples,tone,plotHeight=96,area=false,running
   const [host]=useState(()=>({controller:new WebViewController({ephemeral:true}),alive:true,ready:false,busy:false,registered:false,loaded:false,seq:0,pending:null as null|{seq:number;samples:number[];tone:string;area:boolean;running:boolean;percent:boolean;background:string},flush:()=>{}}))
   useEffect(()=>{
     host.alive=true
-    let timeout:ReturnType<typeof setTimeout>|undefined
+    let timeout:ReturnType<typeof setTimeout>|undefined,reveal:ReturnType<typeof setTimeout>|undefined
     const fail=()=>{if(host.alive){setError('曲线绘制层加载失败');host.ready=false}}
     const flush=()=>{
       if(!host.alive||!host.ready||host.busy||!host.pending)return
@@ -46,10 +46,16 @@ export function MountedCanvasPlot({samples,tone,plotHeight=96,area=false,running
     void host.controller.addScriptMessageHandler('plotReady',()=>{
       if(!host.alive)return false
       if(timeout!==undefined)clearTimeout(timeout)
-      host.ready=true;flush();setShown(true);return true
-    }).then(()=>{host.registered=true;start()},fail)
+      host.ready=true;flush()
+      // Normally the page reports plotPainted; the timer only guards against a lost message.
+      reveal=setTimeout(()=>{if(host.alive)setShown(true)},700);return true
+    }).then(()=>host.controller.addScriptMessageHandler('plotPainted',()=>{
+      if(!host.alive)return false
+      if(reveal!==undefined)clearTimeout(reveal)
+      setShown(true);return true
+    })).then(()=>{host.registered=true;start()},fail)
     start()
-    return()=>{host.alive=false;host.ready=false;host.pending=null;if(timeout!==undefined)clearTimeout(timeout);host.controller.dispose()}
+    return()=>{host.alive=false;host.ready=false;host.pending=null;if(timeout!==undefined)clearTimeout(timeout);if(reveal!==undefined)clearTimeout(reveal);host.controller.dispose()}
   },[host])
   useEffect(()=>{
     host.pending={seq:++host.seq,samples:samples.filter(Number.isFinite).slice(-60),tone,area,running,percent,background:theme==='dark'?'#1c1c1e':'#f2f2f7'}

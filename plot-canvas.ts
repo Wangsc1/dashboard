@@ -7,6 +7,8 @@ const canvas=document.querySelector('canvas'),ctx=canvas.getContext('2d');
 let config={tone:'#3485eb',area:false,percent:true},history=[],from=[],to=[],shown=[],scale=100,scaleFrom=100,scaleTo=100,start=0,duration=1000,raf=0,seq=-1,active=false;
 const stats={frames:0,updates:0,liveLoops:0};
 const diagnosticEnabled=${diagnostics},startedAt=performance.now();let attempts=0,grids=0,lastError='';
+// Native reveals the WebView only after a real frame has been drawn and composited, so its white backing never flashes.
+let paintedQueued=false;const hasPaintedBridge=!!(window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.plotPainted);
 function diagnosticSnapshot(){const r=canvas.getBoundingClientRect();return {ms:Math.round(performance.now()-startedAt),width:Math.round(r.width),height:Math.round(r.height),viewportWidth:innerWidth,viewportHeight:innerHeight,bitmapWidth:canvas.width,bitmapHeight:canvas.height,context:!!ctx,hidden:document.hidden,attempts,grids,frames:stats.frames,updates:stats.updates,samples:history.length,seq,active,error:lastError}}
 function reportDiagnostic(){if(!diagnosticEnabled)return;try{Promise.resolve(window.webkit.messageHandlers.plotDiagnostic.postMessage(diagnosticSnapshot())).catch(()=>{})}catch(_){}}
 if(diagnosticEnabled){window.addEventListener('error',e=>{lastError=String(e.message||'script error').slice(0,160);reportDiagnostic()});window.addEventListener('unhandledrejection',e=>{lastError=String(e.reason?.message||'promise error').slice(0,160);reportDiagnostic()})}
@@ -19,6 +21,7 @@ function paint(){
  const cw=Math.round(w*d),ch=Math.round(h*d);if(canvas.width!==cw||canvas.height!==ch){canvas.width=cw;canvas.height=ch}
  ctx.setTransform(d,0,0,d,0,0);ctx.clearRect(0,0,w,h);ctx.strokeStyle='rgba(146,149,163,.22)';ctx.lineWidth=.6;ctx.setLineDash([3,3]);ctx.beginPath();
  for(let i=0;i<8;i++){ctx.moveTo(i*w/7,0);ctx.lineTo(i*w/7,h)}for(let i=0;i<5;i++){ctx.moveTo(0,i*h/4);ctx.lineTo(w,i*h/4)}ctx.stroke();ctx.setLineDash([]);grids++;
+ if(!paintedQueued&&hasPaintedBridge){paintedQueued=true;setTimeout(()=>{try{Promise.resolve(window.webkit.messageHandlers.plotPainted.postMessage(null)).catch(()=>{})}catch(_){}},90)}
  if(history.length<2||shown.length<2)return;
  const y=v=>h-2-v/scale*(h-4);ctx.beginPath();ctx.moveTo(shown[0].x*w,y(shown[0].y));
  for(let i=1;i<shown.length;i++){const a=shown[i-1],b=shown[i],m=(a.x+b.x)*w/2;ctx.bezierCurveTo(m,y(a.y),m,y(b.y),b.x*w,y(b.y))}

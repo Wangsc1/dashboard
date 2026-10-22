@@ -21,14 +21,20 @@ async function mount(){const node=render(plot.MountedCanvasPlot,props,true);awai
   const detail=home.SampledCpuPlot({samples:[10,20],running:true})
   assert.equal(detail.type,home.GridPlot);assert.equal(home.GridPlot(front.props).type,plot.InlineCanvasPlot);assert.equal(home.GridPlot(detail.props).type,plot.InlineCanvasPlot)
  })
- await test('绘制层就绪前WebView透明，避免白块闪现；就绪后显示',async()=>{
-  let node=render(plot.MountedCanvasPlot,props,true);await flush();const host=hosts.at(-1)
+ await test('WebView在页面确认已绘制前保持透明且网格垫底；painted后才显示，丢消息时定时兜底',async()=>{
+  let node=render(plot.MountedCanvasPlot,props,true);await flush();let host=hosts.at(-1)
   assert.equal(nodes(node,'WebView')[0].props.opacity,0)
   const grid=nodes(node,'Canvas')[0];assert.ok(grid,'native grid shown before the WebView is ready');assert.equal(grid.props.opaque,false,'opaque Canvas paints black')
   const ops=[],ctx={setLineDash:a=>ops.push(['dash',a]),beginPath(){},moveTo:(x,y)=>ops.push(['m',x,y]),lineTo:(x,y)=>ops.push(['l',x,y]),stroke:()=>ops.push(['s'])}
   grid.props.draw(ctx,{width:70,height:40});assert.equal(ctx.strokeStyle,'rgba(146,149,163,0.22)');assert.equal(ops.filter(o=>o[0]==='m').length,13);assert.equal(ops.filter(o=>o[0]==='l').length,13);assert.equal(JSON.stringify(ops[0]),'["dash",[3,3]]');assert.equal(JSON.stringify(ops.filter(o=>o[0]==='l')[7]),'["l",70,40]');assert.equal(JSON.stringify(ops.filter(o=>o[0]==='l')[12]),'["l",70,40]')
+  assert.equal(typeof host.handlers.plotPainted,'function')
   host.handlers.plotReady();await flush();node=render(plot.MountedCanvasPlot,props)
+  assert.equal(nodes(node,'WebView')[0].props.opacity,0,'ready alone must not reveal an unpainted WebView');assert.equal(nodes(node,'Canvas').length,1)
+  host.handlers.plotPainted();await flush();node=render(plot.MountedCanvasPlot,props)
   assert.equal(nodes(node,'WebView')[0].props.opacity,1);assert.equal(nodes(node,'Canvas').length,0)
+  node=render(plot.MountedCanvasPlot,props,true);await flush();host=hosts.at(-1);host.handlers.plotReady();await flush()
+  for(const fn of [...timeouts.values()])fn();await flush();node=render(plot.MountedCanvasPlot,props)
+  assert.equal(nodes(node,'WebView')[0].props.opacity,1,'fallback timer reveals when painted message is lost')
  })
  await test('完全不发送原生出现事件：首屏仍创建并加载且只加载一次，首帧携带样本',async()=>{
   const slot=render(plot.InlineCanvasPlot,props,true)
