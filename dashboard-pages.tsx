@@ -178,10 +178,51 @@ export function ProxiesPage({active,version,onClose,selected=true}:{active:Contr
   return Shell({title:active?.name??"代理",toolbar:rootToolbar("proxies",onClose,menu),onAppear:()=>setVisible(true),onDisappear:()=>setVisible(false),children:<>{!active?<Empty/>:<><ProxyModeControl key={JSON.stringify(active)} c={active} enabled={selected&&visible} version={version} onMode={mode=>setConfirmedMode({key:cacheKey,mode})}/><HStack><Text font={20} fontWeight="bold" padding={{top:6}}>策略组</Text><Spacer/></HStack>{err?<Hint>{err}</Hint>:null}{!err&&loaded&&shownGroups.length===0?<Hint>未读取到策略组</Hint>:null}{shownGroups.slice(0,limit).map(g=><GroupSection key={g.name} c={active} g={g} expanded={expanded} onChanged={()=>setTick(t=>t+1)}/>)}<Pages hideCount limit={limit} total={shownGroups.length} more={()=>setLimit(limit+40)}/>{showProviders?<><HStack><Text font={20} fontWeight="bold" padding={{top:6}}>代理来源</Text><Spacer/></HStack>{remote.slice(0,limit).map(p=><ProviderCard key={p.name} c={active} p={p} kind="proxies" onChanged={()=>setTick(t=>t+1)}/>)}<Pages hideCount limit={limit} total={remote.length} more={()=>setLimit(limit+40)}/></>:null}</>}<ProxyTestSettings /></>})
 }
 function ruleColor(type:string) { return /AND|OR|NOT|MATCH/.test(type)?"systemRed":/PROCESS/i.test(type)?"systemPurple":/IP|GEOIP/i.test(type)?"systemGreen":"systemBlue" }
+// Last-seen rules / connections are kept on this device and loaded at launch, so the first frame is not empty while the live request runs.
+function snapshotStore(storageKey:string){
+  let last=""
+  return {
+    save(key:string,value:Record<string,any>){try{const snap={key,at:Date.now(),...value},text=JSON.stringify({key,...value});if(text===last||text.length>800000)return;last=text;Storage.set(storageKey,snap)}catch{}},
+    load(key:string,maxAge=Infinity):any{try{const raw=Storage.get<any>(storageKey);if(raw?.key===key&&Date.now()-(raw.at??0)<=maxAge)return raw}catch{}return undefined}
+  }
+}
+const rulesSnap=snapshotStore("dashboard_rules_snapshot_v1"),rulesCache=new Map<string,{rules:Rule[];providers:Provider[]}>()
+function hydrateRules(key:string){
+  const known=rulesCache.get(key);if(known||!key)return known
+  const raw=rulesSnap.load(key);if(raw&&Array.isArray(raw.rules)){const value={rules:raw.rules as Rule[],providers:Array.isArray(raw.providers)?raw.providers as Provider[]:[]};rulesCache.set(key,value);return value}
+  return undefined
+}
+function setRulesCache(key:string,value:{rules:Rule[];providers:Provider[]}){rulesCache.set(key,value);rulesSnap.save(key,value)}
+const rulesPrefetch=new Set<string>(),rulesPrefetched=new Set<string>()
+export function prefetchRules(active:Controller|null){
+  if(!active)return;const key=sourceKey(active);hydrateRules(key);if(rulesPrefetched.has(key)||rulesPrefetch.has(key))return;rulesPrefetch.add(key)
+  void Promise.all([loadRules(active).catch(()=>null),loadProviders(active,"rules").catch(()=>null)]).then(([rules,providers])=>{
+    const old=rulesCache.get(key);if(rules||providers){rulesPrefetched.add(key);setRulesCache(key,{rules:rules??old?.rules??[],providers:providers??old?.providers??[]})}
+  }).finally(()=>{rulesPrefetch.delete(key)})
+}
+const CONN_SNAPSHOT_MAX_AGE=600000,connSnap=snapshotStore("dashboard_connections_snapshot_v1"),connCache=new Map<string,{at:number;conns:Conn[]}>()
+let connPersistedAt=0
+function frozenConns(xs:Conn[]){return xs.slice(0,300).map(x=>({...x,upSpeed:0,downSpeed:0}))}
+// Connections are live data: a saved list is only shown briefly (and only if recent) until the first real sample replaces it.
+function hydrateConns(key:string):Conn[]|undefined{
+  if(!key)return undefined
+  const known=connCache.get(key);if(known&&Date.now()-known.at<=CONN_SNAPSHOT_MAX_AGE)return known.conns
+  const raw=connSnap.load(key,CONN_SNAPSHOT_MAX_AGE);if(raw&&Array.isArray(raw.conns)){connCache.set(key,{at:raw.at,conns:raw.conns as Conn[]});return raw.conns as Conn[]}
+  return undefined
+}
+function setConnCache(key:string,xs:Conn[]){
+  const conns=frozenConns(xs),now=Date.now();connCache.set(key,{at:now,conns})
+  if(now-connPersistedAt>10000){connPersistedAt=now;connSnap.save(key,{conns})}
+}
+const connPrefetch=new Set<string>(),connPrefetched=new Set<string>()
+export function prefetchConnections(active:Controller|null){
+  if(!active)return;const key=sourceKey(active);hydrateConns(key);if(connPrefetched.has(key)||connPrefetch.has(key))return;connPrefetch.add(key)
+  void loadConnections(active).then(xs=>{connPrefetched.add(key);setConnCache(key,xs)}).catch(()=>{}).finally(()=>{connPrefetch.delete(key)})
+}
 export function RulesPage({active,version,onClose,selected=true}:{active:Controller|null;version:number;onClose?:()=>void;selected?:boolean}) {
-  const [rules,setRules]=useState<Rule[]>([]),[providers,setProviders]=useState<Provider[]>([]),[tab,setTab]=useState("rules"),[q,setQ]=useState(""),[search,setSearch]=useState(false),[limit,setLimit]=useState(80),[tick,setTick]=useState(0),[err,setErr]=useState(""),[visible,setVisible]=useState(selected)
-  useEffect(()=>{setRules([]);setProviders([])},[active&&sourceKey(active)])
-  useEffect(()=>{if(!active||!visible)return;let alive=true;setErr("");loadRules(active).then(xs=>{if(alive)setRules(xs)}).catch(()=>{if(alive)setErr(safeError())});loadProviders(active,"rules").then(xs=>{if(alive)setProviders(xs)}).catch(()=>{if(alive)setErr("规则提供者数量未提供：内核未支持或权限不足；分段显示的是已加载数量。规则列表独立读取。")});return()=>{alive=false}},[active&&sourceKey(active),version,tick,visible])
+  const rulesKey=active?sourceKey(active):"",rulesCached=hydrateRules(rulesKey),[rules,setRules]=useState<Rule[]>(rulesCached?.rules??[]),[providers,setProviders]=useState<Provider[]>(rulesCached?.providers??[]),[tab,setTab]=useState("rules"),[q,setQ]=useState(""),[search,setSearch]=useState(false),[limit,setLimit]=useState(80),[tick,setTick]=useState(0),[err,setErr]=useState(""),[visible,setVisible]=useState(selected)
+  useEffect(()=>{const c=hydrateRules(rulesKey);setRules(c?.rules??[]);setProviders(c?.providers??[])},[rulesKey])
+  useEffect(()=>{if(!active||!visible)return;let alive=true;setErr("");loadRules(active).then(xs=>{if(alive){setRules(xs);setRulesCache(rulesKey,{rules:xs,providers:rulesCache.get(rulesKey)?.providers??[]})}}).catch(()=>{if(alive)setErr(safeError())});loadProviders(active,"rules").then(xs=>{if(alive){setProviders(xs);setRulesCache(rulesKey,{rules:rulesCache.get(rulesKey)?.rules??[],providers:xs})}}).catch(()=>{if(alive)setErr("规则提供者数量未提供：内核未支持或权限不足；分段显示的是已加载数量。规则列表独立读取。")});return()=>{alive=false}},[active&&sourceKey(active),version,tick,visible])
   const shown=rules.map((r,i)=>({...r,index:i+1})).filter(r=>[r.type,r.payload,r.proxy].join(" ").toLowerCase().includes(q.toLowerCase()))
   return Shell({title:active?.name??"规则",onAppear:()=>setVisible(true),onDisappear:()=>setVisible(false),toolbar:rootToolbar("rules",onClose,<Menu label={<Image systemName="ellipsis.circle"/>}><Button title="搜索规则" action={()=>setSearch(!search)}/><Button title="刷新规则" action={()=>setTick(tick+1)}/><Button title="全部更新" action={()=>{if(active)void updateAllProviders(active,"rules",providers,()=>setTick(t=>t+1))}}/></Menu>),children:<>{!active?<Empty/>:<><Picker title="规则与提供者" pickerStyle="segmented" value={tab} onChanged={setTab}><Text tag="rules">{`规则 ${rules.length}`}</Text><Text tag="providers">{`提供者 ${providers.length}`}</Text></Picker>{search?<TextField title="搜索规则" value={q} onChanged={(v:string)=>{setQ(v);setLimit(80)}}/>:null}{err?<Hint>{err}</Hint>:null}{tab==="providers"?<>{providers.slice(0,limit).map(p=><ProviderCard key={p.name} c={active} p={p} kind="rules" onChanged={()=>setTick(t=>t+1)}/>)}<Pages hideCount limit={limit} total={providers.length} more={()=>setLimit(limit+80)}/></>:<>{shown.slice(0,limit).map(r=><Card key={String(r.index)}><HStack spacing={8}><Hint>{`#${r.index}`}</Hint><Chip title={r.type} color={ruleColor(r.type)}/><Text font={13}>{r.payload||"—"}</Text><Spacer/><Text font={12} foregroundStyle="secondaryLabel">{r.proxy}</Text></HStack></Card>)}<Pages hideCount limit={limit} total={shown.length} more={()=>setLimit(limit+80)}/></>}</>}</>})
 }
@@ -200,9 +241,9 @@ export function ConnectionDetailPage({x,onDisconnect}:{x:Conn;onDisconnect:(x:Co
   </Form>
 }
 export function ConnectionsPage({active,version,onClose,selected=true}:{active:Controller|null;version:number;onClose?:()=>void;selected?:boolean}) {
-  const prefs=usePreferences(),[conns,setConns]=useState<Conn[]>([]),[closed,setClosed]=useState<Conn[]>([]),[paused,setPaused]=useState(false),[visible,setVisible]=useState(selected),[tab,setTab]=useState("active"),[err,setErr]=useState(""),[q,setQ]=useState(""),[search,setSearch]=useState(false),[client,setClient]=useState(""),[labelsOpen,setLabelsOpen]=useState(false),[labels,setLabels]=useState<Record<string,string>>({}),[labelIP,setLabelIP]=useState(""),[label,setLabel]=useState(""),[limit,setLimit]=useState(60),[tick,setTick]=useState(0),[fresh,setFresh]=useState<Record<string,number>>({}),[sort,setSort]=useState("new"),[seenBox]=useState({seen:new Set<string>(),init:false}),[foreground,setForeground]=useState(true),[scene]=useState({active:true,epoch:0})
+  const prefs=usePreferences(),[conns,setConns]=useState<Conn[]>(()=>active?hydrateConns(sourceKey(active))??[]:[]),[closed,setClosed]=useState<Conn[]>([]),[paused,setPaused]=useState(false),[visible,setVisible]=useState(selected),[tab,setTab]=useState("active"),[err,setErr]=useState(""),[q,setQ]=useState(""),[search,setSearch]=useState(false),[client,setClient]=useState(""),[labelsOpen,setLabelsOpen]=useState(false),[labels,setLabels]=useState<Record<string,string>>({}),[labelIP,setLabelIP]=useState(""),[label,setLabel]=useState(""),[limit,setLimit]=useState(60),[tick,setTick]=useState(0),[fresh,setFresh]=useState<Record<string,number>>({}),[sort,setSort]=useState("new"),[seenBox]=useState({seen:new Set<string>(),init:false}),[foreground,setForeground]=useState(true),[scene]=useState({active:true,epoch:0})
   useEffect(()=>{const changed=(phase:string)=>{scene.active=phase==="active";scene.epoch++;setForeground(scene.active);if(scene.active){setErr("");setFresh({})}};AppEvents.scenePhase.addListener(changed);return()=>AppEvents.scenePhase.removeListener(changed)},[])
-  useEffect(()=>{if(!active)return;seenBox.seen.clear();seenBox.init=false;setFresh({});setLabels(clientLabels(active));setConns([]);setClosed(historyFor(active).closed);setClient("")},[active&&sourceKey(active)])
+  useEffect(()=>{if(!active)return;seenBox.seen.clear();seenBox.init=false;setFresh({});setLabels(clientLabels(active));setConns(hydrateConns(sourceKey(active))??[]);setClosed(historyFor(active).closed);setClient("")},[active&&sourceKey(active)])
   useEffect(()=>{if(active&&!paused&&visible&&foreground)historyFor(active).resume()},[active&&sourceKey(active),paused,visible,foreground])
   useEffect(()=>{
     // Delays belong to this poll owner, not to the retained page. A restart must
@@ -219,7 +260,7 @@ export function ConnectionsPage({active,version,onClose,selected=true}:{active:C
       try{
         const xs=await loadConnections(active!)
         if(current()){
-          h.sample(xs,Date.now());setConns([...h.active]);setClosed([...h.closed]);setErr("")
+          h.sample(xs,Date.now());setConns([...h.active]);setConnCache(sourceKey(active!),h.active);setClosed([...h.closed]);setErr("")
           const ids=[...h.active.map(x=>"a:"+x.id),...h.closed.map(x=>"c:"+x.id)]
           if(seenBox.init){
             const nw=ids.filter(id=>!seenBox.seen.has(id))

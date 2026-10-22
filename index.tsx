@@ -1,7 +1,7 @@
 import { HOME_BG, HomeDashboard, CpuDetails, LiveCpuDetails, CpuDetailFrame } from "./home-ui"
 import { newHistory, appendHistory } from "./openwrt-metrics"
 import { rootToolbar } from "./root-toolbar"
-import { prefetchProxies, ProxiesPage, ConnectionsPage, RulesPage, GroupSection, MorePage as DashboardMorePage } from "./dashboard-pages"
+import { prefetchProxies, prefetchRules, prefetchConnections, ProxiesPage, ConnectionsPage, RulesPage, GroupSection, MorePage as DashboardMorePage } from "./dashboard-pages"
 import {
   AppEvents, Animation, Transition, Button, ForEach, Form, HStack, Label, Navigation, NavigationLink, NavigationStack, Picker, Script, Section, SecureField, Spacer,
   Image, Menu, RoundedRectangle, Circle, ScrollView, SVG, Text, ZStack, modifiers, TextField, Toggle, VStack, TabView, Tab, useObservable, useEffect, useState, useMemo,
@@ -164,13 +164,20 @@ function useForeground() {
   return foreground
 }
 
+// First home sample is requested at launch, before any tab exists, so a non-launch home tab can show data on its first frame.
+const overviewPrime = new Map<string, Overview>()
+function primeOverview(active: Controller | null) {
+  if (!active || active.kind !== "openwrt") return
+  const source = overviewSource(active)
+  void loadOverview(active).then(o => { if (overviewSource(active) === source) overviewPrime.set(source, o) }).catch(() => {})
+}
 function OverviewPage({ active, version, onSwitch, onClose, selected = true }: { active: Controller | null; version: number; onSwitch: () => void; onClose?: () => void; selected?: boolean }) {
   const prefs = usePreferences(["connectionBackground"])
   const [hosts, setHosts] = useState<string[]>([])
-  const [ov, setOv] = useState<Overview | null>(null)
+  const [ov, setOv] = useState<Overview | null>(() => (active ? overviewPrime.get(overviewSource(active)) ?? null : null))
   const [err, setErr] = useState("")
   const [histories, setHistories] = useState(newHistory)
-  const [sampleSource,setSampleSource]=useState("")
+  const [sampleSource,setSampleSource]=useState(() => (active ? overviewSource(active) : ""))
   const [cpuOpen,setCpuOpen]=useState(false)
   const source=active?overviewSource(active):""
   const all = listControllers()
@@ -181,7 +188,7 @@ function OverviewPage({ active, version, onSwitch, onClose, selected = true }: {
   // A home tab that is not the launch tab still loads its first data right away, then pauses until it is selected.
   const priming = foreground && !selected && !ov
   const live = showCharts || priming
-  useEffect(() => { setHistories(newHistory()); setOv(null); setSampleSource(source); setCpuOpen(false) }, [source])
+  useEffect(() => { setHistories(newHistory()); setOv(overviewPrime.get(source) ?? null); setSampleSource(source); setCpuOpen(false) }, [source])
   useEffect(()=>{if(selected)setVisible(true);else setCpuOpen(false)},[selected])
   useEffect(() => {
     if (!active || !live) return
@@ -697,7 +704,7 @@ function Root() {
   }, [selection])
   const tab = selection.value
   const active = getActive(), bump = () => { setVersion(v => v + 1) }
-  useEffect(() => { prefetchProxies(active) }, [active?.id, version])
+  useEffect(() => { prefetchProxies(active); prefetchRules(active); prefetchConnections(active) }, [active?.id, version])
 
   return <TabView selection={selection} symbolVariant="none" font={14} foregroundStyle={MAIN_FG}>
     <Tab key="home" title="主页" systemImage="apple.homekit" value="home">
@@ -739,6 +746,9 @@ async function run() {
   recordEvent("start", true)
   // Begin the proxy request before the first screen exists so a proxy launch page has data sooner.
   prefetchProxies(getActive())
+  prefetchRules(getActive())
+  prefetchConnections(getActive())
+  primeOverview(getActive())
   await Navigation.present({ element: <AppearanceRoot />, modalPresentationStyle: "fullScreen" })
   Script.exit()
 }

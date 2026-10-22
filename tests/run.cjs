@@ -62,7 +62,7 @@ function load(name) {
   if (cache.has(name)) return cache.get(name)
   const file = path.join(root, name + (name === 'index' || name === 'settings-ui' || name === 'dashboard-pages' || name === 'root-toolbar' || name === 'home-ui' || name === 'plot-view' ? '.tsx' : '.ts'))
   let source = fs.readFileSync(file, 'utf8')
-  if (name === 'index') source = source.replace(/\nrun\(\)\s*$/, '') + '\nexport { EditController, OverviewPage, InfoItem, SettingsPage, ConnectionsPage, ProxiesPage, RulesPage, Spark, RateChart, StatCard, GroupSection, MorePage, Root, AppearanceRoot };'
+  if (name === 'index') source = source.replace(/\nrun\(\)\s*$/, '') + '\nexport { EditController, OverviewPage, InfoItem, SettingsPage, ConnectionsPage, ProxiesPage, RulesPage, Spark, RateChart, StatCard, GroupSection, MorePage, Root, AppearanceRoot, primeOverview };'
   if (name === 'settings-ui') source += '\nexport { Choice };'
   const code = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020, jsx: ts.JsxEmit.React, jsxFactory: 'h' } }).outputText
   const module = { exports: {} }; cache.set(name, module.exports)
@@ -737,7 +737,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) { const lazy = ['proxies','rules','connections'].includes(ids[i]) && ids[i] !== id; assert.equal(nodes(tree, types[i]).length, lazy ? 0 : 1); if (!lazy) assert.equal(nodes(tree, types[i])[0].props.selected, ids[i] === id) }
     }
-    assert.equal(api.VERSION, '1.5.207'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.5.209'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('独立导航栈保留业务owner和身份，只有选中页提供可见工具栏', () => {
     pref.savePreferences({ defaultPage: 'overview' })
@@ -915,6 +915,22 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     assert.equal(polling().length, 1, 'selected home polls')
     unmount()
   })
+  await test('启动即预取主页数据：未渲染任何主页组件时已发请求，主页首帧直接有数据', async () => {
+    const router = api.listControllers().find(x => x.kind === 'openwrt'); assert.ok(router)
+    let uptime = 1
+    responder = (_url, init) => {
+      const body = JSON.parse(init.body)
+      if (body.params?.[1] === 'session') return { body: { id: body.id, result: [0, { ubus_rpc_session: 'launch-prime' }] } }
+      return { body: { id: body.id, result: [0, { uptime: uptime++, load: [0,0,0], memory: { total: 100, free: 50 }, interface: [], data: '2' }] } }
+    }
+    calls.length = 0
+    app.primeOverview(router); await flush()
+    assert.ok(calls.length > 0, 'request is sent without any OverviewPage mounted')
+    const tree = render(app.OverviewPage, { active: router, version: 0, onSwitch() {}, selected: false }, true)
+    assert.equal(nodes(tree, home.HomeDashboard)[0].props.overview !== null, true, 'first frame already has overview data')
+    unmount()
+    app.primeOverview(null)
+  })
   await test('代理页数据落盘：重启后首帧直接显示上次的策略组，来源不符不使用', async () => {
     const router = api.listControllers().find(x => x.kind === 'openwrt'); assert.ok(router)
     const key = [router.id, router.url, router.plugin, router.auto, router.cport].join('|')
@@ -928,6 +944,45 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     tree = render(pages.ProxiesPage, { active: other, version: 0 }, true)
     assert.equal(names(tree).length, 0, 'a snapshot for a different source is not shown')
     unmount(); store.delete('dashboard_proxy_snapshot_v1')
+  })
+  await test('规则页数据落盘：首帧直接显示上次的规则，来源不符不使用，预取写入快照', async () => {
+    const router = api.listControllers().find(x => x.kind === 'openwrt'); assert.ok(router)
+    const key = [router.id, router.url, router.plugin, router.auto, router.cport].join('|')
+    responder = () => ({ status: 500, body: {} })
+    store.set('dashboard_rules_snapshot_v1', { key, at: now, rules: [{ type: 'DOMAIN', payload: 'snap-rule.example', proxy: 'SNAPPROXY' }], providers: [] })
+    let tree = render(pages.RulesPage, { active: router, version: 0 }, true)
+    assert.ok(text(tree).includes('snap-rule.example'), 'first frame uses the saved rules')
+    unmount()
+    tree = render(pages.RulesPage, { active: { ...router, id: 'rules-other', url: 'http://rules-other.invalid' }, version: 0 }, true)
+    assert.ok(!text(tree).includes('snap-rule.example'), 'a snapshot for a different source is not shown')
+    unmount(); store.delete('dashboard_rules_snapshot_v1')
+    calls.length = 0; pages.prefetchRules(router); await flush(); assert.ok(calls.length > 0, 'rules are requested by prefetch'); pages.prefetchRules(null)
+  })
+  await test('连接页数据落盘：近期快照首帧显示，过期或来源不符不使用，预取发请求', async () => {
+    const router = api.listControllers().find(x => x.kind === 'openwrt'); assert.ok(router)
+    const key = [router.id, router.url, router.plugin, router.auto, router.cport].join('|')
+    const conn = { id: 'c1', host: 'snap-host.example', src: '1.1.1.1:1', dst: '2.2.2.2:443', network: 'tcp', rule: 'MATCH', chain: 'DIRECT', up: 1, down: 1, start: now, chains: ['DIRECT'] }
+    responder = () => ({ status: 500, body: {} })
+    store.set('dashboard_connections_snapshot_v1', { key, at: now - 1000, conns: [conn] })
+    let tree = render(pages.ConnectionsPage, { active: router, version: 0 }, true)
+    assert.ok(text(tree).includes('snap-host.example'), 'first frame uses the recent saved connections')
+    unmount()
+    store.set('dashboard_connections_snapshot_v1', { key, at: now - 3600000, conns: [conn] })
+    const stale = { ...router, url: router.url + '/stale' }, staleKey = [stale.id, stale.url, stale.plugin, stale.auto, stale.cport].join('|')
+    store.set('dashboard_connections_snapshot_v1', { key: staleKey, at: now - 3600000, conns: [conn] })
+    tree = render(pages.ConnectionsPage, { active: stale, version: 0 }, true)
+    assert.ok(!text(tree).includes('snap-host.example'), 'an old snapshot is not shown')
+    unmount(); store.delete('dashboard_connections_snapshot_v1')
+    calls.length = 0; pages.prefetchConnections(router); await flush(); assert.ok(calls.length > 0, 'connections are requested by prefetch'); pages.prefetchConnections(null)
+  })
+  await test('启动入口在创建界面前依次预取代理、规则、连接与主页数据，Root挂载时也预取', () => {
+    const src = fs.readFileSync(path.join(root, 'index.tsx'), 'utf8')
+    const run = src.slice(src.indexOf('async function run()'))
+    const present = run.indexOf('Navigation.present')
+    for (const call of ['prefetchProxies(getActive())', 'prefetchRules(getActive())', 'prefetchConnections(getActive())', 'primeOverview(getActive())']) {
+      assert.ok(run.indexOf(call) > 0 && run.indexOf(call) < present, call + ' must run before the first screen is presented')
+    }
+    assert.ok(src.includes('prefetchProxies(active); prefetchRules(active); prefetchConnections(active)'))
   })
   await test('代理页预取：首次进入前请求并写入缓存，空控制器不请求', async () => {
     const router = api.listControllers().find(x => x.kind === 'openwrt'); assert.ok(router)
@@ -1876,7 +1931,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       const diagnostic = logs.filter(x => x.startsWith('[preferences-icon]'))
       for (const stage of ['change','accepted','proxies-render','group-render']) assert.ok(diagnostic.some(x => x.includes('stage=' + stage) && x.includes('enabled=false')))
       assert.ok(diagnostic.every(x => !x.includes('private.invalid') && !x.includes('private-group-name') && !x.includes('secret-')))
-      assert.ok(diagnostic.every(x => x.includes('build=1.5.207') && /instance=[a-z0-9]+/.test(x)))
+      assert.ok(diagnostic.every(x => x.includes('build=1.5.209') && /instance=[a-z0-9]+/.test(x)))
       assert.equal(new Set(diagnostic.map(x => x.match(/instance=([^ ]+)/)[1])).size, 1)
     } finally { context.console = originalConsole; unmount(); pref.savePreferences({ customIcons: true, testURL: 'https://www.gstatic.com/generate_204' }) }
   })
