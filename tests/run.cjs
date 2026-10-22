@@ -231,6 +231,29 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     assert.ok(rendered.every(t => t.props.listRowSeparator !== 'hidden'))
     unmount()
   })
+  await test('阈值轨道独立固定占位，绘制不越界；测速链接独立行并与超时分隔', () => {
+    let tree = render(ui.ThresholdRange, {}, true)
+    const slot = tree.props.children[1]
+    assert.equal(slot.type, 'VStack'); assert.equal(slot.props.frame.height, 56)
+    const geometry = nodes(slot, 'GeometryReader')[0]
+    const track = geometry.props.children[0]({ size: { width: 340, height: 56 } })
+    assert.equal(track.props.alignment, 'topLeading')
+    for (const shape of track.props.children) {
+      assert.ok(shape.props.offset.y >= 0)
+      assert.ok(shape.props.offset.y + shape.props.frame.height <= slot.props.frame.height)
+    }
+    assert.equal(track.props.children[0].props.offset.y + 2, track.props.children[1].props.offset.y + 13)
+    unmount()
+    tree = render(pages.ProxyTestSettings, {}, true)
+    const divider = nodes(tree, 'Divider')[0]
+    assert.ok(divider)
+    const card = tree.props.children.find(n => n.props.children?.some(c => c.type === 'Divider'))
+    assert.ok(card)
+    assert.equal(nodes(card.props.children[0], ui.TestURLField).length, 1)
+    assert.equal(card.props.children[1].type, 'Divider')
+    assert.equal(card.props.children[2].type, ui.Range)
+    unmount()
+  })
   await test('代理页设置位于代理来源后，隐藏来源或无控制器仍可调整本地参数', () => {
     const src = fs.readFileSync(path.join(root, 'dashboard-pages.tsx'), 'utf8')
     const body = src.slice(src.indexOf('export function ProxiesPage'), src.indexOf('function ruleColor'))
@@ -712,7 +735,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) { const lazy = ['proxies','rules','connections'].includes(ids[i]) && ids[i] !== id; assert.equal(nodes(tree, types[i]).length, lazy ? 0 : 1); if (!lazy) assert.equal(nodes(tree, types[i])[0].props.selected, ids[i] === id) }
     }
-    assert.equal(api.VERSION, '1.5.197'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.5.198'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('独立导航栈保留业务owner和身份，只有选中页提供可见工具栏', () => {
     pref.savePreferences({ defaultPage: 'overview' })
@@ -1746,7 +1769,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       const diagnostic = logs.filter(x => x.startsWith('[preferences-icon]'))
       for (const stage of ['change','accepted','proxies-render','group-render']) assert.ok(diagnostic.some(x => x.includes('stage=' + stage) && x.includes('enabled=false')))
       assert.ok(diagnostic.every(x => !x.includes('private.invalid') && !x.includes('private-group-name') && !x.includes('secret-')))
-      assert.ok(diagnostic.every(x => x.includes('build=1.5.197') && /instance=[a-z0-9]+/.test(x)))
+      assert.ok(diagnostic.every(x => x.includes('build=1.5.198') && /instance=[a-z0-9]+/.test(x)))
       assert.equal(new Set(diagnostic.map(x => x.match(/instance=([^ ]+)/)[1])).size, 1)
     } finally { context.console = originalConsole; unmount(); pref.savePreferences({ customIcons: true, testURL: 'https://www.gstatic.com/generate_204' }) }
   })

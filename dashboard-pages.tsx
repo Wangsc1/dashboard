@@ -142,7 +142,7 @@ export function ProxyTestSettings() {
     <HStack><Text font={20} fontWeight="bold" padding={{top:6}}>连接超时</Text><Spacer/></HStack>
     <Card><Range title="连接超时时间" divider min={1} max={30} value={p.requestTimeout} suffix=" s" onChanged={n => updatePreference({ requestTimeout: n })} /></Card>
     <HStack><Text font={20} fontWeight="bold" padding={{top:6}}>测速设置</Text><Spacer/></HStack>
-    <Card><TestURLField /><Range title="超时时间" min={1000} max={10000} step={100} value={p.testTimeout} suffix=" ms" onChanged={n => updatePreference({ testTimeout: n })} /></Card>
+    <Card><VStack alignment="leading" spacing={0} padding={{vertical:6}} frame={{maxWidth:"infinity",alignment:"leading"}}><TestURLField /></VStack><Divider /><Range title="超时时间" min={1000} max={10000} step={100} value={p.testTimeout} suffix=" ms" onChanged={n => updatePreference({ testTimeout: n })} /></Card>
   </>
 }
 const proxyCache=new Map<string,{groups:Group[];providers:Provider[]}>()

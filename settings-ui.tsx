@@ -125,15 +125,17 @@ export function ThresholdRange() {
   }, [p.delayGreen, p.delayRed])
   return <VStack alignment="leading" spacing={18} padding={{ vertical: 8 }} listRowSeparator="hidden">
     <HStack><Text>延迟阈值范围</Text><Spacer /><Text foregroundStyle="secondaryLabel">{`${draft.delayGreen}–${draft.delayRed} ms`}</Text></HStack>
-    <GeometryReader frame={{ height: 56 }}>{(proxy: { size: { width: number } }) => {
+    <VStack spacing={0} frame={{ height: 56 }}>
+    <GeometryReader>{(proxy: { size: { width: number } }) => {
       const width = Math.max(1, proxy.size.width - 44)
       drag.width = width
       const x = (n: number) => 22 + (Math.max(100, Math.min(800, n)) - 100) / 700 * width
-      return <ZStack alignment="leading" frame={{ width: proxy.size.width, height: 56 }} background="clear" onDragGesture={drag.gesture}>
-        <RoundedRectangle cornerRadius={2} fill={gradient("linear", { colors: ["systemGreen", "systemYellow", "systemOrange", "systemRed"], startPoint: "leading", endPoint: "trailing" })} frame={{ width, height: 4 }} offset={{ x: 22, y: 0 }} />
-        {(["green", "red"] as const).map(handle => <Circle key={handle} fill="white" stroke={{ shapeStyle: "#DDDDDD", strokeStyle: { lineWidth: 0.5 } }} frame={{ width: 26, height: 26 }} offset={{ x: x(handle === "green" ? draft.delayGreen : draft.delayRed) - 13, y: 0 }} />)}
+      return <ZStack alignment="topLeading" frame={{ width: proxy.size.width, height: 56 }} background="clear" onDragGesture={drag.gesture}>
+        <RoundedRectangle cornerRadius={2} fill={gradient("linear", { colors: ["systemGreen", "systemYellow", "systemOrange", "systemRed"], startPoint: "leading", endPoint: "trailing" })} frame={{ width, height: 4 }} offset={{ x: 22, y: 26 }} />
+        {(["green", "red"] as const).map(handle => <Circle key={handle} fill="white" stroke={{ shapeStyle: "#DDDDDD", strokeStyle: { lineWidth: 0.5 } }} frame={{ width: 26, height: 26 }} offset={{ x: x(handle === "green" ? draft.delayGreen : draft.delayRed) - 13, y: 15 }} />)}
       </ZStack>
     }}</GeometryReader>
+    </VStack>
     <Text font={12} foregroundStyle="tertiaryLabel">{`低于${draft.delayGreen}ms显示为绿色，${draft.delayGreen}ms到${draft.delayRed}ms之间显示为黄色，高于${draft.delayRed}ms或超时显示为红色。`}</Text>
     {p.delayGreen < 100 || p.delayRed > 800 ? <Text font={12} foregroundStyle="secondaryLabel">当前保留原阈值；首次拖动将调整到100–800 ms范围。</Text> : null}
   </VStack>
