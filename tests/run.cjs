@@ -860,7 +860,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) { const lazy = ['proxies','rules','connections'].includes(ids[i]) && ids[i] !== id; assert.equal(nodes(tree, types[i]).length, lazy ? 0 : 1); if (!lazy) assert.equal(nodes(tree, types[i])[0].props.selected, ids[i] === id) }
     }
-    assert.equal(api.VERSION, '1.32'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.33'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('独立导航栈保留业务owner和身份，只有选中页提供可见工具栏', () => {
     pref.savePreferences({ defaultPage: 'overview' })
@@ -893,7 +893,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
         scan(page);assert.equal(owners.length,1)
         const toolbar=owners[0].props.toolbar;assert.equal(toolbar.type,undefined)
         assert.deepEqual(Object.keys(toolbar),id==='home'?['topBarLeading','topBarTrailing','principal']:['topBarLeading','topBarTrailing'])
-        if(id==='home'){assert.ok(text(toolbar.principal).includes(children[0].props.active?.name||'OpenWrt 状态'));assert.ok(/运行正常|连接中|连接失败/.test(text(toolbar.principal)));assert.ok(!/运行正常|连接中|连接失败/.test(text(page.props.children)))}
+        if(id==='home'){assert.equal(toolbar.principal.type,'Text','title alone determines toolbar vertical alignment');assert.ok(text(toolbar.principal).includes(children[0].props.active?.name||'OpenWrt 状态'));assert.ok(/运行正常|连接中|连接失败/.test(text(toolbar.principal.props.overlay.content)));assert.equal(toolbar.principal.props.overlay.alignment,'bottom');assert.equal(toolbar.principal.props.overlay.content.props.offset.y,14);assert.ok(!/运行正常|连接中|连接失败/.test(text(page.props.children)))}
         assert.equal(toolbar.topBarLeading.props.systemImage,'xmark');assert.equal(toolbar.topBarLeading.props.action,children[0].props.onClose)
         assert.equal(nodes(toolbar,'ToolbarItem').length,0)
         if(id==='more'){assert.equal(toolbar.topBarTrailing,undefined);continue}
@@ -1985,7 +1985,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       const diagnostic = logs.filter(x => x.startsWith('[preferences-icon]'))
       for (const stage of ['change','accepted','proxies-render','group-render']) assert.ok(diagnostic.some(x => x.includes('stage=' + stage) && x.includes('enabled=false')))
       assert.ok(diagnostic.every(x => !x.includes('private.invalid') && !x.includes('private-group-name') && !x.includes('secret-')))
-      assert.ok(diagnostic.every(x => x.includes('build=1.32') && /instance=[a-z0-9]+/.test(x)))
+      assert.ok(diagnostic.every(x => x.includes('build=1.33') && /instance=[a-z0-9]+/.test(x)))
       assert.equal(new Set(diagnostic.map(x => x.match(/instance=([^ ]+)/)[1])).size, 1)
     } finally { context.console = originalConsole; unmount(); pref.savePreferences({ customIcons: true, testURL: 'https://www.gstatic.com/generate_204' }) }
   })
