@@ -146,6 +146,14 @@ export function ProxyTestSettings() {
   </>
 }
 const proxyCache=new Map<string,{groups:Group[];providers:Provider[]}>()
+const proxyPrefetch=new Set<string>()
+// Warm the per-source cache before the proxy tab is first opened; failures stay silent and the page loads normally.
+export function prefetchProxies(active:Controller|null){
+  if(!active)return;const key=sourceKey(active);if(proxyCache.has(key)||proxyPrefetch.has(key))return;proxyPrefetch.add(key)
+  void Promise.all([loadGroups(active,{includeGlobal:false}).catch(()=>null),loadProviders(active,"proxies").catch(()=>null)]).then(([groups,providers])=>{
+    const old=proxyCache.get(key);if(groups||providers)proxyCache.set(key,{groups:old?.groups??groups??[],providers:old?.providers??providers??[]})
+  }).finally(()=>{proxyPrefetch.delete(key)})
+}
 export function ProxiesPage({active,version,onClose,selected=true}:{active:Controller|null;version:number;onClose?:()=>void;selected?:boolean}) {
   const p=usePreferences(),cacheKey=active?sourceKey(active):"",cached=proxyCache.get(cacheKey),[groups,setGroups]=useState<Group[]>(cached?.groups??[]),[providers,setProviders]=useState<Provider[]>(cached?.providers??[]),[loaded,setLoaded]=useState(!!cached),[err,setErr]=useState(""),[tick,setTick]=useState(0),[expanded,setExpanded]=useState(false),[showProviders,setShowProviders]=useState(true),[limit,setLimit]=useState(40),[visible,setVisible]=useState(selected),[confirmedMode,setConfirmedMode]=useState<{key:string;mode:string|null}>(()=>({key:cacheKey,mode:proxyModeCache.get(cacheKey)??null})),globalMode=confirmedMode.key===cacheKey&&confirmedMode.mode==="global"
   traceIconPreference("proxies-render", p.customIcons)

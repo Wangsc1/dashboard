@@ -737,7 +737,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) { const lazy = ['proxies','rules','connections'].includes(ids[i]) && ids[i] !== id; assert.equal(nodes(tree, types[i]).length, lazy ? 0 : 1); if (!lazy) assert.equal(nodes(tree, types[i])[0].props.selected, ids[i] === id) }
     }
-    assert.equal(api.VERSION, '1.5.201'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.5.202'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('独立导航栈保留业务owner和身份，只有选中页提供可见工具栏', () => {
     pref.savePreferences({ defaultPage: 'overview' })
@@ -875,6 +875,26 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     context.confirmResult = false; await button(tree, '清除图片缓存').props.action(); assert.equal(confirms.length, beforeConfirms + 1)
     pref.savePreferences({ haptics: true }); pref.feedback(); assert.equal(pref.getPreferences().haptics, false); assert.equal(haptics, beforeHaptics)
     unmount(); pref.savePreferences(before)
+  })
+  await test('默认启动页非主页后切到主页：选中即恢复可见并开始读取，不依赖onAppear', async () => {
+    const router = api.listControllers().find(x => x.kind === 'openwrt'); assert.ok(router)
+    const props = { active: router, version: 0, onSwitch() {}, selected: false }
+    calls.length = 0
+    let tree = render(app.OverviewPage, props, true); await flush()
+    tree.props.onDisappear(); render(app.OverviewPage, props); await flush()
+    assert.equal(calls.length, 0)
+    render(app.OverviewPage, { ...props, selected: true }); await flush()
+    render(app.OverviewPage, { ...props, selected: true }); await flush()
+    assert.ok(calls.length > 0, 'selecting home must start overview reads')
+    unmount()
+  })
+  await test('代理页预取：首次进入前请求并写入缓存，空控制器不请求', async () => {
+    const router = api.listControllers().find(x => x.kind === 'openwrt'); assert.ok(router)
+    calls.length = 0
+    pages.prefetchProxies(router); pages.prefetchProxies(router); await flush()
+    const first = calls.length; assert.ok(first > 0)
+    pages.prefetchProxies(null); assert.equal(calls.length, first)
+    unmount()
   })
   await test('离线控制器默认折叠，不受旧关闭值影响，长按只展开当前地址', () => {
     const before = pref.getPreferences()
@@ -1815,7 +1835,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       const diagnostic = logs.filter(x => x.startsWith('[preferences-icon]'))
       for (const stage of ['change','accepted','proxies-render','group-render']) assert.ok(diagnostic.some(x => x.includes('stage=' + stage) && x.includes('enabled=false')))
       assert.ok(diagnostic.every(x => !x.includes('private.invalid') && !x.includes('private-group-name') && !x.includes('secret-')))
-      assert.ok(diagnostic.every(x => x.includes('build=1.5.201') && /instance=[a-z0-9]+/.test(x)))
+      assert.ok(diagnostic.every(x => x.includes('build=1.5.202') && /instance=[a-z0-9]+/.test(x)))
       assert.equal(new Set(diagnostic.map(x => x.match(/instance=([^ ]+)/)[1])).size, 1)
     } finally { context.console = originalConsole; unmount(); pref.savePreferences({ customIcons: true, testURL: 'https://www.gstatic.com/generate_204' }) }
   })

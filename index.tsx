@@ -1,7 +1,7 @@
 import { HOME_BG, HomeDashboard, CpuDetails, LiveCpuDetails, CpuDetailFrame } from "./home-ui"
 import { newHistory, appendHistory } from "./openwrt-metrics"
 import { rootToolbar } from "./root-toolbar"
-import { ProxiesPage, ConnectionsPage, RulesPage, GroupSection, MorePage as DashboardMorePage } from "./dashboard-pages"
+import { prefetchProxies, ProxiesPage, ConnectionsPage, RulesPage, GroupSection, MorePage as DashboardMorePage } from "./dashboard-pages"
 import {
   AppEvents, Animation, Transition, Button, ForEach, Form, HStack, Label, Navigation, NavigationLink, NavigationStack, Picker, Script, Section, SecureField, Spacer,
   Image, Menu, RoundedRectangle, Circle, ScrollView, SVG, Text, ZStack, modifiers, TextField, Toggle, VStack, TabView, Tab, useObservable, useEffect, useState, useMemo,
@@ -179,7 +179,7 @@ function OverviewPage({ active, version, onSwitch, onClose, selected = true }: {
   const foreground = useForeground()
   const showCharts = foreground && selected && (visible || cpuOpen)
   useEffect(() => { setHistories(newHistory()); setOv(null); setSampleSource(source); setCpuOpen(false) }, [source])
-  useEffect(()=>{if(!selected)setCpuOpen(false)},[selected])
+  useEffect(()=>{if(selected)setVisible(true);else setCpuOpen(false)},[selected])
   useEffect(() => {
     if (!active || !showCharts) return
     if (active.kind !== "openwrt") { setErr("主页仅支持 OpenWrt 路由器数据，请在设置添加 OpenWrt"); return }
@@ -694,6 +694,7 @@ function Root() {
   }, [selection])
   const tab = selection.value
   const active = getActive(), bump = () => { setVersion(v => v + 1) }
+  useEffect(() => { prefetchProxies(active) }, [active?.id, version])
 
   return <TabView selection={selection} symbolVariant="none" font={14} foregroundStyle={MAIN_FG}>
     <Tab key="home" title="主页" systemImage="apple.homekit" value="home">
