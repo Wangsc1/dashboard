@@ -171,13 +171,14 @@ const overviewPrimePending = new Map<string,Promise<void>>()
 function primeOverview(active: Controller | null) {
   if (!active || active.kind !== "openwrt") return
   const source = overviewSource(active)
-  if(overviewPrimePending.has(source))return
+  if(overviewPrimePending.has(source))return overviewPrimePending.get(source)
   const pending=loadOverview(active).then(o=>{
     if(overviewSource(active)!==source)return
     overviewPrime.set(source,o)
     for(const fn of overviewPrimeListeners)fn(source,o)
   }).catch(()=>{}).finally(()=>{overviewPrimePending.delete(source)})
   overviewPrimePending.set(source,pending)
+  return pending
 }
 function OverviewPage({ active, version, onSwitch, onClose, selected = true }: { active: Controller | null; version: number; onSwitch: () => void; onClose?: () => void; selected?: boolean }) {
   const prefs = usePreferences(["connectionBackground"])
@@ -719,6 +720,25 @@ function Root() {
   }, [selection])
   const tab = selection.value
   const active = getActive(), bump = () => { setVersion(v => v + 1) }
+  const homeSource = active ? overviewSource(active) : ""
+  const foreground = useForeground()
+  useEffect(() => {
+    // Native tabs may not mount home at all. Launch is only a first attempt:
+    // recover transient failures (including an invalidated sampling epoch) here,
+    // and also handle a controller that becomes available after run().
+    if (!active || active.kind !== "openwrt" || !foreground || overviewPrime.has(homeSource)) return
+    let alive = true
+    const retry = () => {
+      if (!alive) return
+      if (overviewPrime.has(homeSource)) { clearInterval(timer); return }
+      void primeOverview(active)?.then(() => {
+        if (alive && overviewPrime.has(homeSource)) clearInterval(timer)
+      })
+    }
+    const timer = setInterval(retry, 1000)
+    retry()
+    return () => { alive = false; clearInterval(timer) }
+  }, [homeSource, version, foreground])
   useEffect(() => { prefetchProxies(active); prefetchRules(active); prefetchConnections(active); prefetchMoreVersions(active) }, [active?.id, version])
 
   return <TabView selection={selection} symbolVariant="none" font={14} foregroundStyle={MAIN_FG}>

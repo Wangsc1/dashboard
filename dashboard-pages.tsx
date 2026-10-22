@@ -347,12 +347,16 @@ export function prefetchMoreVersions(active:Controller|null){
  if(!active)return;const key=sourceKey(active);if(morePrefetch.has(key))return;morePrefetch.add(key)
  try{const saved=Storage.get<any>("dashboard_versions_snapshot_v1");if(saved?.source===JSON.stringify(active))moreSnapshots.set(key,{...moreSnapshots.get(key),core:saved.core,app:saved.app})}catch{}
  const remember=(x:{core?:string;app?:string})=>{const patch:typeof x={};if(x.core&&x.core!=="未提供")patch.core=x.core;if(x.app&&x.app!=="未提供")patch.app=x.app;const value={...moreSnapshots.get(key),...patch};moreSnapshots.set(key,value);try{Storage.set("dashboard_versions_snapshot_v1",{source:JSON.stringify(active),core:value.core,app:value.app})}catch{}}
- void loadRuntimeVersions(active,remember).then(remember).catch(()=>{}).finally(()=>morePrefetch.delete(key))
+ const rememberRuntime=(runtime:NikkiRuntime)=>{moreSnapshots.set(key,{...moreSnapshots.get(key),runtime,running:runtime.running})}
+ void Promise.all([
+   loadRuntimeVersions(active,remember).then(remember).catch(()=>{}),
+   active.kind==="openwrt"&&active.plugin==="nikki"?loadNikkiRuntime(active,rememberRuntime).then(rememberRuntime).catch(()=>{}):Promise.resolve()
+ ]).finally(()=>morePrefetch.delete(key))
 }
 export function MorePage({active,onChanged,onClose,selected=true}:{active:Controller|null;onChanged:()=>void;onClose?:()=>void;selected?:boolean}) {
   const p=usePreferences(["theme","defaultPage"])
   const cachedVersions=active?moreSnapshots.get(sourceKey(active)):undefined
-  const [core,setCore]=useState(cachedVersions?.core??"未提供"),[app,setApp]=useState(cachedVersions?.app??"未提供"),[mode,setMode]=useState("未提供"),[err,setErr]=useState(""),[visible,setVisible]=useState(selected),[busy,setBusy]=useState(false),[running,setRunning]=useState<boolean|null>(null),[guard]=useState({alive:true,source:"",busy:false}),[runtime,setRuntime]=useState<NikkiRuntime|null>(null),[,setClock]=useState(0),[notice,setNotice]=useState(""),[noticeKind,setNoticeKind]=useState("success")
+  const [core,setCore]=useState(cachedVersions?.core??"未提供"),[app,setApp]=useState(cachedVersions?.app??"未提供"),[mode,setMode]=useState("未提供"),[err,setErr]=useState(""),[visible,setVisible]=useState(selected),[busy,setBusy]=useState(false),[running,setRunning]=useState<boolean|null>(cachedVersions?.running??null),[guard]=useState({alive:true,source:"",busy:false}),[runtime,setRuntime]=useState<NikkiRuntime|null>(cachedVersions?.runtime??null),[,setClock]=useState(0),[notice,setNotice]=useState(""),[noticeKind,setNoticeKind]=useState("success")
   guard.source=active?sourceKey(active):""
   useEffect(()=>()=>{guard.alive=false},[])
   useEffect(()=>{setVisible(selected)},[selected])
