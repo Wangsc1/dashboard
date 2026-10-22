@@ -860,7 +860,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) { const lazy = ['proxies','rules','connections'].includes(ids[i]) && ids[i] !== id; assert.equal(nodes(tree, types[i]).length, lazy ? 0 : 1); if (!lazy) assert.equal(nodes(tree, types[i])[0].props.selected, ids[i] === id) }
     }
-    assert.equal(api.VERSION, '1.34'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.35'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('独立导航栈保留业务owner和身份，只有选中页提供可见工具栏', () => {
     pref.savePreferences({ defaultPage: 'overview' })
@@ -999,6 +999,29 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     assert.ok(!text(tree).includes('snap-host.example'), 'an old snapshot is not shown')
     unmount(); store.delete('dashboard_connections_snapshot_v1')
     calls.length = 0; pages.prefetchConnections(router); await flush(); assert.ok(calls.length > 0, 'connections are requested by prefetch'); pages.prefetchConnections(null)
+  })
+  await test('连接卡协议与入站类型分别显示：TCP/UDP及TProxy/Inner，缺字段不猜测', async () => {
+    const router={...c,id:'inbound-badges'},key=model.sourceKey(router)
+    responder=()=>({body:{connections:[
+      {id:'tp',metadata:{host:'tcp.example',network:'tcp',type:'TProxy'},chains:['DIRECT']},
+      {id:'inner',metadata:{host:'udp.example',network:'udp',type:'Inner'},chains:['DIRECT']},
+      {id:'missing',metadata:{host:'missing.example',network:'udp'},chains:['DIRECT']}
+    ]}})
+    const xs=await api.loadConnections(router)
+    assert.deepEqual(clone(xs.map(x=>[x.network,x.inboundType])),[['TCP','TProxy'],['UDP','Inner'],['UDP','']])
+    const history=new model.ConnectionHistory();history.sample(xs,now);history.sample([],now+1000)
+    assert.deepEqual(clone(history.closed.map(x=>x.inboundType).sort()),['','Inner','TProxy'])
+    responder=()=>({status:500})
+    for(const style of ['standard','compact']) {
+      pref.savePreferences({connectionStyle:style})
+      store.set('dashboard_connections_snapshot_v1',{key,at:now,conns:xs})
+      const tree=render(pages.ConnectionsPage,{active:router,version:0},true)
+      const chips=nodes(tree,'Text').map(n=>text(n))
+      for(const label of ['TCP','UDP','TProxy','Inner'])assert.ok(chips.includes(label),label+' visible in '+style)
+      assert.equal(chips.filter(x=>x==='TProxy').length,1,'missing type is not inferred')
+      unmount()
+    }
+    store.delete('dashboard_connections_snapshot_v1');pref.savePreferences({connectionStyle:'standard'})
   })
   await test('启动入口预取代理规则连接；主页采样仅由Root前台owner启动', () => {
     const src = fs.readFileSync(path.join(root, 'index.tsx'), 'utf8')
@@ -1985,7 +2008,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       const diagnostic = logs.filter(x => x.startsWith('[preferences-icon]'))
       for (const stage of ['change','accepted','proxies-render','group-render']) assert.ok(diagnostic.some(x => x.includes('stage=' + stage) && x.includes('enabled=false')))
       assert.ok(diagnostic.every(x => !x.includes('private.invalid') && !x.includes('private-group-name') && !x.includes('secret-')))
-      assert.ok(diagnostic.every(x => x.includes('build=1.34') && /instance=[a-z0-9]+/.test(x)))
+      assert.ok(diagnostic.every(x => x.includes('build=1.35') && /instance=[a-z0-9]+/.test(x)))
       assert.equal(new Set(diagnostic.map(x => x.match(/instance=([^ ]+)/)[1])).size, 1)
     } finally { context.console = originalConsole; unmount(); pref.savePreferences({ customIcons: true, testURL: 'https://www.gstatic.com/generate_204' }) }
   })
