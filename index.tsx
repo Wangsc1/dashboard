@@ -1,4 +1,3 @@
-import { homeTraceRun, nextHomeTraceId, homeTraceSource, traceHome } from "./home-trace"
 import { HOME_BG, HomeDashboard, CpuDetails, LiveCpuDetails, CpuDetailFrame } from "./home-ui"
 import { newHistory, appendHistory, OverviewHistory } from "./openwrt-metrics"
 import { rootToolbar } from "./root-toolbar"
@@ -18,7 +17,7 @@ import { DOCKER_PNG_BASE64 } from "./docker-icon"
 import { useSmoothPlot } from "./chart-ui"
 import { CHART_HISTORY } from "./chart"
 import { panelRowBackground, PanelSettingsSections, LogsPage, KernelConfigPage, usePreferences } from "./settings-ui"
-import { getPreferences, controllerHealth, cachedIcon, feedback, recordEvent, HomeDiagnostic } from "./preferences"
+import { getPreferences, controllerHealth, cachedIcon, feedback, recordEvent } from "./preferences"
 
 const msg = (e: any) => String(e?.message ?? e ?? "未知错误")
 
@@ -165,28 +164,13 @@ function useForeground() {
   return foreground
 }
 
-// Diagnostic failures must never affect requests, sampling or native navigation.
-function homeDiagnostic(home: HomeDiagnostic, ok = true) {
-  traceHome(home,ok)
-}
-function homeFailure(e: unknown): HomeDiagnostic["reason"] {
-  try {
-    const text = typeof (e as any)?.message === "string" ? (e as any).message as string : ""
-    if (text === "来源或采样代次已改变") return "epoch"
-    if (/ACCESS|认证失败|登录失败|没有权限/.test(text)) return "auth"
-    if (/timeout|timed out|超时/i.test(text)) return "timeout"
-    if (/HTTP \d{3}/.test(text)) return "http"
-    if (/返回|ubus 错误|ubus 调用失败/.test(text)) return "response"
-    return "other"
-  } catch { return "other" }
-}
-
-// First home sample is requested at launch, before any tab exists, so a non-launch home tab can show data on its first frame.
-interface OverviewFrame { overview: Overview; histories: OverviewHistory; serial: number }
+// Root collects real foreground history before a lazy native home tab mounts.
+interface OverviewFrame { overview: Overview; histories: OverviewHistory }
 // Process-local display snapshots survive lazy native tab unmounts. Source keys
 // include authentication identity; neither samples nor history are persisted.
 const overviewPrime = new Map<string, OverviewFrame>()
-const overviewPrimeListeners = new Set<(source:string,frame:OverviewFrame)=>void>()
+const overviewErrors = new Map<string,string>()
+const overviewPrimeListeners = new Set<(source:string,frame?:OverviewFrame,error?:string)=>void>()
 function saveOverviewFrame(source: string, o: Overview, baseline: boolean): OverviewFrame {
   const previous = overviewPrime.get(source), old = previous?.overview.wrt
   const reboot = !!(old && o.wrt && o.wrt.uptime < old.uptime)
@@ -204,51 +188,67 @@ function saveOverviewFrame(source: string, o: Overview, baseline: boolean): Over
   // adding held values or artificial zero points; real new samples append later.
   if (baseline) { histories.up=h.up; histories.down=h.down }
   if (keepCpu) histories.cpu=h.cpu
-  const frame = {overview,histories,serial:nextHomeTraceId()}
+  const frame = {overview,histories}
   overviewPrime.set(source,frame)
   return frame
 }
-const overviewPrimePending = new Map<string,Promise<void>>()
-// A cached baseline is useful for static fields, but is not a completed rate/CPU warmup.
-const overviewPrimeReady = new Set<string>()
-function primeOverview(active: Controller | null) {
-  if (!active || active.kind !== "openwrt") return
+// One foreground sampling owner, independent of the selected native tab.
+// A request must finish before another starts; delayed responses never create a
+// catch-up burst or a near-zero CPU delta. Pauses invalidate unfinished samples.
+function startOverviewSampling(active: Controller, foreground: boolean): () => void {
   const source = overviewSource(active)
-  if(overviewPrimePending.has(source))return overviewPrimePending.get(source)
-  homeDiagnostic({stage:"prime-start",active:active.kind,cache:overviewPrime.has(source)})
-  let cancelled = false, timer: ReturnType<typeof setTimeout> | undefined, wake: (()=>void) | undefined
+  let disposed = false, running = false, busy = false, baseline = true
+  let completedAt = -Infinity, timer: ReturnType<typeof setInterval> | undefined
+  let generation = 0
+  const publish = (frame?: OverviewFrame, error?: string) => {
+    for (const fn of overviewPrimeListeners) fn(source, frame, error)
+  }
+  const refresh = async () => {
+    if (disposed || !running || busy || Date.now() - completedAt < 1000 || overviewSource(active) !== source) return
+    busy = true
+    const epoch = generation
+    try {
+      const o = await loadOverview(active)
+      if (disposed || !running || epoch !== generation || overviewSource(active) !== source) return
+      const frame = saveOverviewFrame(source, o, baseline)
+      baseline = false
+      overviewErrors.delete(source)
+      publish(frame, "")
+    } catch (e) {
+      if (!disposed && running && epoch === generation && overviewSource(active) === source) {
+        const error = msg(e)
+        overviewErrors.set(source, error)
+        publish(undefined, error)
+      }
+    } finally {
+      busy = false; completedAt = Date.now()
+      // Anchor the next one-second tick to completion, not an old interval's
+      // phase (a slow baseline must never be followed by a near-zero delta).
+      if (!disposed && running) {
+        if (timer !== undefined) clearInterval(timer)
+        timer = setInterval(refresh, 1000)
+      }
+    }
+  }
+  const pause = () => {
+    running = false; generation++; baseline = true
+    if (timer !== undefined) clearInterval(timer)
+    timer = undefined
+    resetOverviewSampling(active, source)
+  }
+  const resume = () => {
+    if (disposed || running) return
+    running = true; completedAt = -Infinity
+    void refresh()
+    timer = setInterval(refresh, 1000)
+  }
   const phaseChanged = (phase: "active" | "inactive" | "background") => {
-    if (phase === "active" || cancelled) return
-    cancelled = true
-    if (timer !== undefined) clearTimeout(timer)
-    wake?.()
-    resetOverviewSampling(active)
+    if (phase === "active") resume(); else pause()
   }
   AppEvents.scenePhase.addListener(phaseChanged)
-  const publish = (o: Overview, baseline: boolean) => {
-    if(cancelled || overviewSource(active)!==source){homeDiagnostic({stage:"prime-discard"});return false}
-    const frame=saveOverviewFrame(source,o,baseline)
-    for(const fn of overviewPrimeListeners)fn(source,frame)
-    return true
-  }
-  const pending=(async()=>{
-    const first = await loadOverview(active)
-    if (!publish(first,true)) return
-    // CpuSampler needs a counter delta; ratePrevious needs >= 0.5 s. Wait after
-    // the response, not after launch, so even a slow first RPC gets a real delta.
-    await new Promise<void>(resolve=>{wake=resolve;timer=setTimeout(resolve,1000)})
-    if (cancelled || overviewSource(active)!==source) return
-    const second = await loadOverview(active)
-    if (!publish(second,false)) return
-    overviewPrimeReady.add(source)
-    homeDiagnostic({stage:"prime-success",cache:true})
-  })().catch(e=>{homeDiagnostic({stage:"prime-failure",reason:homeFailure(e)},false)}).finally(()=>{
-    if (timer !== undefined) clearTimeout(timer)
-    AppEvents.scenePhase.removeListener(phaseChanged)
-    overviewPrimePending.delete(source)
-  })
-  overviewPrimePending.set(source,pending)
-  return pending
+  resetOverviewSampling(active, source)
+  if (foreground) resume()
+  return () => { disposed = true; pause(); AppEvents.scenePhase.removeListener(phaseChanged) }
 }
 function OverviewPage({ active, version, onSwitch, onClose, selected = true }: { active: Controller | null; version: number; onSwitch: () => void; onClose?: () => void; selected?: boolean }) {
   const prefs = usePreferences(["connectionBackground"])
@@ -259,65 +259,26 @@ function OverviewPage({ active, version, onSwitch, onClose, selected = true }: {
   const [sampleSource,setSampleSource]=useState(() => (active ? overviewSource(active) : ""))
   const [cpuOpen,setCpuOpen]=useState(false)
   const source=active?overviewSource(active):""
-  const [pageTrace] = useState(()=>({id:nextHomeTraceId(),cache:overviewPrime.has(source),frame:overviewPrime.get(source)?.serial??0}))
   const all = listControllers()
   // Retain the navigation owner while pausing work behind pushed settings pages.
   const [visible, setVisible] = useState(true)
   const foreground = useForeground()
   const showCharts = foreground && selected && (visible || cpuOpen)
-  // A home tab that is not the launch tab still loads its first data right away, then pauses until it is selected.
-  const priming = foreground && !selected && !ov
-  const live = showCharts || priming
-  useEffect(()=>{homeDiagnostic({stage:"home-mount",active:active?.kind??"none",selected,cache:overviewPrime.has(source),ov:!!ov})},[])
-  useEffect(()=>{homeDiagnostic({stage:"home-state",selected,foreground,cache:overviewPrime.has(source),ov:!!ov,pending:overviewPrimePending.has(source)})},[source,selected,foreground,!!ov])
   useEffect(() => { const frame=overviewPrime.get(source);setHistories(frame?.histories??newHistory());setOv(frame?.overview??null);setSampleSource(source);setCpuOpen(false) }, [source])
+  // Hidden tabs keep no live UI subscription. On return consume the latest full
+  // snapshot, including real samples collected while another tab was selected.
   useEffect(()=>{
-    const receive=(key:string,frame:OverviewFrame)=>{if(key===source){homeDiagnostic({stage:"home-receive",cache:true});setOv(frame.overview);setHistories(frame.histories);setSampleSource(key);setErr("")}}
+    if (!showCharts) return
+    const receive=(key:string,frame?:OverviewFrame,error?:string)=>{
+      if(key!==source)return
+      if(frame){setOv(frame.overview);setHistories(frame.histories);setSampleSource(key)}
+      setErr(error??"")
+    }
     overviewPrimeListeners.add(receive)
-    const cached=overviewPrime.get(source);if(cached)receive(source,cached)
+    receive(source,overviewPrime.get(source),overviewErrors.get(source))
     return()=>{overviewPrimeListeners.delete(receive)}
-  },[source])
+  },[source,showCharts])
   useEffect(()=>{if(selected)setVisible(true);else setCpuOpen(false)},[selected])
-  useEffect(() => {
-    if (!active || !live) return
-    if (active.kind !== "openwrt") { setErr("主页仅支持 OpenWrt 路由器数据，请在设置添加 OpenWrt"); return }
-    // Do not invalidate the launch request that loadOverview deduplicates with this reader.
-    const rebasing = !overviewPrimePending.has(source)
-    if(rebasing){homeDiagnostic({stage:"sampling-reset",pending:false});resetOverviewSampling(active)}
-    // A paused interval is not a live sample. Restore the complete same-source
-    // display snapshot while taking the new baseline, then resume real deltas.
-    let alive = true, refreshing = false, baselining = rebasing
-    async function refresh() {
-      // The warmup publishes both samples to this reader. Do not race its
-      // second sample with a near-simultaneous page tick (zero CPU delta).
-      if (!alive || refreshing || overviewPrimePending.has(source)) return
-      refreshing = true
-      try {
-        const o = await loadOverview(active!)
-        if (alive && overviewSource(active!)===source) {
-          homeDiagnostic({stage:"refresh-success"})
-          const frame = saveOverviewFrame(source,o,baselining)
-          baselining = false
-          setSampleSource(source)
-          setOv(frame.overview)
-          setHistories(frame.histories)
-          setErr("")
-        }
-        else homeDiagnostic({stage:"refresh-discard"})
-      } catch (e) { homeDiagnostic({stage:"refresh-failure",reason:homeFailure(e)},false);if (alive) setErr(msg(e)) }
-      finally { refreshing = false }
-    }
-    void refresh(); const t = setInterval(refresh, 1000)
-    return () => {
-      alive = false; clearInterval(t)
-      // The bounded foreground warmup owns its two-sample baseline. A hidden
-      // home receiving sample one must not erase it before sample two. Its scene
-      // listener still invalidates sampling immediately on background/inactive.
-      if (!overviewPrimePending.has(source)) {
-        homeDiagnostic({stage:"sampling-reset",pending:false});resetOverviewSampling(active!)
-      }
-    }
-  }, [source, version, live])
   useEffect(() => {
     setHosts([])
     if (!active || !prefs.connectionBackground || !showCharts) return
@@ -331,12 +292,9 @@ function OverviewPage({ active, version, onSwitch, onClose, selected = true }: {
     void read(); const t = setInterval(read, 30000)
     return () => { alive = false; clearInterval(t) }
   }, [source, prefs.connectionBackground, showCharts])
-  const shownOv=sampleSource===source?ov:null
-  const shownHistory=sampleSource===source?histories:newHistory()
-  const cachedTrace=overviewPrime.get(source)
-  const traceSource=homeTraceSource(source), cpuPoints=shownHistory.cpu.cpu?.length??0
-  const matched=!!cachedTrace&&shownOv===cachedTrace.overview&&shownHistory===cachedTrace.histories
-  useEffect(()=>{homeDiagnostic({stage:"home-frame",page:pageTrace.id,source:traceSource,frame:cachedTrace?.serial??0,selected,foreground,cache:overviewPrime.has(source),ov:!!shownOv,matched,cpu:Number.isFinite(shownOv?.wrt?.cpu),cpuPoints,upPoints:shownHistory.up.length,downPoints:shownHistory.down.length})},[source,selected,visible,foreground,!!shownOv,cpuPoints>1])
+  const currentFrame=showCharts?overviewPrime.get(source):undefined
+  const shownOv=currentFrame?.overview??(sampleSource===source?ov:null)
+  const shownHistory=currentFrame?.histories??(sampleSource===source?histories:newHistory())
   // Keep sheet.content stable across sample updates; publish only the live frame.
   const detailFeed=useObservable<CpuDetailFrame>(()=>({overview:null,histories:newHistory(),running:false}))
   const detailContent=useMemo(()=><LiveCpuDetails feed={detailFeed}/>,[detailFeed])
@@ -346,8 +304,8 @@ function OverviewPage({ active, version, onSwitch, onClose, selected = true }: {
   if(!cpuOpen||homeFrame.source!==source){homeFrame.source=source;homeFrame.overview=shownOv;homeFrame.histories=shownHistory}
   const openCpu=useMemo(()=>()=>setCpuOpen(true),[])
   const homeContent=useMemo(()=><HomeDashboard overview={homeFrame.overview} histories={homeFrame.histories} running={showCharts&&visible&&!cpuOpen} onCpu={openCpu}/>,[homeFrame.overview,homeFrame.histories,showCharts&&visible&&!cpuOpen,openCpu])
-  useEffect(()=>{homeDiagnostic({stage:"home-ui",selected,ov:!!shownOv,ui:!!homeFrame.overview})},[source,selected,!!shownOv,!!homeFrame.overview])
-  const statusText = err ? "连接失败" : ov ? "运行正常" : "连接中", statusColor = err ? "systemRed" : "systemGreen"
+  const shownError = active && active.kind !== "openwrt" ? "主页仅支持 OpenWrt 路由器数据，请在设置添加 OpenWrt" : err
+  const statusText = shownError ? "连接失败" : ov ? "运行正常" : "连接中", statusColor = err ? "systemRed" : "systemGreen"
   const toolbar = useMemo(() => ({ ...rootToolbar("home", onClose, <NavigationLink destination={<SettingsPage active={active} onChanged={onSwitch} />}><Image systemName="ellipsis.circle" /></NavigationLink>),
     principal: <VStack spacing={1}>
       <Text font={17} fontWeight="semibold">{active?.name||"OpenWrt 状态"}</Text>
@@ -360,8 +318,7 @@ function OverviewPage({ active, version, onSwitch, onClose, selected = true }: {
     <ScrollView background={HOME_BG}>
       <VStack spacing={16} padding={{horizontal:16,top:12,bottom:24}}>
         {all.length>1?<Card><Picker title="当前路由器" pickerStyle="menu" value={active.id} onChanged={(v:string)=>{setActive(v);onSwitch()}}>{all.map(c=><Text key={c.id} tag={c.id}>{c.name}</Text>)}</Picker></Card>:null}
-        {err?<Text font={12} foregroundStyle="systemRed">{err}</Text>:null}
-        <Text font={10} foregroundStyle="secondaryLabel">{`主页诊断 R${homeTraceRun} 页${pageTrace.id} 源${traceSource} 初缓存${pageTrace.cache?1:0}/F${pageTrace.frame} 当前F${cachedTrace?.serial??0} 匹配${matched?1:0} CPU点${cpuPoints} 上点${shownHistory.up.length} 下点${shownHistory.down.length}`}</Text>
+        {shownError?<Text font={12} foregroundStyle="systemRed">{shownError}</Text>:null}
         {homeContent}
         <Card><HStack><Badge icon="link" color="#A855F7"/><Text font={13}>活动连接</Text><Spacer/><Text font={13}>{shownOv?String(shownOv.connCount):"--"}</Text></HStack>{hosts.length?<Text font={10} foregroundStyle="secondaryLabel" lineLimit={1}>{hosts.join(" · ")}</Text>:null}</Card>
       </VStack>
@@ -806,24 +763,9 @@ function Root() {
   const homeSource = active ? overviewSource(active) : ""
   const foreground = useForeground()
   useEffect(() => {
-    // Native tabs may not mount home at all. Launch is only a first attempt:
-    // recover transient failures (including an invalidated sampling epoch) here,
-    // and also handle a controller that becomes available after run().
-    homeDiagnostic({stage:"root-state",active:active?.kind??"none",foreground,cache:overviewPrime.has(homeSource),pending:overviewPrimePending.has(homeSource)})
-    if (!active || active.kind !== "openwrt" || !foreground || overviewPrimeReady.has(homeSource)) return
-    let alive = true
-    const retry = () => {
-      if (!alive) return
-      if (overviewPrimeReady.has(homeSource)) { clearInterval(timer); return }
-      homeDiagnostic({stage:"root-retry",foreground:true,pending:overviewPrimePending.has(homeSource)})
-      void primeOverview(active)?.then(() => {
-        if (alive && overviewPrimeReady.has(homeSource)) clearInterval(timer)
-      })
-    }
-    const timer = setInterval(retry, 1000)
-    retry()
-    return () => { alive = false; clearInterval(timer) }
-  }, [homeSource, version, foreground])
+    if (!active || active.kind !== "openwrt") return
+    return startOverviewSampling(active, foreground)
+  }, [homeSource])
   useEffect(() => { prefetchProxies(active); prefetchRules(active); prefetchConnections(active); prefetchMoreVersions(active) }, [active?.id, version])
 
   return <TabView selection={selection} symbolVariant="none" font={14} foregroundStyle={MAIN_FG}>
@@ -864,12 +806,10 @@ function AppearanceRoot() {
 
 async function run() {
   recordEvent("start", true)
-  homeDiagnostic({stage:"launch",active:getActive()?.kind??"none"})
   // Begin the proxy request before the first screen exists so a proxy launch page has data sooner.
   prefetchProxies(getActive())
   prefetchRules(getActive())
   prefetchConnections(getActive())
-  primeOverview(getActive())
   prefetchMoreVersions(getActive())
   await Navigation.present({ element: <AppearanceRoot />, modalPresentationStyle: "fullScreen" })
   Script.exit()

@@ -2,6 +2,8 @@
 const fs=require('node:fs'),path=require('node:path'),vm=require('node:vm')
 const harness=fs.readFileSync(path.join(__dirname,'run.cjs'),'utf8').split(';(async () => {')[0]
 const checks=String.raw`
+function owner(fn){const state={hooks:[],cleanups:new Map()};return {render(props){const savedEffects=effects,savedCleanups=cleanups,savedIndex=hookIndex;hooks=state.hooks;cleanups=state.cleanups;effects=[];hookIndex=0;const tree=fn(props),queued=effects;effects=savedEffects;cleanups=savedCleanups;hookIndex=savedIndex;queued.forEach(f=>{const previous=cleanups;cleanups=state.cleanups;f();cleanups=previous});return tree},close(){for(const f of state.cleanups.values())f();state.cleanups.clear()}}}
+async function settle(){for(let i=0;i<120;i++)await Promise.resolve()}
 const deep=(a,b)=>assert.equal(JSON.stringify(a),JSON.stringify(b))
 function plotNode(tree,width=336){return tree.props.children[0]({size:{width}})}
 function parseRects(svg){return [...svg.matchAll(/<rect ([^>]+)\/>/g)].map(m=>Object.fromEntries([...m[1].matchAll(/([\w-]+)="([^"]*)"/g)].map(a=>[a[1],a[2]])))}
@@ -124,16 +126,19 @@ function fixture(url,init){if(url.endsWith('/cgi-bin/cgi-download'))return {stat
    }
    const chart=render(home.GridPlot,{samples:[10,20,40],tone:'#3485eb',percent:true,running:true},true);await flush();assert.equal(intervals.size,0);assert.equal(chart.type,load('plot-view').InlineCanvasPlot);unmount()
  })
- await test('CPU sheet开关/后台/切Tab: 单轮询、详情共享样本、旧来源不覆盖',async()=>{
-   responder=fixture;const props={active:device,version:0,selected:true,onSwitch(){}};render(app.OverviewPage,props,true);await flush();let view=render(app.OverviewPage,props)
+ await test('CPU sheet开关/后台/切Tab: Root单采样链、详情共享样本、旧来源不覆盖',async()=>{
+   responder=fixture;store.set('neko_controllers_v1',[device]);store.set('neko_active_v1',device.id)
+   const rootOwner=owner(app.Root),page=owner(app.OverviewPage);rootOwner.render({});await settle();rootOwner.render({});await settle()
+   const props={active:device,version:0,selected:true,onSwitch(){}};let view=page.render(props);await settle();view=page.render(props);await flush()
    const polling=()=>[...intervals.values()].filter(x=>x.ms===1000);assert.equal(polling().length,1)
-   nodes(view,home.HomeDashboard)[0].props.onCpu();view=render(app.OverviewPage,props);await flush();assert.equal(view.props.sheet.isPresented,true);assert.equal(polling().length,1);assert.equal(nodes(view,home.HomeDashboard)[0].props.running,false);assert.equal(view.props.sheet.content.props.feed.value.running,true)
-   const before=calls.length;view.props.onDisappear();view=render(app.OverviewPage,props);await flush();assert.equal(polling().length,1);assert.equal(calls.length,before)
-   emitScene('background');view=render(app.OverviewPage,props);await flush();assert.equal(polling().length,0);assert.equal(view.props.sheet.content.props.feed.value.running,false)
-   emitScene('active');view=render(app.OverviewPage,props);await flush();assert.equal(polling().length,1)
-   view.props.sheet.onChanged(false);view=render(app.OverviewPage,props);await flush();assert.equal(view.props.sheet.isPresented,false);assert.equal(polling().length,1);assert.equal(nodes(view,home.HomeDashboard)[0].props.running,true)
-   render(app.OverviewPage,{...props,selected:false});await flush();assert.equal(polling().length,0)
-   const next={...props,active:{...device,url:'http://fresh-home.invalid'}};view=render(app.OverviewPage,next);assert.equal(nodes(view,home.HomeDashboard)[0].props.overview,null);assert.equal(nodes(view,home.HomeDashboard)[0].props.histories.up.length,0);await flush();unmount();assert.equal(intervals.size,0);assert.equal(sceneListeners.size,0)
+   nodes(view,home.HomeDashboard)[0].props.onCpu();view=page.render(props);await flush();assert.equal(view.props.sheet.isPresented,true);assert.equal(polling().length,1);assert.equal(nodes(view,home.HomeDashboard)[0].props.running,false);assert.equal(view.props.sheet.content.props.feed.value.running,true)
+   const before=calls.length;view.props.onDisappear();view=page.render(props);await flush();assert.equal(polling().length,1);assert.equal(calls.length,before)
+   emitScene('background');view=page.render(props);await flush();assert.equal(polling().length,0);assert.equal(view.props.sheet.content.props.feed.value.running,false)
+   emitScene('active');view=page.render(props);await flush();assert.equal(polling().length,1)
+   view.props.sheet.onChanged(false);view=page.render(props);await flush();assert.equal(view.props.sheet.isPresented,false);assert.equal(polling().length,1);assert.equal(nodes(view,home.HomeDashboard)[0].props.running,true)
+   page.render({...props,selected:false});await flush()
+   const next={...props,active:{...device,url:'http://fresh-home.invalid'}};store.set('neko_controllers_v1',[next.active]);rootOwner.render({});await settle();rootOwner.render({});await settle();view=page.render(next);await flush();view=page.render(next);await flush();view=page.render(next);await flush();view=page.render(next);assert.equal(nodes(view,home.HomeDashboard)[0].props.histories.up.length,0)
+   page.close();rootOwner.close();await settle();assert.equal(intervals.size,0);assert.equal(sceneListeners.size,0)
  })
  console.log(count+' home dashboard regression groups passed; no real IO/native rendering')
 })().catch(e=>{console.error(e);process.exitCode=1})

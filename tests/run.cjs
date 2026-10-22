@@ -62,7 +62,7 @@ function load(name) {
   if (cache.has(name)) return cache.get(name)
   const file = path.join(root, name + (name === 'index' || name === 'settings-ui' || name === 'dashboard-pages' || name === 'root-toolbar' || name === 'home-ui' || name === 'plot-view' ? '.tsx' : '.ts'))
   let source = fs.readFileSync(file, 'utf8')
-  if (name === 'index') source = source.replace(/\nrun\(\)\s*$/, '') + '\nexport { EditController, OverviewPage, InfoItem, SettingsPage, ConnectionsPage, ProxiesPage, RulesPage, Spark, RateChart, StatCard, GroupSection, MorePage, Root, AppearanceRoot, primeOverview };'
+  if (name === 'index') source = source.replace(/\nrun\(\)\s*$/, '') + '\nexport { EditController, OverviewPage, InfoItem, SettingsPage, ConnectionsPage, ProxiesPage, RulesPage, Spark, RateChart, StatCard, GroupSection, MorePage, Root, AppearanceRoot };'
   if (name === 'settings-ui') source += '\nexport { Choice };'
   const code = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020, jsx: ts.JsxEmit.React, jsxFactory: 'h' } }).outputText
   const module = { exports: {} }; cache.set(name, module.exports)
@@ -740,7 +740,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) { const lazy = ['proxies','rules','connections'].includes(ids[i]) && ids[i] !== id; assert.equal(nodes(tree, types[i]).length, lazy ? 0 : 1); if (!lazy) assert.equal(nodes(tree, types[i])[0].props.selected, ids[i] === id) }
     }
-    assert.equal(api.VERSION, '1.10'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.11'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('独立导航栈保留业务owner和身份，只有选中页提供可见工具栏', () => {
     pref.savePreferences({ defaultPage: 'overview' })
@@ -805,63 +805,10 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     const dns=render(pages.DNSPage,{c},true);assert.equal(dns.props.toolbar,undefined)
     const management=render(pages.ManagementPage,{c,kind:'profile'},true);assert.equal(nodes(management.props.toolbar,'Button').filter(n=>n.props.systemImage==='xmark').length,0)
   })
-  await test('主页设置覆盖时暂停采样，返回恢复且不重复轮询', async () => {
-    pref.savePreferences({ connectionBackground: false })
-    const router = api.listControllers().find(x => x.kind === 'openwrt')
-    let uptime = 1
-    responder = (_url, init) => {
-      const body = JSON.parse(init.body)
-      if (body.params?.[1] === 'session') return { body: { id: body.id, result: [0, { ubus_rpc_session: 'poll-test' }] } }
-      return { body: { id: body.id, result: [0, { uptime: uptime++, load: [0,0,0], memory: { total: 100, free: 50 }, interface: [], data: '2' }] } }
-    }
-    const props = { active: router, version: 0, onSwitch() {} }
-    const polling = () => [...intervals.values()].filter(x => x.ms === 1000)
-    calls.length = 0
-    render(app.OverviewPage, props, true); await flush()
-    assert.ok(calls.length > 0); assert.ok(calls.every(x => x.url.endsWith('/ubus')))
-    for (let i = 0; i < 3; i++) {
-      const tree = render(app.OverviewPage, props); await flush()
-      assert.equal(trailing(tree.props.toolbar).props.destination.type, app.SettingsPage)
-      assert.equal(typeof tree.props.onDisappear, 'function'); assert.equal(typeof tree.props.onAppear, 'function')
-      tree.props.onDisappear(); render(app.OverviewPage, props); await flush(); assert.equal(polling().length, 0)
-      const quiet = calls.length; render(app.OverviewPage, props); await flush(); assert.equal(calls.length, quiet)
-      tree.props.onAppear(); render(app.OverviewPage, props); await flush()
-      assert.equal(polling().length, 1)
-      const before = calls.length, beforeParts = nodes(tree, home.HomeDashboard)[0].props.overview?.wrt.memTotal
-      const beforeUptime = nodes(tree, home.HomeDashboard)[0].props.overview?.wrt.uptime
-      await polling()[0].fn(); await flush(); assert.ok(calls.length > before)
-      const updated = render(app.OverviewPage, props)
-      assert.ok(nodes(updated, home.HomeDashboard)[0].props.overview?.wrt.memTotal)
-      assert.notEqual(nodes(updated, home.HomeDashboard)[0].props.overview?.wrt.uptime, beforeUptime)
-      assert.ok(beforeParts)
-    }
-    unmount(); assert.equal(intervals.size, 0)
-    render(app.OverviewPage, props, true); await flush(); assert.equal(polling().length, 1)
-    unmount(); assert.equal(intervals.size, 0)
-    const tree = render(ui.PanelSettingsSections, { active: null }, true); assert.ok(!text(tree).includes('碎片化移除特效')); unmount()
-  })
-  await test('后台暂停前台恢复且导航入口身份不变；卸载移除前后台监听', async () => {
-    pref.savePreferences({ connectionBackground: false })
-    const router = api.listControllers().find(x => x.kind === 'openwrt')
-    responder = (_url, init) => { const b = JSON.parse(init.body); return { body: { id: b.id, result: [0, b.params?.[1] === 'session' ? { ubus_rpc_session: 'scene-test' } : { uptime: 100, memory: { total: 100, free: 50 }, interface: [], data: '2' }] } } }
-    const props = { active: router, version: 0, onSwitch() {} }
-    render(app.OverviewPage, props, true); await flush()
-    const tree = render(app.OverviewPage, props), toolbar = tree.props.toolbar
-    const link = trailing(toolbar), destination = link.props.destination
-    assert.equal(sceneListeners.size, 1)
-    for (let i = 0; i < 3; i++) {
-      for (const phase of ['inactive','background','active']) {
-        const before = calls.length
-        emitScene(phase); let current = render(app.OverviewPage, props); await flush()
-        assert.equal(current.props.toolbar, toolbar); assert.equal(trailing(current.props.toolbar), link); assert.equal(trailing(current.props.toolbar).props.destination, destination)
-        const poll = [...intervals.values()].filter(x => x.ms === 1000)
-        assert.equal(poll.length, phase === 'active' ? 1 : 0)
-        if (phase === 'active') { assert.ok(calls.length > before); await poll[0].fn(); await flush() }
-        else assert.equal(calls.length, before)
-      }
-    }
-    unmount(); assert.equal(intervals.size, 0); assert.equal(sceneListeners.size, 0)
-    emitScene('active'); assert.equal(intervals.size, 0)
+  await test('Root前台跨Tab采样有效生命周期（真实API差分、单请求链、后台恢复与来源隔离）', () => {
+    const result = require('node:child_process').spawnSync(process.execPath, [path.join(__dirname,'home-root-sampling.cjs')], {env:process.env,encoding:'utf8'})
+    assert.equal(result.status,0,result.stdout+'\n'+result.stderr)
+    console.log(result.stdout.trim())
   })
   await test('面板底部仅保留缓存，无全局入口、离线折叠开关与触感设置', async () => {
     const before = pref.getPreferences(), beforeHaptics = haptics
@@ -879,60 +826,6 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     pref.savePreferences({ haptics: true }); pref.feedback(); assert.equal(pref.getPreferences().haptics, false); assert.equal(haptics, beforeHaptics)
     unmount(); pref.savePreferences(before)
   })
-  await test('默认启动页非主页后切到主页：选中即恢复可见并开始轮询，不依赖onAppear', async () => {
-    const router = api.listControllers().find(x => x.kind === 'openwrt'); assert.ok(router)
-    let uptime = 1
-    responder = (_url, init) => {
-      const body = JSON.parse(init.body)
-      if (body.params?.[1] === 'session') return { body: { id: body.id, result: [0, { ubus_rpc_session: 'sel-test' }] } }
-      return { body: { id: body.id, result: [0, { uptime: uptime++, load: [0,0,0], memory: { total: 100, free: 50 }, interface: [], data: '2' }] } }
-    }
-    const polling = () => [...intervals.values()].filter(x => x.ms === 1000)
-    const props = { active: router, version: 0, onSwitch() {}, selected: false }
-    render(app.OverviewPage, props, true); await flush()
-    for (let i = 0; i < 5; i++) await flush()
-    render(app.OverviewPage, props); await flush(); render(app.OverviewPage, props); await flush()
-    assert.equal(polling().length, 0)
-    render(app.OverviewPage, { ...props, selected: true }); await flush(); render(app.OverviewPage, { ...props, selected: true }); await flush()
-    assert.equal(polling().length, 1, 'selecting home must start polling')
-    unmount()
-  })
-  await test('启动页非主页：主页未选中也先取一次首屏数据，取到后停止轮询；选中后正常轮询', async () => {
-    // Use a genuinely cold source: earlier tests now leave a complete display snapshot.
-    const base = api.listControllers().find(x => x.kind === 'openwrt'); assert.ok(base)
-    const router = {...base,id:'cold-unselected-home',url:'http://cold-unselected-home.invalid'}
-    let uptime = 1
-    responder = (_url, init) => {
-      const body = JSON.parse(init.body)
-      if (body.params?.[1] === 'session') return { body: { id: body.id, result: [0, { ubus_rpc_session: 'prime-test' }] } }
-      return { body: { id: body.id, result: [0, { uptime: uptime++, load: [0,0,0], memory: { total: 100, free: 50 }, interface: [], data: '2' }] } }
-    }
-    const props = { active: router, version: 0, onSwitch() {}, selected: false }
-    const polling = () => [...intervals.values()].filter(x => x.ms === 1000)
-    calls.length = 0
-    let tree = render(app.OverviewPage, props, true); await flush()
-    assert.ok(calls.length > 0, 'unselected home primes its first data')
-    for (let i = 0; i < 5; i++) await flush()
-    tree = render(app.OverviewPage, props); await flush()
-    assert.equal(polling().length, 0, 'no polling once primed while unselected')
-    const primed = calls.length; render(app.OverviewPage, props); await flush(); assert.equal(calls.length, primed)
-    tree = render(app.OverviewPage, { ...props, selected: true }); await flush(); tree = render(app.OverviewPage, { ...props, selected: true }); await flush()
-    assert.equal(polling().length, 1, 'selected home polls')
-    unmount()
-  })
-  await test('主页预取在组件挂载后才完成：请求不被采样重置作废，未选中主页立即接收结果', async () => {
-    const base=api.listControllers().find(x=>x.kind==='openwrt'),router={...base,id:'delayed-home-prime',url:'http://delayed-home.invalid'}
-    let release;const wait=new Promise(r=>release=r)
-    responder=(_url,init)=>{const body=JSON.parse(init.body);return {wait,body:{id:body.id,result:[0,body.params?.[1]==='session'?{ubus_rpc_session:'delayed-prime'}:{uptime:42,load:[0,0,0],memory:{total:100,free:50},interface:[],data:'2'}]}}}
-    const props={active:router,version:0,onSwitch(){},selected:false}
-    app.primeOverview(router)
-    render(app.OverviewPage,props,true);await flush()
-    release();for(let i=0;i<8;i++)await flush()
-    let tree=render(app.OverviewPage,props);await flush()
-    assert.ok(nodes(tree,home.HomeDashboard)[0].props.overview,'late prime must notify the mounted, unselected home')
-    assert.ok(!text(tree).includes('来源或采样代次已改变'))
-    unmount()
-  })
   await test('更多版本预取在页面挂载前完成，首帧显示版本，启动入口包含预取',async()=>{
     const router={id:'versions-prime',name:'versions',kind:'clash',url:'http://versions-prime.invalid'}
     responder=()=>({body:{version:'prefetched-core-v1'}})
@@ -942,22 +835,6 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     const src=fs.readFileSync(path.join(root,'index.tsx'),'utf8'),run=src.slice(src.indexOf('async function run()'))
     assert.ok(run.indexOf('prefetchMoreVersions(getActive())')<run.indexOf('Navigation.present'))
     unmount()
-  })
-  await test('启动即预取主页数据：未渲染任何主页组件时已发请求，主页首帧直接有数据', async () => {
-    const router = api.listControllers().find(x => x.kind === 'openwrt'); assert.ok(router)
-    let uptime = 1
-    responder = (_url, init) => {
-      const body = JSON.parse(init.body)
-      if (body.params?.[1] === 'session') return { body: { id: body.id, result: [0, { ubus_rpc_session: 'launch-prime' }] } }
-      return { body: { id: body.id, result: [0, { uptime: uptime++, load: [0,0,0], memory: { total: 100, free: 50 }, interface: [], data: '2' }] } }
-    }
-    calls.length = 0
-    app.primeOverview(router); await flush()
-    assert.ok(calls.length > 0, 'request is sent without any OverviewPage mounted')
-    const tree = render(app.OverviewPage, { active: router, version: 0, onSwitch() {}, selected: false }, true)
-    assert.equal(nodes(tree, home.HomeDashboard)[0].props.overview !== null, true, 'first frame already has overview data')
-    unmount()
-    app.primeOverview(null)
   })
   await test('代理页数据落盘：重启后首帧直接显示上次的策略组，来源不符不使用', async () => {
     const router = api.listControllers().find(x => x.kind === 'openwrt'); assert.ok(router)
@@ -1003,14 +880,15 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     unmount(); store.delete('dashboard_connections_snapshot_v1')
     calls.length = 0; pages.prefetchConnections(router); await flush(); assert.ok(calls.length > 0, 'connections are requested by prefetch'); pages.prefetchConnections(null)
   })
-  await test('启动入口在创建界面前依次预取代理、规则、连接与主页数据，Root挂载时也预取', () => {
+  await test('启动入口预取代理规则连接；主页采样仅由Root前台owner启动', () => {
     const src = fs.readFileSync(path.join(root, 'index.tsx'), 'utf8')
     const run = src.slice(src.indexOf('async function run()'))
     const present = run.indexOf('Navigation.present')
-    for (const call of ['prefetchProxies(getActive())', 'prefetchRules(getActive())', 'prefetchConnections(getActive())', 'primeOverview(getActive())']) {
+    for (const call of ['prefetchProxies(getActive())', 'prefetchRules(getActive())', 'prefetchConnections(getActive())']) {
       assert.ok(run.indexOf(call) > 0 && run.indexOf(call) < present, call + ' must run before the first screen is presented')
     }
     assert.ok(src.includes('prefetchProxies(active); prefetchRules(active); prefetchConnections(active)'))
+    assert.ok(!run.includes('primeOverview')); assert.ok(src.includes('return startOverviewSampling(active, foreground)'))
   })
   await test('代理页预取：首次进入前请求并写入缓存，空控制器不请求', async () => {
     const router = api.listControllers().find(x => x.kind === 'openwrt'); assert.ok(router)
@@ -1963,7 +1841,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       const diagnostic = logs.filter(x => x.startsWith('[preferences-icon]'))
       for (const stage of ['change','accepted','proxies-render','group-render']) assert.ok(diagnostic.some(x => x.includes('stage=' + stage) && x.includes('enabled=false')))
       assert.ok(diagnostic.every(x => !x.includes('private.invalid') && !x.includes('private-group-name') && !x.includes('secret-')))
-      assert.ok(diagnostic.every(x => x.includes('build=1.10') && /instance=[a-z0-9]+/.test(x)))
+      assert.ok(diagnostic.every(x => x.includes('build=1.11') && /instance=[a-z0-9]+/.test(x)))
       assert.equal(new Set(diagnostic.map(x => x.match(/instance=([^ ]+)/)[1])).size, 1)
     } finally { context.console = originalConsole; unmount(); pref.savePreferences({ customIcons: true, testURL: 'https://www.gstatic.com/generate_204' }) }
   })
@@ -1997,7 +1875,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     tree.props.onDisappear();render(pages.MorePage,{...props,selected:true});await flush();assert.equal(intervals.size,0)
     calls.length=0;tree.props.onAppear();render(pages.MorePage,{...props,selected:true});await flush();assert.ok(calls.length>0);unmount()
   })
-  await test('隐藏标签不请求不采样；更多selected透传到业务页', async () => {
+  await test('隐藏标签自身不请求不采样；Root独立采样不依赖子页面，更多selected透传' , async () => {
     for (const fn of [app.OverviewPage, pages.ProxiesPage, pages.RulesPage, pages.ConnectionsPage, pages.MorePage]) {
       calls.length = 0
       render(fn, { active: c, version: 0, selected: false, onChanged() {}, onSwitch() {} }, true); await flush()
@@ -2020,18 +1898,18 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     assert.equal(nodes(tree, pages.GroupSection)[0].props.key, key)
     tree = render(pages.ProxiesPage, props); assert.equal(nodes(tree, pages.GroupSection).length, 1); unmount()
   })
-  await test('主页隐藏停止轮询，重现只恢复一个轮询且保留设置入口', async () => {
+  await test('主页不再拥有采样轮询，隐藏重现保留设置入口', async () => {
     const router = api.listControllers().find(x => x.kind === 'openwrt')
     const props = { active: router, version: 0, selected: true, onSwitch() {} }
     responder = (_url, init) => { const b = JSON.parse(init.body); return { body: { id: b.id, result: [0, b.params?.[1] === 'session' ? { ubus_rpc_session: 'retained' } : { uptime: 1, load: [], memory: { total: 100, free: 50 }, interface: [], data: '1' }] } } }
     render(app.OverviewPage, props, true); await flush()
     let tree = render(app.OverviewPage, props), link = trailing(tree.props.toolbar)
-    assert.equal([...intervals.values()].filter(x => x.ms === 1000).length, 1)
+    assert.equal([...intervals.values()].filter(x => x.ms === 1000).length, 0)
     render(app.OverviewPage, { ...props, selected: false }); await flush()
     assert.equal([...intervals.values()].filter(x => x.ms === 1000).length, 0)
     tree = render(app.OverviewPage, props); await flush()
     assert.equal(trailing(tree.props.toolbar), link)
-    assert.equal([...intervals.values()].filter(x => x.ms === 1000).length, 1)
+    assert.equal([...intervals.values()].filter(x => x.ms === 1000).length, 0)
     unmount(); assert.equal(intervals.size, 0)
   })
   await test('主页内存固定一位小数，流量默认精度不变', () => {

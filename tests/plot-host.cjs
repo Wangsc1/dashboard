@@ -13,7 +13,7 @@ context.WebViewController=class {
  dispose(){this.disposed++}
 }
 const plot=load('plot-view')
-const props={samples:[10,20],tone:'#3485eb',percent:true,running:true,diagnostic:true}
+const props={samples:[10,20],tone:'#3485eb',percent:true,running:true}
 async function mount(){const node=render(plot.MountedCanvasPlot,props,true);await flush();return node}
 ;(async()=>{
  await test('主页和每核共用绘制组件，不存在详情专用动画实现',()=>{
@@ -53,7 +53,7 @@ async function mount(){const node=render(plot.MountedCanvasPlot,props,true);awai
    const slot=render(plot.InlineCanvasPlot,{...props,plotHeight:height},true);assert.equal(slot.props.frame.height,height)
    const out=render(plot.MountedCanvasPlot,{...props,plotHeight:height},true);assert.equal(out.type,'ZStack');assert.equal(out.props.frame.minHeight,height);assert.equal(out.props.frame.maxHeight,height);const web=nodes(out,'WebView')[0];assert.equal(web.props.frame.minHeight,height);assert.equal(web.props.frame.maxHeight,height)
    assert.equal(out.props.overlay,undefined);assert.equal(out.props.onAppear,undefined)
-   await flush();const host=hosts.at(-1);assert.equal(host.handlers.plotDiagnostic,undefined);assert.equal(typeof host.handlers.plotTrace,'function');assert.ok(host.html.includes('diagnosticEnabled=false'));assert.ok(host.html.includes('traceEnabled=true'));assert.ok(text(out).includes('图诊断 '));unmount()
+   await flush();const host=hosts.at(-1);assert.equal(host.handlers.plotDiagnostic,undefined);assert.ok(host.html.includes('diagnosticEnabled=false'));assert.ok(!host.html.includes('traceEnabled=true'));assert.ok(!text(out).includes('图诊断 '));unmount()
   }
  })
  await test('准备好前合并采样；桥接串行；最新值接续；running=false同步',async()=>{

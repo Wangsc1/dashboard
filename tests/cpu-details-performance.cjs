@@ -2,6 +2,8 @@
 const fs=require('node:fs'),vm=require('node:vm')
 const harness=fs.readFileSync(__dirname+'/run.cjs','utf8').split(';(async () => {')[0]
 const checks=String.raw`
+function owner(fn){const state={hooks:[],cleanups:new Map()};return {render(props){const savedEffects=effects,savedCleanups=cleanups,savedIndex=hookIndex;hooks=state.hooks;cleanups=state.cleanups;effects=[];hookIndex=0;const tree=fn(props),queued=effects;effects=savedEffects;cleanups=savedCleanups;hookIndex=savedIndex;queued.forEach(f=>{const previous=cleanups;cleanups=state.cleanups;f();cleanups=previous});return tree},close(){for(const f of state.cleanups.values())f();state.cleanups.clear()}}}
+async function settle(){for(let i=0;i<100;i++)await Promise.resolve()}
 ;(async()=>{
  await test('屏外16/32核按1秒样本更新：每核无16ms数字计时器、无曲线订阅',async()=>{
    for(const cores of [16,32]){
@@ -25,10 +27,15 @@ const checks=String.raw`
  })
  await test('sheet实时采样时主页节点/数据冻结，下拉关闭立即接最新样本，无额外轮询',async()=>{
    const raw=(n,type)=>{if(n?.type===type)return n;for(const child of n?.props?.children??[]){const found=raw(child,type);if(found)return found}};let t=0;responder=(url,init)=>{if(url.endsWith('/cgi-bin/cgi-download'))return {status:403};const q=JSON.parse(init.body),[,obj,method,args]=q.params;let body={};if(obj==='session')body={ubus_rpc_session:'performance-fixture'};if(obj==='system'&&method==='info')body={uptime:100+t,memory:{total:100,free:50},load:[]};if(obj==='system'&&method==='board')body={release:{description:'Fixture'}};if(args?.path==='/proc/stat'){t++;body={data:'cpu '+(100+t*10)+' 0 20 '+(880+t*10)+' 0 0 0 0\n'+'cpu0 '+(100+t*10)+' 0 20 '+(880+t*10)+' 0 0 0 0\n'}}return {body:{id:q.id,result:[0,body]}}}
-   const props={active:{id:'frozen-home',kind:'openwrt',url:'http://frozen-home.invalid'},version:0,selected:true,onSwitch(){}};render(app.OverviewPage,props,true);await flush();let view=render(app.OverviewPage,props);nodes(view,home.HomeDashboard)[0].props.onCpu();view=render(app.OverviewPage,props);await flush();view=render(app.OverviewPage,props);const frozen=raw(view,home.HomeDashboard),stableContent=view.props.sheet.content
-   for(let i=0;i<4;i++){now+=1000;for(const timer of [...intervals.values()])if(timer.ms===1000)timer.fn();await flush();view=render(app.OverviewPage,props);assert.equal(raw(view,home.HomeDashboard),frozen);assert.equal(view.props.sheet.content,stableContent,'sheet content identity stays fixed across actual polling updates')}
-   assert.ok(view.props.sheet.content.props.feed.value.histories.cpu.cpu.length>frozen.props.histories.cpu.cpu.length);assert.equal([...intervals.values()].filter(x=>x.ms===1000).length,1)
-   view.props.sheet.onChanged(false);view=render(app.OverviewPage,props);assert.notEqual(raw(view,home.HomeDashboard),frozen);assert.equal(view.props.sheet.isPresented,false);unmount();assert.equal(intervals.size,0)
+   const device={id:'frozen-home',name:'frozen',kind:'openwrt',url:'http://frozen-home.invalid',username:'root'}
+   store.set('neko_controllers_v1',[device]);store.set('neko_active_v1',device.id)
+   const rootOwner=owner(app.Root),page=owner(app.OverviewPage);rootOwner.render({});await settle()
+   const props={active:device,version:0,selected:true,onSwitch(){}}
+   let view=page.render(props);await settle();nodes(view,home.HomeDashboard)[0].props.onCpu();view=page.render(props);await flush();const frozen=JSON.parse(JSON.stringify(raw(view,home.HomeDashboard))),frozenHistory=JSON.parse(JSON.stringify(view.props.sheet.content.props.feed.value.histories)),stableContent=view.props.sheet.content
+   for(let i=0;i<4;i++){now+=1000;for(const timer of [...intervals.values()])if(timer.ms===1000)timer.fn();await flush();view=page.render(props);assert.equal(JSON.stringify(raw(view,home.HomeDashboard)),JSON.stringify(frozen));assert.equal(view.props.sheet.content,stableContent,'sheet content identity stays fixed across actual polling updates')}
+   assert.ok(JSON.stringify(view.props.sheet.content.props.feed.value.histories)!==JSON.stringify(frozenHistory));assert.equal([...intervals.values()].filter(x=>x.ms===1000).length,1)
+   view.props.sheet.onChanged(false);view=page.render(props);assert.notEqual(JSON.stringify(raw(view,home.HomeDashboard)),JSON.stringify(frozen));assert.equal(view.props.sheet.isPresented,false)
+   page.close();rootOwner.close();await settle();assert.equal(intervals.size,0);assert.equal(sceneListeners.size,0)
  })
  console.log(count+' native CPU performance groups passed; no device FPS claim')
 })().catch(e=>{console.error(e);process.exitCode=1})

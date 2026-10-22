@@ -27,7 +27,7 @@ export function traceIconPreference(stage: "change" | "accepted" | "global-rende
   try {
     const raw = Storage.get<Partial<Preferences>>(KEY)
     const stored = typeof raw?.customIcons === "boolean" ? raw.customIcons : "unavailable"
-    console.log(`[preferences-icon] build=1.10 instance=${preferenceInstance} revision=${preferenceRevision} stage=${stage} enabled=${enabled} snapshot=${getPreferences().customIcons} stored=${stored}`)
+    console.log(`[preferences-icon] build=1.11 instance=${preferenceInstance} revision=${preferenceRevision} stage=${stage} enabled=${enabled} snapshot=${getPreferences().customIcons} stored=${stored}`)
   } catch { console.log("[preferences-icon] diagnostic-unavailable") }
 }
 export function preferenceTrace(stage: string) { console.log(`[preferences] revision=${preferenceRevision} ${stage}`) }
@@ -82,7 +82,7 @@ const LOG_KEY = "dashboard_logs_v140"
 
 const EVENTS = {
   login: "路由器登录", discovery: "自动获取代理配置", manual: "手动代理配置解析", test: "策略组测速", api: "控制器 API", ubus: "路由器 API",
-  homeDiagnostic: "主页诊断", start: "脚本启动", fallback: "组测速回退逐节点测速", config: "内核配置更新", controller: "控制器保存", remove: "控制器删除", switch: "切换控制器", cache: "清除图片缓存",
+  start: "脚本启动", fallback: "组测速回退逐节点测速", config: "内核配置更新", controller: "控制器保存", remove: "控制器删除", switch: "切换控制器", cache: "清除图片缓存",
 } as const
 export type LogEvent = keyof typeof EVENTS
 export function getLogs(): AppLog[] { return Storage.get<AppLog[]>(LOG_KEY) ?? [] }
@@ -90,46 +90,15 @@ export function trimLogs(limit = getPreferences().logLimit) {
   const logs = getLogs(); if (logs.length > limit) Storage.set(LOG_KEY, logs.slice(-limit))
 }
 export function clearLogs() { Storage.remove(LOG_KEY) }
-const HOME_STAGES = ["launch", "prime-start", "prime-success", "prime-failure", "prime-discard", "root-state", "root-retry", "home-mount", "home-state", "home-ui", "home-receive", "sampling-reset", "refresh-success", "refresh-failure", "refresh-discard", "home-frame", "plot-state"] as const
-const HOME_REASONS = ["epoch", "auth", "timeout", "http", "response", "other"] as const
-export interface HomeDiagnostic {
-  stage: typeof HOME_STAGES[number]; active?: "none" | "openwrt" | "clash"
-  reason?: typeof HOME_REASONS[number]
-  selected?: boolean; cache?: boolean; ov?: boolean; ui?: boolean; foreground?: boolean; pending?: boolean
-  cpu?: boolean; matched?: boolean; ready?: boolean; line?: boolean; sized?: boolean; revealed?: boolean
-  run?: number; page?: number; source?: number; frame?: number; host?: number
-  cpuPoints?: number; upPoints?: number; downPoints?: number; input?: number; drawn?: number
-}
-const homeDiagnosticTimes = new Map<string, number>()
-// Only enumerations and booleans can reach persistent logs; never serialize caller objects.
-function homeDiagnosticDetail(d: HomeDiagnostic | undefined): string {
-  if (!d || !HOME_STAGES.includes(d.stage)) return ""
-  const parts: string[] = [d.stage]
-  if (["none", "openwrt", "clash"].includes(d.active ?? "")) parts.push(`active=${d.active}`)
-  if (HOME_REASONS.includes(d.reason!)) parts.push(`reason=${d.reason}`)
-  for (const key of ["selected", "cache", "ov", "ui", "foreground", "pending", "cpu", "matched", "ready", "line", "sized", "revealed"] as const) if (typeof d[key] === "boolean") parts.push(`${key}=${d[key] ? 1 : 0}`)
-  for (const key of ["run", "page", "source", "frame", "host", "cpuPoints", "upPoints", "downPoints", "input", "drawn"] as const) {
-    const value = d[key], limit = ["cpuPoints", "upPoints", "downPoints", "input", "drawn"].includes(key) ? 60 : 1000000
-    if (Number.isInteger(value) && value! >= 0 && value! <= limit) parts.push(`${key}=${value}`)
-  }
-  return parts.join(" · ")
-}
-export function recordEvent(event: LogEvent, ok: boolean, options: { home?: HomeDiagnostic; status?: number; duration?: number; operation?: "GET" | "PATCH" | "PUT" | "DELETE" | "POST"; route?: "configs" | "connections" | "proxies" | "rules" | "version" | "delay" | "other"; warning?: boolean } = {}) {
+export function recordEvent(event: LogEvent, ok: boolean, options: { status?: number; duration?: number; operation?: "GET" | "PATCH" | "PUT" | "DELETE" | "POST"; route?: "configs" | "connections" | "proxies" | "rules" | "version" | "delay" | "other"; warning?: boolean } = {}) {
   if (!Object.prototype.hasOwnProperty.call(EVENTS, event)) return
   const p = getPreferences()
 
   if ((event === "api" || event === "ubus") && ok && !p.detailedAPI && (!options.operation || options.operation === "GET" || event === "ubus")) return
   const level: LogLevel = event === "start" ? "info" : options.warning ? "warning" : ok ? "success" : "error"
-  const detail = event === "homeDiagnostic" ? homeDiagnosticDetail(options.home) : [["GET", "PATCH", "PUT", "DELETE", "POST"].includes(options.operation ?? "") ? options.operation : "", ["configs", "connections", "proxies", "rules", "version", "delay", "other"].includes(options.route ?? "") ? options.route : "",
+  const detail = [["GET", "PATCH", "PUT", "DELETE", "POST"].includes(options.operation ?? "") ? options.operation : "", ["configs", "connections", "proxies", "rules", "version", "delay", "other"].includes(options.route ?? "") ? options.route : "",
     Number.isInteger(options.status) ? `HTTP ${options.status}` : "",
     Number.isFinite(options.duration) ? `${Math.max(0, Math.round(options.duration!))} ms` : ""].filter(Boolean).join(" · ")
-  if (event === "homeDiagnostic") {
-    if (!detail) return
-    const key = `${ok}:${detail}`, now = Date.now(), prior = homeDiagnosticTimes.get(key)
-    if (prior !== undefined && now - prior < 30000) return
-    if (homeDiagnosticTimes.size >= 64) homeDiagnosticTimes.delete(homeDiagnosticTimes.keys().next().value!)
-    homeDiagnosticTimes.set(key, now)
-  }
   const title = EVENTS[event] + (event === "start" || event === "fallback" ? "" : ok ? "成功" : "失败")
   const category = event === "config" ? "CONFIG" : ["api", "ubus", "login", "discovery", "manual", "test"].includes(event) ? "NETWORK" : "APP"
   const logs = getLogs(), now = Date.now()

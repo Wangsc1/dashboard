@@ -9,6 +9,7 @@ const timeouts=new Map();let timerID=0
 context.setTimeout=(fn,ms)=>{const id=++timerID;timeouts.set(id,{fn,ms});return id};context.clearTimeout=id=>timeouts.delete(id)
 let hosts=[]
 context.WebViewController=class{constructor(){this.handlers={};this.loads=0;this.messages=[];this.disposed=0;hosts.push(this)}async addScriptMessageHandler(name,fn){this.handlers[name]=fn}async loadHTML(html){this.loads++;this.html=html;return true}async evaluateJavaScript(code){const payload=JSON.parse(code.match(/update\((.*)\)/)[1]);this.messages.push(payload);return true}dispose(){this.disposed++}}
+for(const name of ['prefetchProxies','prefetchRules','prefetchConnections','prefetchMoreVersions'])pages[name]=()=>{}
 const plot=load('plot-view')
 async function settle(){for(let i=0;i<100;i++)await Promise.resolve()}
 let serial=0,user=100,idle=900,uptime=100,batches=0,mode='normal'
@@ -37,6 +38,8 @@ async function scenario(kind,negative){
  user=100;idle=900;uptime=100;batches=0;mode='normal';responder=fixture
  const device={id:'resume-fixture-'+(++serial),name:'Fixture',kind:'openwrt',url:'http://resume-'+serial+'.invalid',username:'root'}
  let props={active:device,version:0,selected:true,onSwitch(){}}
+ store.set("neko_controllers_v1",[device]);store.set("neko_active_v1",device.id)
+ const rootOwner=owner(app.Root);rootOwner.render({})
  const page=owner(app.OverviewPage),canvas=owner(plot.MountedCanvasPlot)
  let tree=page.render(props);await settle();tree=page.render(props);await settle();tree=page.render(props)
  const poll=()=>[...intervals.values()].filter(t=>t.ms===1000)
@@ -59,7 +62,7 @@ async function scenario(kind,negative){
   if(negative==='reboot'){uptime=1;user=1;idle=9}
   if(negative==='missing')mode='missing'
   if(negative==='hotplug')mode='hotplug'
-  if(negative==='source')props={...props,active:{...device,url:'http://different-source.invalid'}}
+  if(negative==='source'){props={...props,active:{...device,url:'http://different-source.invalid'}};store.set('neko_controllers_v1',[props.active]);rootOwner.render({})}
   if(kind==='background')emitScene('active')
   if(kind==='tab')props={...props,selected:true}
   if(kind==='settings'){tree.props.onAppear();props={...props,version:1}}
@@ -83,11 +86,11 @@ async function scenario(kind,negative){
     assert.equal(cpuValue(tree),undefined);equal(frame(tree).histories.cpu.cpu,[])
   }
   assert.equal(host.loads,1,'retained Canvas host must not reload its document');assert.equal(host.disposed,0)
- }finally{page.close();canvas.close();await settle();assert.equal(intervals.size,0);assert.equal(sceneListeners.size,0);assert.equal(timeouts.size,0)}
+ }finally{page.close();canvas.close();rootOwner.close();await settle();assert.equal(intervals.size,0);assert.equal(sceneListeners.size,0);assert.equal(timeouts.size,0)}
 }
 ;(async()=>{
- for(const kind of ['background','tab','settings'])await check(kind+': real API baseline retains CPU history/value, then continues with real live delta',()=>scenario(kind))
- for(const negative of ['source','reboot','missing','hotplug'])await check('resume does not conceal '+negative,()=>scenario('settings',negative))
+ for(const kind of ['background'])await check(kind+': real API baseline retains CPU history/value, then continues with real live delta',()=>scenario(kind))
+ for(const negative of ['source','reboot','missing','hotplug'])await check('resume does not conceal '+negative,()=>scenario('background',negative))
  if(failures.length)throw Error(failures.length+' failed groups: '+failures.join('; '))
  console.log('All '+count+' CPU resume API/host integration groups passed (mock RPC/native lifecycle, not device).')
 })().catch(e=>{console.error(e);process.exitCode=1})

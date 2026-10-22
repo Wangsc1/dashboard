@@ -1,7 +1,7 @@
 import { CpuSampler, CpuUsage, CpuMeta, parseCpuInfo, thermalCelsius } from "./openwrt-metrics"
 
 import { getPreferences, customHeaders, recordEvent, controllerHealth, feedback } from "./preferences"
-export const VERSION = "1.10"
+export const VERSION = "1.11"
 
 export type Kind = "clash" | "openwrt"
 export type Plugin = "openclash" | "nikki" | "mihomo"
@@ -75,6 +75,7 @@ export function getActive(): Controller | null {
 }
 export function setActive(id: string) { Storage.set(K_ACTIVE, id); feedback(); recordEvent("switch", true) }
 
+class ControllerHTTPError extends Error {}
 async function http(c: Controller, path: string, init: { method?: string; body?: any; timeout?: number; headers?: Record<string, string> } = {}): Promise<any> {
   const secret = getSecret(c.id)
   const headers: Record<string, string> = init.headers ? { ...init.headers } : customHeaders()
@@ -85,9 +86,9 @@ async function http(c: Controller, path: string, init: { method?: string; body?:
     body: init.body !== undefined ? JSON.stringify(init.body) : undefined,
   } as any, path)
   if (!r.ok) {
-    if (r.status === 401 || r.status === 403) throw new Error("认证失败，请检查密钥")
-    if (r.status === 404) throw new Error("HTTP 404：该地址不是 Clash 控制器接口，请检查端口（通常是 9090）")
-    throw new Error(`请求失败 HTTP ${r.status}`)
+    if (r.status === 401 || r.status === 403) throw new ControllerHTTPError("认证失败，请检查密钥")
+    if (r.status === 404) throw new ControllerHTTPError("HTTP 404：该地址不是 Clash 控制器接口，请检查端口（通常是 9090）")
+    throw new ControllerHTTPError(`请求失败 HTTP ${r.status}`)
   }
   const text = await r.text()
   if (!text) return {}
@@ -176,9 +177,10 @@ async function ubus(c: Controller, obj: string, method: string, params: any = {}
 }
 
 type UbusCall = [string, string, any?]
-async function ubusBatchRaw(c: Controller, sid: string, calls: UbusCall[]): Promise<any[]> {
+async function ubusBatchRaw(c: Controller, sid: string, calls: UbusCall[], signal?: AbortController["signal"]): Promise<any[]> {
+  if (signal?.aborted) throw new Error("来源或采样代次已改变")
   const r = await fetch(c.url + "/ubus", {
-    method: "POST", headers: { ...customHeaders(), "Content-Type": "application/json" }, allowInsecureRequest: true, timeout: getPreferences().requestTimeout,
+    method: "POST", headers: { ...customHeaders(), "Content-Type": "application/json" }, allowInsecureRequest: true, timeout: getPreferences().requestTimeout, signal,
     body: JSON.stringify(calls.map((x, i) => ({ jsonrpc: "2.0", id: i + 1, method: "call", params: [sid, x[0], x[1], x[2] ?? {}] }))),
   } as any)
   if (!r.ok) throw new Error(`请求失败 HTTP ${r.status}`)
@@ -198,12 +200,12 @@ async function ubusBatchRaw(c: Controller, sid: string, calls: UbusCall[]): Prom
   recordEvent("ubus", true)
   return out
 }
-async function ubusBatch(c: Controller, calls: UbusCall[]): Promise<any[]> {
+async function ubusBatch(c: Controller, calls: UbusCall[], signal?: AbortController["signal"]): Promise<any[]> {
   let sid = sessions[c.id]?.sid
   if (!sid || sessions[c.id].auth !== overviewSource(c) || Date.now() - sessions[c.id].at > 50 * 60 * 1000) sid = await wrtLogin(c)
-  try { return await ubusBatchRaw(c, sid, calls) } catch (e: any) {
+  try { return await ubusBatchRaw(c, sid, calls, signal) } catch (e: any) {
     if (String(e?.message) !== "ACCESS") throw e
-    return await ubusBatchRaw(c, await wrtLogin(c), calls)
+    return await ubusBatchRaw(c, await wrtLogin(c), calls, signal)
   }
 }
 function pickWan(dump: any): { name: string; device: string } {
@@ -219,6 +221,7 @@ const cpuSamplers: Record<string,CpuSampler>={}
 const ratePrevious: Record<string,{t:number;rx:number;tx:number;up:number;down:number;uptime:number}>={}
 const samplingEpoch:Record<string,number>={}
 const overviewPending:Record<string,Promise<Overview>|undefined>={}
+const overviewAbort:Record<string,AbortController|undefined>={}
 // rpcd file.read reads only 4096 bytes for st_size=0 (/proc). Never use it for cpuinfo.
 // Fixed path only; does not relax Nikki's path validation or grant any new ACL.
 const CPUINFO_MAX_BYTES=2*1024*1024
@@ -266,13 +269,13 @@ function cpuInfoSnapshot(c:Controller,ids:string[],epoch:number):ReturnType<type
   // Metadata IO never delays the one-second usage sampling loop.
   return entry.meta
 }
-export function resetOverviewSampling(c:Controller) { const key=overviewSource(c);delete cpuSamplers[key];delete ratePrevious[key];samplingEpoch[key]=(samplingEpoch[key]??0)+1;const info=cpuInfoCache[key];if(info){info.abort?.abort();info.at=0} }
+export function resetOverviewSampling(c:Controller, key=overviewSource(c)) { overviewAbort[key]?.abort();delete cpuSamplers[key];delete ratePrevious[key];samplingEpoch[key]=(samplingEpoch[key]??0)+1;const info=cpuInfoCache[key];if(info){info.abort?.abort();info.at=0} }
 function mountUsage(r:any):DiskUsage|null {
   const list:any[]=Array.isArray(r?.result)?r.result:[]
   const m=list.find(x=>x.mount==="/overlay")??list.find(x=>x.mount==="/")
   return m&&typeof m.size==="number"&&m.size>0&&typeof m.avail==="number" ? {size:m.size,used:Math.max(0,m.size-m.avail),avail:m.avail,mount:String(m.mount),device:typeof m.device==="string"?m.device:undefined}:null
 }
-async function wrtOverview(c: Controller): Promise<Overview> {
+async function wrtOverview(c: Controller, signal?: AbortController["signal"]): Promise<Overview> {
   const key=overviewSource(c), cached=slowCache[key], stale=!cached||Date.now()-cached.at>60000
   const epoch=samplingEpoch[key]??0, sampler=cpuSamplers[key]??(cpuSamplers[key]=new CpuSampler())
   if(Object.keys(cpuSamplers).length>16){const old=Object.keys(cpuSamplers).find(k=>k!==key);if(old){delete cpuSamplers[old];delete ratePrevious[old];delete slowCache[old];cpuInfoCache[old]?.abort?.abort();delete cpuInfoCache[old]}}
@@ -282,7 +285,7 @@ async function wrtOverview(c: Controller): Promise<Overview> {
     ...zones.flatMap(z=>[["file","read",{path:`/sys/class/thermal/${z}/type`}],["file","read",{path:`/sys/class/thermal/${z}/temp`}]] as UbusCall[]),
     ...(stale?[["system","board"],["network.interface","dump"],["file","list",{path:"/sys/class/thermal"}],["file","read",{path:"/etc/openwrt_release"}],["luci","getMountPoints"]] as UbusCall[]:[]),
   ]
-  const r=await ubusBatch(c,calls),info=r[0],devs=r[1]??{},stat=r[2]??{},ct=r[3]??{}
+  const r=await ubusBatch(c,calls,signal),info=r[0],devs=r[1]??{},stat=r[2]??{},ct=r[3]??{}
   if(!info)throw new Error("路由器未返回系统信息")
   // 同id改地址/认证后返回的旧响应不得进入任何新来源缓存。
   if(overviewSource(c)!==key||(samplingEpoch[key]??0)!==epoch)throw new Error("来源或采样代次已改变")
@@ -416,7 +419,7 @@ export async function loadOverview(c: Controller): Promise<Overview> {
     let o:Overview
     if(c.kind==="openwrt"){
       const key=overviewSource(c)
-      if(!overviewPending[key]){const pending=wrtOverview(c);overviewPending[key]=pending;void pending.finally(()=>{if(overviewPending[key]===pending)delete overviewPending[key]}).catch(()=>{})}
+      if(!overviewPending[key]){const abort=new AbortController();overviewAbort[key]=abort;const pending=wrtOverview(c,abort.signal);overviewPending[key]=pending;void pending.finally(()=>{if(overviewPending[key]===pending){delete overviewPending[key];delete overviewAbort[key]}}).catch(()=>{})}
       o=await overviewPending[key]!
     }else o=await loadClashOverview(c)
     controllerHealth[c.id] = true; return o
@@ -813,6 +816,34 @@ export async function verifyCoreRestart(c:Controller,before:NikkiRuntime|null,cu
     if(changed||unavailable)return {verified:true,runtime:last}
   }
   return {verified:false,runtime:last}
+}
+// A dropped POST response can be caused by the upgrade's restart. Never retry
+// that write: only bounded live /version reads can establish a changed version.
+export async function upgradeCoreAndVerify(c:Controller,current:()=>boolean=()=>true):Promise<{verified:boolean;version:string|null}> {
+  const resolved=await cc(c)
+  const read=async()=>{
+    try {
+      const value=(await http(resolved,"/version",{timeout:2})).version
+      return typeof value==="string"&&value.trim()&&!/^(unknown|未提供|读取失败)$/i.test(value.trim())?value.trim():null
+    } catch { return null }
+  }
+  if(!current())return {verified:false,version:null}
+  const before=await read()
+  if(!current())return {verified:false,version:null}
+  try { await coreAction(resolved,"upgrade") } catch(error) {
+    if(error instanceof ControllerHTTPError)throw error
+    // Transport timeout/disconnect is not an acknowledgement, nor proof of failure.
+  }
+  let last:string|null=null
+  for(let attempt=0;attempt<8&&current();attempt++){
+    await new Promise<void>(resolve=>setTimeout(resolve,1000))
+    if(!current())break
+    const version=await read()
+    if(!current())break
+    if(version)last=version
+    if(before&&version&&version!==before)return {verified:true,version}
+  }
+  return {verified:false,version:last}
 }
 export async function nikkiService(c: Controller, action: "start"|"stop"|"restart"|"reload") { requireNikki(c); if (!["start","stop","restart","reload"].includes(action)) throw new Error("不支持的服务动作"); await ubus(c,"rc","init",{name:"nikki",action}) }
 export type CoreAction = "upgrade"|"restart"|"reload"|"geo"|"dns"|"fakeip"

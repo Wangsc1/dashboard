@@ -1,5 +1,5 @@
 // Inline-only chart runtime. No fetch, URLs, credentials or per-frame native bridge calls.
-export function plotCanvasHTML(initial?:{seq:number;samples:number[];tone:string;area?:boolean;running:boolean;percent:boolean;background?:string},diagnostics=false,trace=false) {
+export function plotCanvasHTML(initial?:{seq:number;samples:number[];tone:string;area?:boolean;running:boolean;percent:boolean;background?:string},diagnostics=false) {
   return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'none'; img-src 'none'"><style>html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#f2f2f7} @media(prefers-color-scheme:dark){html,body{background:#1c1c1e}}canvas{display:block;width:100%;height:100%;pointer-events:none}</style></head><body><canvas></canvas><script>
 (function(){
 'use strict';
@@ -12,24 +12,21 @@ let paintedQueued=false;const hasPaintedBridge=!!(window.webkit&&window.webkit.m
 function diagnosticSnapshot(){const r=canvas.getBoundingClientRect();return {ms:Math.round(performance.now()-startedAt),width:Math.round(r.width),height:Math.round(r.height),viewportWidth:innerWidth,viewportHeight:innerHeight,bitmapWidth:canvas.width,bitmapHeight:canvas.height,context:!!ctx,hidden:document.hidden,attempts,grids,frames:stats.frames,updates:stats.updates,samples:history.length,seq,active,error:lastError}}
 function reportDiagnostic(){if(!diagnosticEnabled)return;try{Promise.resolve(window.webkit.messageHandlers.plotDiagnostic.postMessage(diagnosticSnapshot())).catch(()=>{})}catch(_){}}
 if(diagnosticEnabled){window.addEventListener('error',e=>{lastError=String(e.message||'script error').slice(0,160);reportDiagnostic()});window.addEventListener('unhandledrejection',e=>{lastError=String(e.reason?.message||'promise error').slice(0,160);reportDiagnostic()})}
-// Safe trace contains only a sequence, sample count and draw-state booleans.
-let traceKey='';const traceEnabled=${trace};
-function reportTrace(sized,line){if(!traceEnabled)return;const count=sized?Math.min(60,shown.length):0,key=seq+':'+count+':'+sized+':'+line;if(key===traceKey)return;traceKey=key;try{Promise.resolve(window.webkit.messageHandlers.plotTrace.postMessage({seq,samples:count,sized,line})).catch(()=>{})}catch(_){}}
 function mix(a,b,p){return a+(b-a)*p}
 function canonical(values){return values.map((v,i)=>({x:(60-values.length+i)/59,y:v}))}
 function paint(){
  attempts++;
  const r=canvas.getBoundingClientRect(),d=Math.min(3,window.devicePixelRatio||1),w=r.width,h=r.height;
- if(!w||!h){reportTrace(false,false);return;}
+ if(!w||!h)return;
  const cw=Math.round(w*d),ch=Math.round(h*d);if(canvas.width!==cw||canvas.height!==ch){canvas.width=cw;canvas.height=ch}
  ctx.setTransform(d,0,0,d,0,0);ctx.clearRect(0,0,w,h);ctx.strokeStyle='rgba(146,149,163,.22)';ctx.lineWidth=.6;ctx.setLineDash([3,3]);ctx.beginPath();
  for(let i=0;i<8;i++){ctx.moveTo(i*w/7,0);ctx.lineTo(i*w/7,h)}for(let i=0;i<5;i++){ctx.moveTo(0,i*h/4);ctx.lineTo(w,i*h/4)}ctx.stroke();ctx.setLineDash([]);grids++;
  if(!paintedQueued&&hasPaintedBridge){paintedQueued=true;setTimeout(()=>{try{Promise.resolve(window.webkit.messageHandlers.plotPainted.postMessage(null)).catch(()=>{})}catch(_){}},90)}
- if(history.length<2||shown.length<2){reportTrace(true,false);return;}
+ if(history.length<2||shown.length<2)return;
  const y=v=>h-2-v/scale*(h-4);ctx.beginPath();ctx.moveTo(shown[0].x*w,y(shown[0].y));
  for(let i=1;i<shown.length;i++){const a=shown[i-1],b=shown[i],m=(a.x+b.x)*w/2;ctx.bezierCurveTo(m,y(a.y),m,y(b.y),b.x*w,y(b.y))}
  if(config.area){ctx.save();ctx.lineTo(shown[shown.length-1].x*w,h);ctx.lineTo(shown[0].x*w,h);ctx.closePath();ctx.fillStyle=config.tone;ctx.globalAlpha=.1;ctx.fill();ctx.restore();ctx.beginPath();ctx.moveTo(shown[0].x*w,y(shown[0].y));for(let i=1;i<shown.length;i++){const a=shown[i-1],b=shown[i],m=(a.x+b.x)*w/2;ctx.bezierCurveTo(m,y(a.y),m,y(b.y),b.x*w,y(b.y))}}
- ctx.strokeStyle=config.tone;ctx.lineWidth=1.5;ctx.lineCap='round';ctx.lineJoin='round';ctx.stroke();stats.frames++;reportTrace(true,true);
+ ctx.strokeStyle=config.tone;ctx.lineWidth=1.5;ctx.lineCap='round';ctx.lineJoin='round';ctx.stroke();stats.frames++;
 }
 function stop(){if(raf)cancelAnimationFrame(raf);raf=0;stats.liveLoops=0}
 function frame(at){raf=0;const p=Math.max(0,Math.min(1,(at-start)/duration));shown=from.map((a,i)=>({x:mix(a.x,to[i].x,p),y:mix(a.y,to[i].y,p)}));scale=mix(scaleFrom,scaleTo,p);paint();if(p<1&&active&&!document.hidden){raf=requestAnimationFrame(frame);stats.liveLoops=1}else stats.liveLoops=0}

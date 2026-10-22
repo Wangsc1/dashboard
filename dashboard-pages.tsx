@@ -1,7 +1,7 @@
 import { NikkiManagement, NikkiSubscription, NikkiRule, NikkiFile, NikkiManagementError, NIKKI_RULE_TYPES, loadNikkiManagement, saveNikkiSubscription, deleteNikkiSubscription, updateNikkiSubscription, saveNikkiRule, deleteNikkiRule, setNikkiRulesEnabled, reorderNikkiRules, selectNikkiProfile, readNikkiFile, saveNikkiFile } from "./api"
 import { rootToolbar } from "./root-toolbar"
 import { AppEvents, Button, Divider, HStack, VStack, Text, Image, Circle, RoundedRectangle, Spacer, ScrollView, LazyVStack, NavigationLink, Menu, Picker, TextField, Toggle, Form, Section, Label, ProgressView, WebView, ZStack, modifiers, Safari, useState, useEffect } from "scripting"
-import { Controller, Group, Conn, Rule, Provider, loadGroups, testGroup, selectProxy, loadProviders, updateProvider, loadRules, loadConnections, closeConnection, closeAllConnections, fmtBytes, fmtSpeed, fmtUptime, delayColor, loadRuntimeVersions, checkCoreUpdate, loadNikkiRuntime, NikkiRuntime, verifyCoreRestart, lastControllerMode, loadConfig, setMode as setControllerMode, nikkiService, nikkiServiceStatus, coreAction, CoreAction, queryDNS, webpage } from "./api"
+import { Controller, Group, Conn, Rule, Provider, loadGroups, testGroup, selectProxy, loadProviders, updateProvider, loadRules, loadConnections, closeConnection, closeAllConnections, fmtBytes, fmtSpeed, fmtUptime, delayColor, loadRuntimeVersions, checkCoreUpdate, loadNikkiRuntime, NikkiRuntime, verifyCoreRestart, upgradeCoreAndVerify, lastControllerMode, loadConfig, setMode as setControllerMode, nikkiService, nikkiServiceStatus, coreAction, CoreAction, queryDNS, webpage } from "./api"
 import { usePreferences, KernelConfigPage, updatePreference, Choice, ThresholdRange, Range, TestURLField } from "./settings-ui"
 import { NODE_SORT_OPTIONS, savePreferences, cachedIcon, readCachedIcon, traceIconPreference, feedback } from "./preferences"
 import { selectable, sortedNodes, historyFor, filterConnections, clientLabels, saveClientLabel, sourceKey, confirmed } from "./dashboard-model"
@@ -356,20 +356,23 @@ export function prefetchMoreVersions(active:Controller|null){
 export function MorePage({active,onChanged,onClose,selected=true}:{active:Controller|null;onChanged:()=>void;onClose?:()=>void;selected?:boolean}) {
   const p=usePreferences(["theme","defaultPage"])
   const cachedVersions=active?moreSnapshots.get(sourceKey(active)):undefined
-  const [core,setCore]=useState(cachedVersions?.core??"未提供"),[app,setApp]=useState(cachedVersions?.app??"未提供"),[mode,setMode]=useState("未提供"),[err,setErr]=useState(""),[visible,setVisible]=useState(selected),[busy,setBusy]=useState(false),[running,setRunning]=useState<boolean|null>(cachedVersions?.running??null),[guard]=useState({alive:true,source:"",busy:false}),[runtime,setRuntime]=useState<NikkiRuntime|null>(cachedVersions?.runtime??null),[,setClock]=useState(0),[notice,setNotice]=useState(""),[noticeKind,setNoticeKind]=useState("success")
+  const [core,setCore]=useState(cachedVersions?.core??"未提供"),[app,setApp]=useState(cachedVersions?.app??"未提供"),[mode,setMode]=useState("未提供"),[err,setErr]=useState(""),[visible,setVisible]=useState(selected),[busy,setBusy]=useState(false),[running,setRunning]=useState<boolean|null>(cachedVersions?.running??null),[guard]=useState({alive:true,source:"",busy:false,view:"",epoch:0,versionEpoch:0,active:false}),[runtime,setRuntime]=useState<NikkiRuntime|null>(cachedVersions?.runtime??null),[,setClock]=useState(0),[notice,setNotice]=useState(""),[noticeKind,setNoticeKind]=useState("success")
   const [coreUpdate,setCoreUpdate]=useState<{source:string;version:string;available:boolean}|null>(null)
   guard.source=active?sourceKey(active):""
+  const view=JSON.stringify([guard.source,selected,visible])
+  if(guard.view!==view){guard.view=view;guard.epoch++}
+  guard.active=selected&&visible
   useEffect(()=>()=>{guard.alive=false},[])
   useEffect(()=>{setVisible(selected)},[selected])
   useEffect(()=>{
     setCoreUpdate(null)
     if(!active||!selected||!visible)return
     let alive=true,runtimeTimer:any,inFlight=false
-    const key=sourceKey(active),cached=moreSnapshots.get(key)??{}
+    const key=sourceKey(active),cached=moreSnapshots.get(key)??{},versionEpoch=guard.versionEpoch
     if(moreSnapshots.size>30)moreSnapshots.clear()
     const remember=(patch:typeof cached)=>{if(alive)moreSnapshots.set(key,{...moreSnapshots.get(key),...patch})}
     setCore(cached.core??"读取中…");setApp(cached.app??"读取中…");setMode(lastControllerMode(active)??"读取中…");setRunning(cached.running??null);setRuntime(cached.runtime??null);setErr("")
-    loadRuntimeVersions(active,x=>{if(alive){if(x.core!=="未提供"){setCore(x.core);remember({core:x.core})}if(x.app!=="未提供"){setApp(x.app);remember({app:x.app})}}}).then(x=>{if(alive){void checkCoreUpdate(x.core).then(available=>{if(alive&&guard.alive&&guard.source===key)setCoreUpdate(available===null?null:{source:key,version:x.core,available})});if(x.failed){if(!moreSnapshots.get(key)?.core)setCore("读取失败");if(!moreSnapshots.get(key)?.app)setApp("读取失败");setErr("部分版本信息读取失败；已保留同来源上次结果。")}}}).catch(()=>{if(alive)setErr(safeError())})
+    loadRuntimeVersions(active,x=>{if(alive&&versionEpoch===guard.versionEpoch){if(x.core!=="未提供"){setCore(x.core);remember({core:x.core})}if(x.app!=="未提供"){setApp(x.app);remember({app:x.app})}}}).then(x=>{if(alive&&versionEpoch===guard.versionEpoch){void checkCoreUpdate(x.core).then(available=>{if(alive&&guard.alive&&guard.source===key&&versionEpoch===guard.versionEpoch)setCoreUpdate(available===null?null:{source:key,version:x.core,available})});if(x.failed){if(!moreSnapshots.get(key)?.core)setCore("读取失败");if(!moreSnapshots.get(key)?.app)setApp("读取失败");setErr("部分版本信息读取失败；已保留同来源上次结果。")}}}).catch(()=>{if(alive)setErr(safeError())})
     loadConfig(active).then(x=>{if(alive)setMode(x.mode??"未提供")}).catch(()=>{if(alive&&!lastControllerMode(active))setMode("读取失败")})
     if(active.kind==="openwrt"&&active.plugin==="nikki"){
       const update=(x:NikkiRuntime)=>{if(alive){setRuntime(x);setRunning(x.running??null);remember({runtime:x,running:x.running})}}
@@ -384,12 +387,30 @@ export function MorePage({active,onChanged,onClose,selected=true}:{active:Contro
   const duration=(value:number|null|undefined)=>value==null?"未提供":fmtUptime(value+Math.max(0,Math.floor((Date.now()-(runtime?.measuredAt??Date.now()))/1000)),true)
   async function act(action:CoreAction,label:string,impact:string){
     if(!active||guard.busy)return
-    const source=sourceKey(active),current=()=>guard.alive&&guard.source===source
+    const source=sourceKey(active),epoch=guard.epoch,current=()=>guard.alive&&guard.source===source&&(action!=="upgrade"||(guard.active&&guard.epoch===epoch))
+    if(!current())return
     guard.busy=true;setBusy(true);setNotice("")
     await attempt(async()=>{
       const options=action==="upgrade"?{title:"升级核心",message:"将下载并替换核心，可能重启并短暂中断代理服务。是否继续？",confirmLabel:"确认升级"}:action==="restart"?{title:"重启核心",message:"确定要重启核心吗？这将短暂中断代理服务。",confirmLabel:"确认重启"}:action==="reload"?{title:"重载配置",message:"将重新加载配置文件。",confirmLabel:"确认重载"}:null
       const ok=["geo","dns","fakeip"].includes(action)?true:options?await Dialog.confirm({...options,cancelLabel:"取消"}):await Dialog.confirm({title:label,message:impact,confirmLabel:"确认清除",cancelLabel:"取消"})
       if(!ok||!current())return
+      if(action==="upgrade"){
+        guard.versionEpoch++;setCoreUpdate(null)
+        setNoticeKind("progress");setNotice("正在升级核心…")
+        let checked:{verified:boolean;version:string|null}
+        try{checked=await upgradeCoreAndVerify(active,current)}catch(error){if(!current())return;setNotice("");throw error}
+        if(!current())return
+        if(checked.version){
+          setCore(checked.version)
+          moreSnapshots.set(source,{...moreSnapshots.get(source),core:checked.version})
+          const available=await checkCoreUpdate(checked.version)
+          if(!current())return
+          setCoreUpdate(available===null?null:{source,version:checked.version,available})
+        }
+        setNoticeKind(checked.verified?"success":"warning")
+        setNotice(checked.verified?"核心升级成功":"尚未确认核心升级完成，版本未变化或无法验证")
+        return
+      }
       let before:NikkiRuntime|null=null
       if(action==="restart"){
         setNoticeKind("progress");setNotice("正在重启核心…")
@@ -407,7 +428,7 @@ export function MorePage({active,onChanged,onClose,selected=true}:{active:Contro
         return
       }
       setNoticeKind("success")
-      setNotice(({upgrade:"已提交升级请求",restart:"核心重启成功",reload:"配置已重载",geo:"GEO 数据库更新成功",dns:"DNS 缓存已清除",fakeip:"FakeIP 缓存已清除"})[action])
+      setNotice(({restart:"核心重启成功",reload:"配置已重载",geo:"GEO 数据库更新成功",dns:"DNS 缓存已清除",fakeip:"FakeIP 缓存已清除"})[action])
     })
     guard.busy=false;if(guard.alive){setBusy(false);setNoticeKind(k=>k==="progress"?"warning":k)}
   }
@@ -427,7 +448,7 @@ export function MorePage({active,onChanged,onClose,selected=true}:{active:Contro
   }
   const nikki=active?.kind==="openwrt"&&active.plugin==="nikki"
   const actions:[CoreAction,string,string,string][]=[["upgrade","升级核心","arrow.up.circle","将下载并替换核心，可能重启并短暂中断代理服务。"],["restart","重启核心","arrow.clockwise","会短暂中断代理服务及连接；禁用管理API的内核可能拒绝。"],["reload","重载配置","arrow.triangle.2.circlepath","强制重新读取当前核心配置并应用，可能断开连接；不会保存Nikki UCI。"],["geo","更新GEO数据库","globe","内核将从其配置的上游下载GEO文件并替换本地数据库，产生外部请求。"]]
-  return Shell({title:active?.name??"更多",background:"systemBackground",toolbar:rootToolbar("more",onClose),overlay:notice?{alignment:"top",content:<VStack padding={{horizontal:14,top:8}}><HStack spacing={14} padding={18} background={<RoundedRectangle cornerRadius={18} fill="secondarySystemBackground"/>}>{noticeKind==="progress"?<ProgressView/>:<Image systemName={noticeKind==="warning"?"exclamationmark.circle.fill":"checkmark.circle.fill"} font={24} foregroundStyle={noticeKind==="warning"?"systemOrange":"systemGreen"}/>}<Text font={16} fontWeight="medium">{notice}</Text><Spacer/><Button buttonStyle="plain" action={()=>setNotice("")}><Image systemName="xmark" font={16} foregroundStyle="secondaryLabel"/></Button></HStack></VStack>}:undefined,onAppear:()=>setVisible(true),onDisappear:()=>setVisible(false),children:<>
+  return Shell({title:active?.name??"更多",background:"systemBackground",toolbar:rootToolbar("more",onClose),overlay:notice?{alignment:"top",content:<VStack padding={{horizontal:14,top:8}}><HStack spacing={14} padding={18} background={<RoundedRectangle cornerRadius={18} fill="secondarySystemBackground"/>}>{noticeKind==="progress"?<ProgressView/>:<Image systemName={noticeKind==="warning"?"exclamationmark.circle.fill":"checkmark.circle.fill"} font={24} foregroundStyle={noticeKind==="warning"?"systemOrange":"systemGreen"}/>}<Text font={16} fontWeight="medium">{notice}</Text><Spacer/><Button buttonStyle="plain" action={()=>setNotice("")}><Image systemName="xmark" font={16} foregroundStyle="secondaryLabel"/></Button></HStack></VStack>}:undefined,onAppear:()=>setVisible(true),onDisappear:()=>{guard.epoch++;guard.active=false;setVisible(false)},children:<>
     <MoreHeading>主题及启动</MoreHeading><MorePanel contentInset={16}><HStack spacing={12} frame={{maxWidth:"infinity"}}><HStack frame={{minWidth:0,maxWidth:"infinity",alignment:"leading"}}><Choice title="外观模式" value={p.theme} values={[["system", "跟随系统"], ["light", "浅色"], ["dark", "深色"]]} onChanged={v=>updatePreference({theme:v as any})}/></HStack><HStack frame={{minWidth:0,maxWidth:"infinity",alignment:"trailing"}}><Choice title="默认打开界面" value={p.defaultPage} values={[["overview", "主页"], ["proxies", "代理"], ["rules", "规则"], ["connections", "连接"], ["more", "更多"]]} onChanged={v=>updatePreference({defaultPage:v as any})}/></HStack></HStack></MorePanel>
     {!active?<Empty/>:<>{err?<Hint>{err}</Hint>:null}
     <MoreHeading>运行信息</MoreHeading><MorePanel><MoreLine title="内核版本" icon="desktopcomputer" detail={core} updateDot={!!(selected&&visible&&active&&coreUpdate?.source===sourceKey(active)&&coreUpdate.version===core&&coreUpdate.available)} subtitle={`运行时间：${running===false?"未运行":duration(runtime?.coreSeconds)}`}/><MoreSeparator/><MoreLine title="插件版本" icon="shippingbox" color="systemOrange" detail={app} subtitle={`${nikki?"Nikki 服务":active.plugin??"独立控制器"}（运行时间：${running===false?"未运行":duration(runtime?.serviceSeconds)}）`}/></MorePanel>
