@@ -26,6 +26,12 @@
 
 原生 Tab API 面向 iOS 18+；外观与手势由系统及 Scripting 版本决定。仓库配置了 `remoteResource`，实际导入和更新以 Scripting 的处理结果为准。配置编辑器的 CodeMirror/Lezer/YAML 静态 bundle 已嵌入现有 `dashboard-pages.tsx`；在线更新仍只需原有运行文件，不需 CDN、额外资源下载或在手机安装 npm 包。`editor/` 为构建源码、锁定依赖及许可证，非运行依赖。
 
+## 1.5.183 更新
+
+- 按用户要求为 CPU 详情导航栏左上角增加原生 xmark 关闭按钮，调用 Navigation.useDismiss；保留下拉关闭及原有 sheet 关闭状态处理，不关闭主界面。
+- 一并发布 1.5.182 的普通 VStack 承载验证，保留绘图区外 D183 诊断。可见性是否恢复仍待真机验收，不因增加按钮或本地测试通过宣称空白问题已修复。
+- 本地验证 X 所在 topBarLeading、系统关闭回调及下拉指示保留；全部核心、布局、数据订阅和业务回归通过。
+
 ## 1.5.182 可见性承载验证版
 
 - D181 真机截图显示去掉诊断遮挡后仍 H:1，尺寸正常，采样 U:17 而曲线绘制 F:4。排除该遮挡因素后，本版仅更换 CPU 详情内部纵向承载：LazyVStack → VStack；sheet、NavigationStack、ScrollView、数据订阅、布局间距、全部核心及 Canvas 绘制均不变。

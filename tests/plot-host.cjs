@@ -36,7 +36,7 @@ async function mount(){const node=render(plot.MountedCanvasPlot,props,true);awai
  await test('诊断状态为原生文字，未知不冒充0；收到报告不重载或请求重绘',async()=>{
   await mount();const host=hosts.at(-1)
   let tree=render(plot.MountedCanvasPlot,props)
-  assert.ok(text(tree).includes('D182'));assert.ok(text(tree).includes('C:--'));assert.ok(text(tree).includes('JS:--'))
+  assert.ok(text(tree).includes('D183'));assert.ok(text(tree).includes('C:--'));assert.ok(text(tree).includes('JS:--'))
   host.handlers.plotReady();host.handlers.plotDiagnostic({ms:2100,width:0,height:0,viewportWidth:0,viewportHeight:0,bitmapWidth:300,bitmapHeight:150,context:true,hidden:false,attempts:3,grids:0,frames:0,updates:2,samples:12,seq:2,active:true,error:''})
   tree=render(plot.MountedCanvasPlot,props);assert.ok(text(tree).includes('C:0x0'));assert.ok(text(tree).includes('P:3 G:0 F:0 N:12 U:2'))
   nodes(tree,'WebView')[0].props.onAppear();tree=render(plot.MountedCanvasPlot,props);assert.ok(text(tree).includes('A:1'))

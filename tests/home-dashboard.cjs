@@ -110,11 +110,11 @@ function fixture(url,init){if(url.endsWith('/cgi-bin/cgi-download'))return {stat
    const detail=home.CpuDetails({overview:null,histories:newHistory(),running:false,onDismiss(){}});assert.equal(nodes(detail,'ScrollView')[0].props.background,'systemBackground')
    const source=fs.readFileSync(path.join(root,'home-ui.tsx'),'utf8');assert.ok(!source.includes('gradient('));assert.ok(!source.includes('shadow='));assert.ok(source.includes('#17965b'));assert.ok(source.includes('#3485eb'))
  })
- await test('sheet全部唯一逻辑核可滚动到达，只保留原生下拉关闭，无X或空toolbar',()=>{
+ await test('sheet全部唯一逻辑核可滚动到达，左上X调用原生关闭且保留下拉关闭',()=>{
    const overview={wrt:{release:'OpenWrt',uptime:100,arch:'x86_64',kernel:'6.6.80',model:'Board',cpus:[{id:'cpu',usage:10},...Array.from({length:17},(_,i)=>({id:'cpu'+i,usage:i}))],cpuMeta:{}}}
-   let closed=0;const sheet=home.CpuDetails({overview,histories:newHistory(),running:false,onDismiss(){closed++}});assert.equal(sheet.type,'NavigationStack');deep(sheet.props.presentationDetents,['large']);assert.equal(nodes(sheet,'ScrollView').length,1);const rowNodes=nodes(sheet,home.CoreRow);assert.equal(rowNodes.length,9);const ids=rowNodes.flatMap(r=>r.props.cpus.map(c=>c.id));assert.equal(ids.length,17);assert.equal(new Set(ids).size,17)
+   let closed=0;const savedDismiss=scripting.Navigation.useDismiss;scripting.Navigation.useDismiss=()=>()=>{closed++};const sheet=home.CpuDetails({overview,histories:newHistory(),running:false});scripting.Navigation.useDismiss=savedDismiss;assert.equal(sheet.type,'NavigationStack');deep(sheet.props.presentationDetents,['large']);assert.equal(nodes(sheet,'ScrollView').length,1);const rowNodes=nodes(sheet,home.CoreRow);assert.equal(rowNodes.length,9);const ids=rowNodes.flatMap(r=>r.props.cpus.map(c=>c.id));assert.equal(ids.length,17);assert.equal(new Set(ids).size,17)
    for(const label of ['Uptime','Arch','Cpu','Kernel','Board']) {const n=nodes(sheet,'Text').find(n=>text(n)===label);assert.ok(n,label);assert.equal(n.props.foregroundStyle,'label')}
-   const sc=nodes(sheet,'ScrollView')[0];assert.equal(sc.props.toolbar,undefined);assert.equal(nodes(sheet,'Button').length,0);assert.equal(sheet.props.presentationDragIndicator,'visible')
+   const sc=nodes(sheet,'ScrollView')[0];const close=sc.props.toolbar.topBarLeading;assert.equal(close.type,'Button');assert.equal(close.props.systemImage,'xmark');assert.equal(close.props.accessibilityLabel,'关闭CPU详情');close.props.action();assert.equal(closed,1);assert.equal(sc.props.toolbar.topBarTrailing,undefined);assert.equal(sheet.props.presentationDragIndicator,'visible')
    const core=home.CoreCard({cpu:{id:'cpu2'},history:[],running:false});assert.ok(text(core).includes('-- MHz'));assert.ok(text(core).includes('-- KB'))
  })
  await test('所有数值逐采样直接显示，无数字timer；曲线共用Canvas槽',async()=>{

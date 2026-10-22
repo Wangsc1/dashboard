@@ -60,7 +60,7 @@ export function MountedCanvasPlot({samples,tone,plotHeight=96,area=false,running
   return <VStack alignment="leading" spacing={0} frame={{height:plotHeight+PLOT_DIAGNOSTIC_HEIGHT}}>
     {error?<Text font={11} foregroundStyle="secondaryLabel" frame={{height:plotHeight}}>{error}</Text>:<WebView controller={host.controller} onAppear={()=>{if(host.alive)setTrace(s=>({...s,nativeAppear:s.nativeAppear+1}))}} disabled frame={{minHeight:plotHeight,maxHeight:plotHeight,minWidth:0,maxWidth:'infinity'}}/>}
     <VStack alignment="leading" spacing={0} frame={{height:PLOT_DIAGNOSTIC_HEIGHT}} foregroundStyle="label" font={8} fontDesign="monospaced">
-      <Text>{`D182 ${trace.stage} A:${trace.nativeAppear} ${d?Math.round(d.ms/1000)+'s':'JS:--'}`}</Text>
+      <Text>{`D183 ${trace.stage} A:${trace.nativeAppear} ${d?Math.round(d.ms/1000)+'s':'JS:--'}`}</Text>
       <Text>{d?`C:${d.width}x${d.height} V:${d.viewportWidth}x${d.viewportHeight} H:${+d.hidden}`:'C:-- V:-- H:--'}</Text>
       <Text>{d?`P:${d.attempts} G:${d.grids} F:${d.frames} N:${d.samples} U:${d.updates}`:'P:-- G:-- F:-- N:-- U:--'}</Text>
       <Text>{d?`B:${d.bitmapWidth}x${d.bitmapHeight} ctx:${+d.context} run:${+d.active}`:'B:-- ctx:-- run:--'}</Text>
