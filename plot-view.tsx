@@ -1,6 +1,6 @@
 import { VStack, ZStack, Canvas, Text, WebView, useState, useEffect, useColorScheme } from 'scripting'
 import { plotCanvasHTML } from './plot-canvas'
-export interface CanvasPlotProps {samples:number[];tone:string;plotHeight?:number;area?:boolean;running?:boolean;percent?:boolean;plotWidth?:number}
+export interface CanvasPlotProps {samples:number[];tone:string;plotHeight?:number;area?:boolean;running?:boolean;percent?:boolean;plotWidth?:number;elevated?:boolean}
 // Mount the drawing host in the first render, including during sheet presentation.
 // The parent owns creation; running and component cleanup own pause/disposal.
 // Native onAppear can arrive only after scrolling, so it must not gate chart creation.
@@ -18,7 +18,10 @@ export function drawPlotGrid(ctx:any,size:{width:number;height:number}){
   for(let i=0;i<5;i++){ctx.moveTo(0,i*h/4);ctx.lineTo(w,i*h/4)}
   ctx.stroke()
 }
-export function MountedCanvasPlot({samples,tone,plotHeight=96,area=false,running=true,percent=false}:CanvasPlotProps) {
+// Card fill = secondarySystemBackground. In a presented sheet iOS uses the elevated
+// palette (dark #2c2c2e, light unchanged), so detail plots must match that fill.
+export function plotBackground(theme:string|undefined,elevated=false){return theme==='dark'?(elevated?'#2c2c2e':'#1c1c1e'):'#f2f2f7'}
+export function MountedCanvasPlot({samples,tone,plotHeight=96,area=false,running=true,percent=false,elevated=false}:CanvasPlotProps) {
   const [error,setError]=useState('')
   // A WebView is white until its document exists; stay transparent so the card colour shows through until the canvas has drawn.
   const [shown,setShown]=useState(false)
@@ -58,8 +61,8 @@ export function MountedCanvasPlot({samples,tone,plotHeight=96,area=false,running
     return()=>{host.alive=false;host.ready=false;host.pending=null;if(timeout!==undefined)clearTimeout(timeout);if(reveal!==undefined)clearTimeout(reveal);host.controller.dispose()}
   },[host])
   useEffect(()=>{
-    host.pending={seq:++host.seq,samples:samples.filter(Number.isFinite).slice(-60),tone,area,running,percent,background:theme==='dark'?'#1c1c1e':'#f2f2f7'}
+    host.pending={seq:++host.seq,samples:samples.filter(Number.isFinite).slice(-60),tone,area,running,percent,background:plotBackground(theme,elevated)}
     host.flush()
-  },[samples,tone,area,running,percent,theme,host])
+  },[samples,tone,area,running,percent,theme,elevated,host])
   return error?<Text font={11} foregroundStyle="secondaryLabel" frame={{height:plotHeight}}>{error}</Text>:<ZStack frame={{minHeight:plotHeight,maxHeight:plotHeight,minWidth:0,maxWidth:'infinity'}}>{shown?null:<Canvas opaque={false} draw={drawPlotGrid} frame={{minHeight:plotHeight,maxHeight:plotHeight,minWidth:0,maxWidth:'infinity'}}/>}<WebView controller={host.controller} disabled opacity={shown?1:0} frame={{minHeight:plotHeight,maxHeight:plotHeight,minWidth:0,maxWidth:'infinity'}}/></ZStack>
 }

@@ -1,5 +1,5 @@
 import { ScrollView, Button, Circle, GeometryReader, ZStack, RoundedRectangle, gradient, Form, HStack, Image, Label, Menu, NavigationLink, Picker, Section, SecureField, Slider, Spacer, Text, TextField, Toggle, VStack, useEffect, useState } from "scripting"
-import { Controller, ClashConfig, CLASH_MODES, LOG_LEVELS, loadConfig, patchConfig, validateConfigPatch } from "./api"
+import { Controller, ClashConfig, CLASH_MODES, LOG_LEVELS, loadConfig, cachedKernelConfig, forgetKernelConfig, patchConfig, validateConfigPatch } from "./api"
 import { Preferences, AppLog, LogLevel, getPreferences, savePreferences, subscribePreferences, preferenceTrace, traceIconPreference, feedback, getLogs, clearLogs, exportLogs, logTime, getHeaderText, saveHeaders, clearImageCache } from "./preferences"
 
 import { makeBackup, restoreBackup, validateBackup } from "./cloud-backup"
@@ -193,15 +193,21 @@ export function KernelConfigPage({ c }: { c: Controller }) {
   const [holder] = useState<{ current: Session | null }>({ current: null })
   const [, redraw] = useState(0)
   const source = JSON.stringify(c)
-  if (holder.current?.source !== source) holder.current = { source, controller: { ...c }, active: true, cfg: null, dirty: {}, revisions: {}, pending: new Map(), errors: {}, loading: true, saving: false }
+  if (holder.current?.source !== source) holder.current = { source, controller: { ...c }, active: true, cfg: cachedKernelConfig(c), dirty: {}, revisions: {}, pending: new Map(), errors: {}, loading: true, saving: false }
   const session = holder.current!
   const current = () => session.active && holder.current === session
   const paint = () => { if (current()) redraw(n => n + 1) }
   useEffect(() => {
     void (async () => {
+      // A same-source cached copy is only a first frame; the fresh result replaces it but never the user's drafts.
       try { const result = await loadConfig(session.controller); if (current()) session.cfg = result }
-      catch { if (current()) session.errors.load = "读取内核配置失败，请检查控制器连接与权限后重新进入此页" }
-      finally { if (current()) { session.loading = false; paint() } }
+      catch {
+        if (current()) {
+          session.errors.load = "读取内核配置失败，请检查控制器连接与权限后重新进入此页"
+          session.cfg = null; session.pending.clear(); forgetKernelConfig(session.controller)
+        }
+      }
+      finally { if (current()) { session.loading = false; paint(); if (session.pending.size) void drain() } }
     })()
     return () => { session.active = false; session.pending.clear() }
   }, [session])
@@ -235,7 +241,7 @@ export function KernelConfigPage({ c }: { c: Controller }) {
     } finally { if (current()) { session.saving = false; paint() } }
   }
   function commit(key: string) {
-    if (!current() || session.loading || !provided(key) || !(key in session.dirty)) return
+    if (!current() || !session.cfg || !provided(key) || !(key in session.dirty)) return
     let value = session.dirty[key]
     if (key.endsWith("port")) {
       if (!/^\d+$/.test(String(value)) || Number(value) > 65535) { session.errors[key] = "端口必须为 0–65535 的整数；空值不会写回"; paint(); return }
@@ -248,7 +254,7 @@ export function KernelConfigPage({ c }: { c: Controller }) {
     void drain(); paint()
   }
   function change(key: string, value: any, immediate = true) {
-    if (!current() || session.loading || !provided(key)) return
+    if (!current() || !session.cfg || !provided(key)) return
     session.dirty[key] = value
     session.revisions[key] = (session.revisions[key] ?? 0) + 1
     // A newly edited input supersedes an older queued commit, but stays local
@@ -257,16 +263,16 @@ export function KernelConfigPage({ c }: { c: Controller }) {
     delete session.errors[key]; paint()
     if (immediate) commit(key)
   }
-  const cfg = session.cfg, dirty = session.dirty, busy = session.loading
+  const cfg = session.cfg, dirty = session.dirty, busy = session.loading && !session.cfg
   const err = Object.values(session.errors).join("\n")
   const icon = (name: string, color: string) => <Image systemName={name} font={21} foregroundStyle={color} frame={{ width: 24 }} />
   const separator = () => <RoundedRectangle cornerRadius={0} fill={{ light: "#E8E8ED", dark: "#38383A" }} frame={{ maxWidth: "infinity", height: 0.5 }} />
   const card = (children: any) => <VStack spacing={0} padding={{ horizontal: 14 }} frame={{maxWidth:"infinity",alignment:"leading"}} background={<RoundedRectangle cornerRadius={16} fill={{ light: "#F2F2F7", dark: "#1C1C1E" }} stroke={{ shapeStyle: { light: "#ECECF1", dark: "#38383A" }, strokeStyle: { lineWidth: 0.5 } }} />}>{children}</VStack>
   const heading = (title: string) => <Text font={13} foregroundStyle="secondaryLabel" padding={{ leading: 14 }}>{title}</Text>
-  const field = (key: string, title: string, port = true) => <TextField key={key} title={title} value={String(dirty[key] ?? (cfg as any)?.[key] ?? "")} prompt="未提供" onChanged={(v: string) => change(key, v, false)} onBlur={() => commit(key)} onSubmit={() => commit(key)} submitLabel="done" disabled={busy || !provided(key)} keyboardType={port ? "numberPad" : "default"} autocorrectionDisabled textInputAutocapitalization="never" multilineTextAlignment="trailing" frame={{ width: port ? 100 : 142, height: 22 }} padding={{ horizontal: 10, vertical: 8 }} background={{ style: { light: "#E5E5EA", dark: "#2C2C2E" }, shape: { type: "rect", cornerRadius: 8 } }} />
+  const field = (key: string, title: string, port = true) => <TextField key={key} title={title} value={String(dirty[key] ?? (cfg as any)?.[key] ?? "")} prompt={busy ? "" : "未提供"} onChanged={(v: string) => change(key, v, false)} onBlur={() => commit(key)} onSubmit={() => commit(key)} submitLabel="done" disabled={busy || !provided(key)} keyboardType={port ? "numberPad" : "default"} autocorrectionDisabled textInputAutocapitalization="never" multilineTextAlignment="trailing" frame={{ width: port ? 100 : 142, height: 22 }} padding={{ horizontal: 10, vertical: 8 }} background={{ style: { light: "#E5E5EA", dark: "#2C2C2E" }, shape: { type: "rect", cornerRadius: 8 } }} />
   const toggle = (key: string, title: string) => provided(key)
     ? <Toggle title={title} value={key === "tun" ? (dirty.tun?.enable ?? cfg?.tun?.enable) : (dirty[key] ?? (cfg as any)?.[key])} onChanged={(v: boolean) => change(key, key === "tun" ? { enable: v } : v)} disabled={busy} frame={{height:31}} />
-    : <HStack frame={{minHeight:31,maxHeight:31,maxWidth:"infinity"}}><Text>{title}</Text><Spacer /><Text font={14} foregroundStyle="secondaryLabel">未提供</Text></HStack>
+    : <HStack frame={{minHeight:31,maxHeight:31,maxWidth:"infinity"}}><Text>{title}</Text><Spacer /><Text font={14} foregroundStyle="secondaryLabel">{busy ? "" : "未提供"}</Text></HStack>
   return <ScrollView navigationTitle="代理配置" navigationBarTitleDisplayMode="inline" background="systemBackground">
     <VStack alignment="leading" spacing={10} padding={{ horizontal: 20, vertical: 16 }} frame={{maxWidth:"infinity",alignment:"leading"}}>
       {heading("端口配置")}
@@ -289,7 +295,7 @@ export function KernelConfigPage({ c }: { c: Controller }) {
       {card(<HStack spacing={12} padding={{ vertical: 12 }}>{icon("shield", "systemPurple")}{toggle("tun", "TUN 模式")}</HStack>)}
       {heading("日志")}
       {card(<HStack spacing={12} padding={{ vertical: 12 }}>{icon("doc.text", "systemGray")}<Text>日志级别</Text><Spacer />
-        <Menu disabled={busy || !provided("log-level")} label={<HStack spacing={6}><Text foregroundStyle="secondaryLabel">{({silent:"静默",error:"错误",warning:"警告",info:"信息",debug:"调试"} as Record<string,string>)[dirty["log-level"] ?? cfg?.["log-level"] ?? ""] ?? "未提供"}</Text><Image systemName="chevron.up.chevron.down" font={12} foregroundStyle="secondaryLabel" /></HStack>}>
+        <Menu disabled={busy || !provided("log-level")} label={<HStack spacing={6}><Text foregroundStyle="secondaryLabel">{({silent:"静默",error:"错误",warning:"警告",info:"信息",debug:"调试"} as Record<string,string>)[dirty["log-level"] ?? cfg?.["log-level"] ?? ""] ?? (busy ? "" : "未提供")}</Text><Image systemName="chevron.up.chevron.down" font={12} foregroundStyle="secondaryLabel" /></HStack>}>
           {LOG_LEVELS.map(value => <Button key={value} title={({silent:"静默",error:"错误",warning:"警告",info:"信息",debug:"调试"} as Record<string,string>)[value]??value} action={() => change("log-level", value)} />)}
         </Menu>
       </HStack>)}

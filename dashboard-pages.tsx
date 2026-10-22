@@ -348,6 +348,7 @@ export function prefetchMoreVersions(active:Controller|null){
  try{const saved=Storage.get<any>("dashboard_versions_snapshot_v1");if(saved?.source===JSON.stringify(active))moreSnapshots.set(key,{...moreSnapshots.get(key),core:saved.core,app:saved.app})}catch{}
  const remember=(x:{core?:string;app?:string})=>{const patch:typeof x={};if(x.core&&x.core!=="未提供")patch.core=x.core;if(x.app&&x.app!=="未提供")patch.app=x.app;const value={...moreSnapshots.get(key),...patch};moreSnapshots.set(key,value);try{Storage.set("dashboard_versions_snapshot_v1",{source:JSON.stringify(active),core:value.core,app:value.app})}catch{}}
  const rememberRuntime=(runtime:NikkiRuntime)=>{moreSnapshots.set(key,{...moreSnapshots.get(key),runtime,running:runtime.running})}
+ prefetchNikkiManagement(active)
  void Promise.all([
    loadRuntimeVersions(active,remember).then(remember).catch(()=>{}),
    active.kind==="openwrt"&&active.plugin==="nikki"?loadNikkiRuntime(active).then(rememberRuntime).catch(()=>{}):Promise.resolve()
@@ -493,25 +494,37 @@ function useWork(c:Controller) {
 }
 type EditValue = {kind:"subscription"; value:NikkiSubscription|null}|{kind:"rule";value:NikkiRule|null}|{kind:"sort"}|{kind:"file";value:NikkiFile}
 type EditTarget = EditValue & {entry:number; base:NikkiManagement}
+// Memory-only, source-scoped last successful management read. It can hold subscription URLs,
+// so it is never persisted, logged or shared across sources; writes invalidate it before re-reading.
+const managementCache=new Map<string,NikkiManagement>()
+function rememberManagement(c:Controller,d:NikkiManagement){if(managementCache.size>10&&!managementCache.has(source(c)))managementCache.clear();managementCache.set(source(c),d)}
+export function prefetchNikkiManagement(c:Controller|null){
+  if(!c||c.kind!=="openwrt"||c.plugin!=="nikki")return;const key=source(c)
+  if(managementCache.has(key)||managementPrefetch.has(key))return;managementPrefetch.add(key)
+  void loadNikkiManagement(c).then(d=>{if(!managementCache.has(key))rememberManagement(c,d)}).catch(()=>{}).finally(()=>managementPrefetch.delete(key))
+}
+const managementPrefetch=new Set<string>()
 export function NikkiManagementPage({c,kind}:{c:Controller;kind:"profile"|"subscription"|"rule"}) {
-  const work=useWork(c),[data,setData]=useState<NikkiManagement|null>(null),[error,setError]=useState(""),[tick,setTick]=useState(0),[visible,setVisible]=useState(true),[edit,setEdit]=useState<EditTarget|null>(null),[navigation]=useState({entry:0})
+  const work=useWork(c),[data,setData]=useState<NikkiManagement|null>(()=>c.kind==="openwrt"&&c.plugin==="nikki"?managementCache.get(source(c))??null:null),[fresh,setFresh]=useState(false),[error,setError]=useState(""),[tick,setTick]=useState(0),[visible,setVisible]=useState(true),[edit,setEdit]=useState<EditTarget|null>(null),[navigation]=useState({entry:0})
   const supported=c.kind==="openwrt"&&c.plugin==="nikki",title={profile:"配置文件",subscription:"订阅管理",rule:"附加规则"}[kind]
   const refresh=()=>setTick(t=>t+1)
-  useEffect(()=>{if(!supported||work.changed||!visible)return;let alive=true;setError("");loadNikkiManagement(work.owner).then(d=>{if(alive)setData(d)}).catch(e=>{if(alive)setError(errorText(e))});return()=>{alive=false}},[source(c),kind,tick,visible])
-  const done=(saved=false,entry=navigation.entry)=>{if(entry===navigation.entry)setEdit(null);if(saved)refresh()}
+  // After a write the cached copy is stale: drop it and block actions until the re-read lands.
+  const refreshAfterWrite=()=>{managementCache.delete(source(c));setFresh(false);refresh()}
+  useEffect(()=>{if(!supported||work.changed||!visible)return;let alive=true;setError("");loadNikkiManagement(work.owner).then(d=>{if(alive){setData(d);setFresh(true);rememberManagement(work.owner,d)}}).catch(e=>{if(alive){setFresh(false);setError(errorText(e))}});return()=>{alive=false}},[source(c),kind,tick,visible])
+  const done=(saved=false,entry=navigation.entry)=>{if(entry===navigation.entry)setEdit(null);if(saved)refreshAfterWrite()}
   // Freeze both the object and its UCI snapshot at navigation entry. Native destinations
   // can be prebuilt/reused; identity must represent an opening, not only a component type.
-  function openEdit(value:EditValue) {if(!data||work.busy)return;const snapshot="value" in value&&value.value?{...value,value:{...value.value}}:value;setEdit({...snapshot,entry:++navigation.entry,base:data} as EditTarget)}
+  function openEdit(value:EditValue) {if(!data||!fresh||work.busy)return;const snapshot="value" in value&&value.value?{...value,value:{...value.value}}:value;setEdit({...snapshot,entry:++navigation.entry,base:data} as EditTarget)}
   const entryKey=edit?source(c)+":"+edit.entry:"closed"
   const content=edit ? edit.kind==="subscription"?<NikkiSubscriptionEditor key={entryKey} entryKey={entryKey} c={c} base={edit.base} value={edit.value} done={saved=>done(saved,edit.entry)}/>:edit.kind==="rule"?<NikkiRuleEditor key={entryKey} c={c} base={edit.base} value={edit.value} done={saved=>done(saved,edit.entry)}/>:edit.kind==="sort"?<NikkiRuleSort key={entryKey} c={c} base={edit.base} done={saved=>done(saved,edit.entry)}/>:<NikkiFileEditor key={entryKey} entryKey={entryKey} c={c} base={edit.base} file={edit.value} done={saved=>{if(saved)refresh()}}/> : <Text/>
-  async function removeSubscription(s:NikkiSubscription) {await work.run(()=>work.simpleConfirm("删除订阅",`确认要删除订阅「${s.name}」吗？`,"确认删除",async()=>{await deleteNikkiSubscription(work.owner,data!,s.id);if(work.current()){refresh();work.setNotice("订阅设置已删除；系统可能已自动重载")}}))}
-  async function update(s:NikkiSubscription) {await work.run(async()=>{await updateNikkiSubscription(work.owner,s.id,data!);if(work.current())refresh()})}
-  async function enable(f:NikkiFile) {if(data?.profile===f.key)return;await work.run(()=>work.commitConfirm(`启用「${f.name}」？将提交为 Nikki 选用配置，由系统触发重载；配置选择成功不代表内核已成功加载。`,async()=>{
+  async function removeSubscription(s:NikkiSubscription) {if(!fresh)return;await work.run(()=>work.simpleConfirm("删除订阅",`确认要删除订阅「${s.name}」吗？`,"确认删除",async()=>{await deleteNikkiSubscription(work.owner,data!,s.id);if(work.current()){refreshAfterWrite();work.setNotice("订阅设置已删除；系统可能已自动重载")}}))}
+  async function update(s:NikkiSubscription) {if(!fresh)return;await work.run(async()=>{await updateNikkiSubscription(work.owner,s.id,data!);if(work.current())refreshAfterWrite()})}
+  async function enable(f:NikkiFile) {if(!fresh||data?.profile===f.key)return;await work.run(()=>work.commitConfirm(`启用「${f.name}」？将提交为 Nikki 选用配置，由系统触发重载；配置选择成功不代表内核已成功加载。`,async()=>{
     await selectNikkiProfile(work.owner,data!,f.key)
-    if(work.current())refresh()
+    if(work.current())refreshAfterWrite()
     if(work.current())work.setNotice("配置选择已提交；系统可能已自动重载。请核实运行效果，未生效时可在服务管理单独重载")
   }))}
-  const toolbar=!supported||work.changed?undefined:kind==="rule"?{topBarTrailing:<Menu accessibilityLabel="操作" label={<Image systemName="ellipsis"/>}><Button title="排序列表" disabled={!data||work.busy||data.rules.length<2} action={()=>openEdit({kind:"sort"})}/><Button title={data?.appendRules?"禁用规则":"启用规则"} disabled={!data||work.busy} action={()=>work.run(()=>work.commitConfirm(`将${data!.appendRules?"禁用":"启用"} Nikki 附加规则总开关。`,async()=>{await setNikkiRulesEnabled(work.owner,data!,!data!.appendRules);if(work.current()){refresh();work.setNotice("规则总开关已提交；系统可能已自动重载")}}))}/><Button title="添加规则" disabled={!data||work.busy} action={()=>openEdit({kind:"rule",value:null})}/></Menu>}:kind==="subscription"?{topBarTrailing:<Button title="添加订阅" systemImage="plus" labelStyle="iconOnly" disabled={!data||work.busy} action={()=>openEdit({kind:"subscription",value:null})}/>}:{topBarTrailing:<Button accessibilityLabel="刷新" disabled={work.busy} action={refresh}><Image systemName="arrow.triangle.2.circlepath"/></Button>}
+  const toolbar=!supported||work.changed?undefined:kind==="rule"?{topBarTrailing:<Menu accessibilityLabel="操作" label={<Image systemName="ellipsis"/>}><Button title="排序列表" disabled={!data||!fresh||work.busy||data.rules.length<2} action={()=>openEdit({kind:"sort"})}/><Button title={data?.appendRules?"禁用规则":"启用规则"} disabled={!data||!fresh||work.busy} action={()=>work.run(()=>work.commitConfirm(`将${data!.appendRules?"禁用":"启用"} Nikki 附加规则总开关。`,async()=>{await setNikkiRulesEnabled(work.owner,data!,!data!.appendRules);if(work.current()){refreshAfterWrite();work.setNotice("规则总开关已提交；系统可能已自动重载")}}))}/><Button title="添加规则" disabled={!data||!fresh||work.busy} action={()=>openEdit({kind:"rule",value:null})}/></Menu>}:kind==="subscription"?{topBarTrailing:<Button title="添加订阅" systemImage="plus" labelStyle="iconOnly" disabled={!data||!fresh||work.busy} action={()=>openEdit({kind:"subscription",value:null})}/>}:{topBarTrailing:<Button accessibilityLabel="刷新" disabled={work.busy} action={refresh}><Image systemName="arrow.triangle.2.circlepath"/></Button>}
   return <ScrollView background="systemBackground" navigationTitle={title} navigationBarTitleDisplayMode="inline" toolbar={toolbar} onAppear={()=>{work.onAppear();setVisible(true)}} onDisappear={()=>{work.onDisappear();setVisible(false)}} navigationDestination={{isPresented:edit!==null&&!work.changed,onChanged:(v:boolean)=>{if(!v)done()},content}}>
     <VStack spacing={16} padding={16} frame={{maxWidth:"infinity"}}>
       {!supported?<Note>不可用：当前来源不是 OpenWrt 上的 Nikki，不会向其他插件发送管理请求。</Note>:work.changed?<Note error>来源已改变，请返回后重新进入；不会沿用上一来源的草稿。</Note>:<>

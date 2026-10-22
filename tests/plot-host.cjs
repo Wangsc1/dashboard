@@ -56,6 +56,19 @@ async function mount(){const node=render(plot.MountedCanvasPlot,props,true);awai
    await flush();const host=hosts.at(-1);assert.equal(host.handlers.plotDiagnostic,undefined);assert.ok(host.html.includes('diagnosticEnabled=false'));assert.ok(!host.html.includes('traceEnabled=true'));assert.ok(!text(out).includes('图诊断 '));unmount()
   }
  })
+ await test('详情sheet图表背景：dark用抬升卡片色#2c2c2e，主页保持#1c1c1e，light一致',async()=>{
+  const pv=plot.plotBackground
+  assert.equal(pv('dark',false),'#1c1c1e');assert.equal(pv('dark',true),'#2c2c2e');assert.equal(pv('light',false),'#f2f2f7');assert.equal(pv('light',true),'#f2f2f7')
+  const grid=(tree)=>nodes(tree,home.GridPlot)[0]
+  assert.equal(grid(home.CpuCard({history:[],running:false})).props.elevated,false)
+  assert.equal(grid(home.CpuCard({history:[],running:false,detail:true})).props.elevated,true)
+  assert.equal(home.SampledCpuPlot({samples:[1,2],running:false}).props.elevated,true)
+  for(const [theme,elevated,want] of [['dark',false,'#1c1c1e'],['dark',true,'#2c2c2e'],['light',true,'#f2f2f7']]){
+   mockColorScheme=theme;const node=render(plot.MountedCanvasPlot,{...props,elevated},true);await flush();const host=hosts.at(-1)
+   assert.ok(host.html.includes('"background":"'+want+'"'),theme+' '+elevated);host.handlers.plotReady();await flush();unmount()
+  }
+  mockColorScheme='light'
+ })
  await test('准备好前合并采样；桥接串行；最新值接续；running=false同步',async()=>{
   await mount();const host=hosts.at(-1);assert.ok(host.html.includes('requestAnimationFrame'));assert.equal(host.sent.length,0)
   render(plot.MountedCanvasPlot,{...props,samples:[10,20,30]});await flush();host.handlers.plotReady();await flush();assert.equal(host.sent.length,1);assert.ok(host.sent[0].includes('[10,20,30]'))

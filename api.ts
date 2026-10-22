@@ -1,7 +1,7 @@
 import { CpuSampler, CpuUsage, CpuMeta, parseCpuInfo, thermalCelsius } from "./openwrt-metrics"
 
 import { getPreferences, customHeaders, recordEvent, controllerHealth, feedback } from "./preferences"
-export const VERSION = "1.14"
+export const VERSION = "1.15"
 
 export type Kind = "clash" | "openwrt"
 export type Plugin = "openclash" | "nikki" | "mihomo"
@@ -614,7 +614,23 @@ export async function loadRules(c0: Controller): Promise<Rule[]> {
 }
 
 export interface ClashConfig { mode?: string; "log-level"?: string; port?: number; "socks-port"?: number; "mixed-port"?: number; "redir-port"?: number; "tproxy-port"?: number; "allow-lan"?: boolean; ipv6?: boolean; "bind-address"?: string; tun?: { enable?: boolean; [key:string]: any } }
-export async function loadConfig(c: Controller): Promise<ClashConfig> { const cfg=await http(await cc(c), "/configs");observeMode(c,cfg.mode);return cfg }
+// Memory-only, source-scoped copy of the non-sensitive fields shown on the kernel config page.
+// The raw /configs object (secret, authentication, ...) is never retained here.
+const KERNEL_CONFIG_KEYS = ["port", "socks-port", "mixed-port", "redir-port", "tproxy-port", "allow-lan", "ipv6", "bind-address", "log-level"] as const
+const kernelConfigSnapshots = new Map<string, ClashConfig>()
+function rememberKernelConfig(c: Controller, cfg: any) {
+  if (!cfg || typeof cfg !== "object") return
+  const snap: any = {}
+  for (const k of KERNEL_CONFIG_KEYS) if (cfg[k] !== undefined && cfg[k] !== null) snap[k] = cfg[k]
+  if (typeof cfg.tun?.enable === "boolean") snap.tun = { enable: cfg.tun.enable }
+  const key = JSON.stringify(c)
+  if (!Object.keys(snap).length) { kernelConfigSnapshots.delete(key); return }
+  if (kernelConfigSnapshots.size > 30 && !kernelConfigSnapshots.has(key)) kernelConfigSnapshots.clear()
+  kernelConfigSnapshots.set(key, snap)
+}
+export function cachedKernelConfig(c: Controller): ClashConfig | null { const x = kernelConfigSnapshots.get(JSON.stringify(c)); return x ? { ...x, ...(x.tun ? { tun: { ...x.tun } } : {}) } : null }
+export function forgetKernelConfig(c: Controller) { kernelConfigSnapshots.delete(JSON.stringify(c)) }
+export async function loadConfig(c: Controller): Promise<ClashConfig> { const cfg=await http(await cc(c), "/configs");observeMode(c,cfg.mode);rememberKernelConfig(c,cfg);return cfg }
 export function validateConfigPatch(patch: Partial<ClashConfig>): Partial<ClashConfig> {
   const out: any = {}
   for (const [k, v] of Object.entries(patch)) {
@@ -633,7 +649,7 @@ export function validateConfigPatch(patch: Partial<ClashConfig>): Partial<ClashC
 }
 export async function patchConfig(c: Controller, patch: Partial<ClashConfig>) {
   const body = validateConfigPatch(patch)
-  try { await http(await cc(c), "/configs", { method: "PATCH", body }); recordEvent("config", true);observeMode(c,body.mode) }
+  try { await http(await cc(c), "/configs", { method: "PATCH", body }); recordEvent("config", true);observeMode(c,body.mode);{ const known = cachedKernelConfig(c); if (known) rememberKernelConfig(c, { ...known, ...body, ...(body.tun ? { tun: { enable: body.tun.enable } } : {}) }) } }
   catch (e) { recordEvent("config", false); throw e }
 }
 export const LOG_LEVELS = ["silent", "error", "warning", "info", "debug"]

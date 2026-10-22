@@ -22,14 +22,14 @@ const SIZED=typeof SCREEN_W==="number"&&SCREEN_W>112&&SCREEN_W<=600
 export const PLOT_FULL_W:number|undefined=SIZED?SCREEN_W-64:undefined
 export const PLOT_HALF_W:number|undefined=SIZED?(SCREEN_W-48)/2-32:undefined
 export const PLOT_STROKE=1.5
-export function GridPlot(props:{samples:number[];tone:string;plotHeight?:number;area?:boolean;running?:boolean;percent?:boolean;plotWidth?:number}) {
+export function GridPlot(props:{samples:number[];tone:string;plotHeight?:number;area?:boolean;running?:boolean;percent?:boolean;plotWidth?:number;elevated?:boolean}) {
   return <InlineCanvasPlot {...props}/>
 }
 export function CpuBreakdown({cpu,running}:{cpu?:CpuUsage;running:boolean}) {
   return <HStack spacing={0} alignment="bottom"><HStack spacing={22}>{([['SYS',cpu?.system],['USER',cpu?.user],['STEAL',cpu?.steal]] as const).map(([title,value])=><VStack key={title} alignment="leading" spacing={3}><Text font={10} fontWeight="semibold" foregroundStyle="secondaryLabel" lineLimit={1}>{title}</Text><MetricNumber value={value} digits={1} pointSize={14} running={running}/></VStack>)}</HStack><Spacer/><HStack alignment="lastTextBaseline" spacing={2}><MetricNumber running={running} value={cpu?.usage} digits={1} pointSize={22} tone="#3485eb"/><Text font={11} foregroundStyle="#3485eb">%</Text></HStack></HStack>
 }
 export function CpuCard({w,history,running,onOpen,detail=false}:{w?:WrtInfo;history:number[];running:boolean;onOpen?:()=>void;detail?:boolean}) {
-  return <HomeCard onOpen={onOpen}><HStack><Text font={detail?15:16} fontWeight="semibold">{detail?w?.cpuModel||"CPU 型号未提供":"CPU"}</Text><Spacer/>{!detail?<Text font={11} foregroundStyle="#3485eb" padding={{horizontal:8,vertical:4}} background={<RoundedRectangle cornerRadius={8} fill={{light:"#d6e8ff",dark:"#24374d"}}/>}>{w?.temperature===undefined?"-- °C":`${w.temperature.toFixed(1)} °C`}</Text>:null}</HStack><GridPlot samples={history} tone="#3485eb" percent running={running} plotWidth={PLOT_FULL_W}/><CpuBreakdown cpu={w?.cpus?.find(c=>c.id==='cpu')} running={running&&!detail}/></HomeCard>
+  return <HomeCard onOpen={onOpen}><HStack><Text font={detail?15:16} fontWeight="semibold">{detail?w?.cpuModel||"CPU 型号未提供":"CPU"}</Text><Spacer/>{!detail?<Text font={11} foregroundStyle="#3485eb" padding={{horizontal:8,vertical:4}} background={<RoundedRectangle cornerRadius={8} fill={{light:"#d6e8ff",dark:"#24374d"}}/>}>{w?.temperature===undefined?"-- °C":`${w.temperature.toFixed(1)} °C`}</Text>:null}</HStack><GridPlot samples={history} tone="#3485eb" percent running={running} plotWidth={PLOT_FULL_W} elevated={detail}/><CpuBreakdown cpu={w?.cpus?.find(c=>c.id==='cpu')} running={running&&!detail}/></HomeCard>
 }
 export function TrafficCard({heading,rate,total,history,tone,running}:{heading:string;rate?:number;total?:number;history:number[];tone:string;running:boolean}) {
   const parts=rate===undefined?undefined:fmtSpeed(rate).split(' '),value=parts?Number(parts[0]):undefined,unit=parts?" "+parts.slice(1).join(' '):""
@@ -130,7 +130,7 @@ export function CoreRow({cpus,w,histories,running}:{cpus:CpuUsage[];w?:WrtInfo;h
 }
 // Per-core plots share GridPlot and the single scheduler; no per-core timer.
 export function SampledCpuPlot({samples,running=false}:{samples:number[];running?:boolean}) {
-  return <GridPlot samples={samples} tone="#2dbf82" percent plotHeight={76} running={running} plotWidth={PLOT_HALF_W}/>
+  return <GridPlot samples={samples} tone="#2dbf82" percent plotHeight={76} running={running} plotWidth={PLOT_HALF_W} elevated/>
 }
 export function DetailCpuSummary({w,history,running}:{w?:WrtInfo;history:number[];running:boolean}) {
   return <VStack key="summary"><CpuCard w={w} history={history} running={running} detail/></VStack>
