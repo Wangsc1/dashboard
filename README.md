@@ -26,6 +26,11 @@
 
 原生 Tab API 面向 iOS 18+；外观与手势由系统及 Scripting 版本决定。仓库配置了 `remoteResource`，实际导入和更新以 Scripting 的处理结果为准。配置编辑器的 CodeMirror/Lezer/YAML 静态 bundle 已嵌入现有 `dashboard-pages.tsx`；在线更新仍只需原有运行文件，不需 CDN、额外资源下载或在手机安装 npm 包。`editor/` 为构建源码、锁定依赖及许可证，非运行依赖。
 
+## 1.5.191 更新
+
+- 全局配置移除“代理组”全部设置项与“切换代理设置”分组；代理页右上现有菜单增加“显示图标”和“自动断开旧连接”。
+- 保留原偏好状态和默认值；开关操作本身不发起断开连接请求，仅在之后成功切换代理时按原设置执行。其余菜单操作不变。
+
 ## 1.5.190 更新
 
 - 修复从后台、其他标签及设置页返回主页时 CPU 数值和曲线重新开始：同来源恢复首个基线帧保留上次有效数值与历史，不补点，下一次真实差分继续追加。
@@ -284,6 +289,7 @@ node tests/nikki-editors.cjs
 node tests/nikki-file-lifecycle.cjs
 node tests/nikki-editor-browser.cjs
 node tests/proxy-mode.cjs
+node tests/proxy-settings-menu.cjs
 node tests/chart-download.cjs
 node tests/home-dashboard.cjs
 node tests/cpuinfo-complete.cjs
