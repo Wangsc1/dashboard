@@ -26,6 +26,10 @@
 
 原生 Tab API 面向 iOS 18+；外观与手势由系统及 Scripting 版本决定。仓库配置了 `remoteResource`，实际导入和更新以 Scripting 的处理结果为准。配置编辑器的 CodeMirror/Lezer/YAML 静态 bundle 已嵌入现有 `dashboard-pages.tsx`；在线更新仍只需原有运行文件，不需 CDN、额外资源下载或在手机安装 npm 包。`editor/` 为构建源码、锁定依赖及许可证，非运行依赖。
 
+## 1.5.187 更新
+
+- 文件编辑器正文及行号字号从 16px 缩小为 14px，行高从 24px 收紧为 21px；保留工具栏、搜索框及原生导航/保存行为。
+
 ## 1.5.186 更新
 
 - 配置文件编辑改走现有原生导航栈，移除全屏模态及其向下收起路径；使用官方 `tabBarVisibility="hidden"` 隐藏底栏，保留全高正文、原生返回和边缘返回手势。
