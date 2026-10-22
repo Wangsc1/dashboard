@@ -27,7 +27,7 @@ export function usePreferences(keys?: (keyof Preferences)[], enabled = true, tra
   return p
 }
 function update(patch: Partial<Preferences>) { if (typeof patch.customIcons === "boolean") traceIconPreference("change", patch.customIcons); preferenceTrace("changed"); try { savePreferences(patch); feedback() } catch { void Dialog.alert({ message: "本地设置保存失败，请重试" }) } }
-export { update as updatePreference }
+export { update as updatePreference, Choice }
 function Choice({ title, value, values, onChanged, disabled = false }: { title: string; value: string; values: string[][]; onChanged: (v: string) => void; disabled?: boolean }) {
   return <Picker title={title} pickerStyle="menu" value={value} onChanged={onChanged} disabled={disabled}>{values.map(([v, l]) => <Text key={v} tag={v}>{l}</Text>)}</Picker>
 }
@@ -324,8 +324,6 @@ export function GlobalConfigPage({ active }: { active: Controller | null }) {
     const n = clearImageCache(); await Dialog.alert({ message: `已清除 ${n} 项脚本图片缓存；已显示图片在重新进入代理页后重载。` })
   }
   return <Form background="systemBackground" scrollContentBackground="hidden" navigationTitle="全局配置" navigationBarTitleDisplayMode="inline">
-    <Section header={<Text>主题</Text>}><Choice title="外观模式" value={p.theme} values={[["system", "跟随系统"], ["light", "浅色"], ["dark", "深色"]]} onChanged={v => update({ theme: v as any })} /></Section>
-    <Section header={<Text>启动设置</Text>}><Choice title="默认打开界面" value={p.defaultPage} values={[["overview", "主页"], ["proxies", "代理"], ["rules", "规则"], ["connections", "连接"], ["more", "更多"]]} onChanged={v => update({ defaultPage: v as any })} /></Section>
     <Section header={<Text>缓存管理</Text>}><Button title="清除图片缓存" action={clear} /></Section>
     <Section header={<Text>控制器管理</Text>}>{toggle("foldOffline", "自动折叠离线控制器")}</Section>
     <Section header={<Text>交互体验</Text>}>{toggle("haptics", "触感反馈")}</Section>

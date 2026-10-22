@@ -135,7 +135,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     pref.savePreferences({ customIcons: false }); assert.equal(render(Probe, {}).customIcons, false)
     unmount(); pref.savePreferences({ customIcons: true })
   })
-  await test('全局设置同一页面连续改变开关、主题和滑块，保存及当前页状态一致', async () => {
+  await test('全局配置开关/滑块及更多页主题连续修改，保存及当前页状态一致', async () => {
     const props = { active: null }; let tree = render(ui.GlobalConfigPage, props, true); await flush()
     for (const value of [false, true, false, true, false]) {
       nodes(tree, 'Toggle').find(n => n.props.key === 'haptics').props.onChanged(value)
@@ -143,12 +143,15 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'Toggle').find(n => n.props.key === 'haptics').props.value, value)
       assert.equal(pref.getPreferences().haptics, value)
     }
+    const moreProps = { active: null, onChanged() {} }
+    tree = render(pages.MorePage, moreProps, true); await flush()
     for (const theme of ['dark','light','system','dark']) {
       nodes(tree, ui.Choice).find(n => n.props.title === '外观模式').props.onChanged(theme)
-      tree = render(ui.GlobalConfigPage, props); await flush()
+      tree = render(pages.MorePage, moreProps); await flush()
       assert.equal(nodes(tree, ui.Choice).find(n => n.props.title === '外观模式').props.value, theme)
       assert.equal(pref.getPreferences().theme, theme)
     }
+    tree = render(ui.GlobalConfigPage, props, true); await flush()
     for (const timeout of [2, 8, 15, 3]) {
       nodes(tree, ui.Range).find(n => n.props.title === '连接超时时间').props.onChanged(timeout)
       tree = render(ui.GlobalConfigPage, props); await flush()
@@ -228,10 +231,10 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     assert.ok(rendered.every(t => t.props.listRowSeparator !== 'hidden'))
     unmount()
   })
-  await test('全局配置分组顺序：启动紧随主题，阈值紧邻网络请求之前', () => {
+  await test('全局配置移除主题/启动设置后，剩余分组顺序保持', () => {
     const tree = render(ui.GlobalConfigPage, { active: null }, true)
     const headers = nodes(tree, 'Section').map(n => text(n.props.header))
-    assert.equal(headers.join('|'), '主题|启动设置|缓存管理|控制器管理|交互体验|延迟阈值设置|网络请求|连接超时|测速设置|运行日志')
+    assert.equal(headers.join('|'), '缓存管理|控制器管理|交互体验|延迟阈值设置|网络请求|连接超时|测速设置|运行日志')
     unmount()
   })
   await test('删除保存测速链接按钮；输入结束自动保存、拒绝无效值并显示失败', async () => {
@@ -677,7 +680,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) { const lazy = ['proxies','rules','connections'].includes(ids[i]) && ids[i] !== id; assert.equal(nodes(tree, types[i]).length, lazy ? 0 : 1); if (!lazy) assert.equal(nodes(tree, types[i])[0].props.selected, ids[i] === id) }
     }
-    assert.equal(api.VERSION, '1.5.191'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.5.192'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('独立导航栈保留业务owner和身份，只有选中页提供可见工具栏', () => {
     pref.savePreferences({ defaultPage: 'overview' })
@@ -1067,7 +1070,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       const tree=render(pages.MorePage,{active,selected:false,onChanged(){}},true),boundaries=[]
       // Deliberately do NOT call unwrap: it discards custom-component boundary props.
       function visit(node){if(!node||typeof node!=='object')return;if(typeof node.type==='function'&&node.type.name==='MorePanel')boundaries.push(node);for(const child of node.props?.children??[])visit(child)}
-      visit(tree);assert.equal(boundaries.length,6);assert.ok(boundaries.every(n=>!Object.prototype.hasOwnProperty.call(n.props,'padding')));assert.deepEqual(boundaries.map(n=>n.props.contentInset),[undefined,undefined,12,12,undefined,undefined])
+      visit(tree);assert.equal(boundaries.length,8);assert.ok(boundaries.every(n=>!Object.prototype.hasOwnProperty.call(n.props,'padding')));assert.deepEqual(boundaries.map(n=>n.props.contentInset),[16,16,undefined,undefined,12,12,undefined,undefined])
       for(const boundary of boundaries.filter(n=>n.props.contentInset===12)){const native=boundary.type(boundary.props);assert.equal(native.type,'VStack');assert.equal(native.props.alignment,'leading');assert.equal(native.props.padding,undefined);const steps=native.props.modifiers.steps;assert.deepEqual(steps.map(s=>s[0]),['padding','frame','background']);assert.equal(steps[0][1],12);assert.deepEqual(clone(steps[1][1]),{minWidth:0,maxWidth:'infinity',alignment:'leading'});assert.equal(steps[2][1].props.cornerRadius,14);assert.equal(steps[2][1].props.fill,'secondarySystemBackground')}
       unmount()
     }
@@ -1083,8 +1086,9 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     const tiles=nodes(tree,'VStack').filter(n=>n.props.modifiers?.steps?.some(s=>s[0]==='background'&&s[1]?.props?.cornerRadius===9))
     assert.equal(tiles.length,3);assert.ok(tiles.every(n=>n.props.modifiers.steps[0][1].maxWidth==='infinity'))
     // Inspect explicit order, not just identical maxWidth props (which missed the 12pt inset).
-    const panels=nodes(tree,'VStack').filter(n=>[n.props.background,...(n.props.modifiers?.steps??[]).filter(s=>s[0]==='background').map(s=>s[1])].some(bg=>bg?.props?.cornerRadius===14&&bg.props.fill==='secondarySystemBackground'))
-    assert.equal(panels.length,6)
+    const allPanels=nodes(tree,'VStack').filter(n=>[n.props.background,...(n.props.modifiers?.steps??[]).filter(s=>s[0]==='background').map(s=>s[1])].some(bg=>bg?.props?.cornerRadius===14&&bg.props.fill==='secondarySystemBackground'))
+    assert.equal(allPanels.length,8)
+    const panels=allPanels.slice(2);assert.equal(panels.length,6)
     for(const panel of [panels[0],panels[1],panels[4],panels[5]]){assert.equal(panel.props.modifiers,undefined);assert.equal(panel.props.padding,undefined);assert.deepEqual(clone(panel.props.frame),{maxWidth:'infinity',alignment:'leading'})}
     // Scoped proposal/response derivation for ONLY these three modifiers; not a native renderer.
     // Pure model assumption: calls wrap inside -> outside. No host/component-boundary semantics are proved.
@@ -1299,7 +1303,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     assert.ok(!nodes(tree,'Button').some(b=>b.props.title==='打开Nikki官方管理页面'));assert.equal(openedURLs.length,0);context.confirmResult=true
   })
   await test('默认打开界面与底部五个入口名称顺序一致，更多可保存并启动', () => {
-    const src = fs.readFileSync(path.join(root, 'settings-ui.tsx'), 'utf8')
+    const src = fs.readFileSync(path.join(root, 'dashboard-pages.tsx'), 'utf8')
     assert.ok(src.includes('[["overview", "主页"], ["proxies", "代理"], ["rules", "规则"], ["connections", "连接"], ["more", "更多"]]'))
     for (const [stored, tab] of [['overview','home'],['proxies','proxies'],['rules','rules'],['connections','connections'],['more','more']]) {
       pref.savePreferences({ defaultPage: stored }); assert.equal(pref.getPreferences().defaultPage, stored)
@@ -1338,11 +1342,11 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     const src = fs.readFileSync(path.join(root, 'settings-ui.tsx'), 'utf8'), body = src.slice(src.indexOf('export function GlobalConfigPage'), src.indexOf('function CloudSettingsPage'))
     assert.ok(!body.includes('iCloud 同步')); assert.ok(!body.includes('代理内核')); assert.ok(!body.includes('CloudSettingsPage')); assert.ok(!body.includes('KernelConfigPage')); assert.ok(src.includes('export function KernelConfigPage'))
   })
-  await test('外观选项移入全局配置，概览选项不移动', () => {
+  await test('全局配置移除外观入口，保留阈值与缓存管理', () => {
     const src = fs.readFileSync(path.join(root, 'settings-ui.tsx'), 'utf8'), body = src.slice(src.indexOf('export function GlobalConfigPage'), src.indexOf('function CloudSettingsPage'))
     assert.ok(!body.includes('（本地替代）')); assert.ok(!body.includes('（长按组标题）')); assert.ok(!body.includes('（淡出替代）'))
-    for (const k of ['theme','ThresholdRange','clearImageCache']) assert.ok(body.includes(k))
-    for (const k of ['showHidden','customIcons']) assert.ok(!body.includes(k))
+    for (const k of ['ThresholdRange','clearImageCache']) assert.ok(body.includes(k))
+    for (const k of ['theme','defaultPage','showHidden','customIcons']) assert.ok(!body.includes(k))
   })
   await test('设置子页打开时暂停主页偏好刷新，返回补齐；外观去掉编辑组图标', async () => {
     pref.savePreferences({ showWrt: true })
@@ -1360,7 +1364,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     let tree = render(ui.GlobalConfigPage, { active: null }, true)
     assert.ok(!text(tree).includes('概览页面'))
     for (const key of ['showWrt','droplets','connectionBackground','ripple']) assert.ok(!nodes(tree, 'Toggle').some(n => n.props.key === key))
-    for (const title of ['外观模式']) assert.ok(nodes(tree, ui.Choice).some(n => n.props.title === title))
+    for (const title of ['外观模式','默认打开界面']) assert.ok(!nodes(tree, ui.Choice).some(n => n.props.title === title))
     assert.ok(!nodes(tree, 'Toggle').some(n => n.props.key === 'customIcons')); assert.equal(pref.getPreferences().customIcons, true)
     assert.ok(button(tree, '清除图片缓存'))
     assert.equal(pref.getPreferences().theme, 'dark')
@@ -1374,7 +1378,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     for (const key of ['collapseGesture','showGlobal']) assert.ok(!nodes(tree, 'Toggle').some(n => n.props.key === key))
     for (const key of ['showHidden','customIcons','disconnectOnSwitch']) assert.ok(!nodes(tree, 'Toggle').some(n => n.props.key === key))
     for (const key of ['nestedDelay','haptics']) assert.ok(nodes(tree, 'Toggle').some(n => n.props.key === key))
-    assert.ok(nodes(tree, ui.Choice).some(n => n.props.title === '外观模式')); assert.ok(button(tree, '清除图片缓存'))
+    assert.ok(!nodes(tree, ui.Choice).some(n => n.props.title === '外观模式')); assert.ok(button(tree, '清除图片缓存'))
     unmount()
   })
   await test('关闭自定义图标隐藏默认、映射及网络图标，迟到下载不恢复图标', async () => {
@@ -1709,7 +1713,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       const diagnostic = logs.filter(x => x.startsWith('[preferences-icon]'))
       for (const stage of ['change','accepted','proxies-render','group-render']) assert.ok(diagnostic.some(x => x.includes('stage=' + stage) && x.includes('enabled=false')))
       assert.ok(diagnostic.every(x => !x.includes('private.invalid') && !x.includes('private-group-name') && !x.includes('secret-')))
-      assert.ok(diagnostic.every(x => x.includes('build=1.5.191') && /instance=[a-z0-9]+/.test(x)))
+      assert.ok(diagnostic.every(x => x.includes('build=1.5.192') && /instance=[a-z0-9]+/.test(x)))
       assert.equal(new Set(diagnostic.map(x => x.match(/instance=([^ ]+)/)[1])).size, 1)
     } finally { context.console = originalConsole; unmount(); pref.savePreferences({ customIcons: true, testURL: 'https://www.gstatic.com/generate_204' }) }
   })
