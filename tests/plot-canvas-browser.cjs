@@ -24,6 +24,30 @@ const {chromium,webkit}=require(process.env.PLAYWRIGHT_PATH||'/tmp/neko-editor-b
    assert.equal(await send(2,[999]),false,'stale update rejected');assert.deepEqual((await page.evaluate(()=>window.plotCanvas.inspect())).history,[10,20,80,40])
    await send(4,[0,10,20,30]);await page.waitForTimeout(100);await send(5,[0,10,20,30],false)
    const paused=await page.evaluate(()=>window.plotCanvas.inspect());await page.waitForTimeout(200);assert.equal((await page.evaluate(()=>window.plotCanvas.inspect())).stats.frames,paused.stats.frames)
+   // Return from details: latest history must be painted in full immediately,
+   // for both a growing history and a full window with many replaced samples.
+   let sequence=6
+   for(const length of [12,60]){
+    await send(sequence++,Array(length).fill(10),false)
+    const latest=Array.from({length},(_,i)=>20+i)
+    await send(sequence++,latest,true)
+    const resumed=await page.evaluate(()=>window.plotCanvas.inspect())
+    assert.deepEqual(resumed.shown,latest.map((y,i)=>({x:(60-length+i)/59,y})))
+    assert.equal(resumed.stats.liveLoops,0,'resume never schedules catch-up frames')
+    await page.waitForTimeout(150)
+    assert.equal((await page.evaluate(()=>window.plotCanvas.inspect())).stats.frames,resumed.stats.frames)
+    const next=[...latest,95].slice(-60)
+    await send(sequence++,next,true);await page.waitForTimeout(250)
+    const live=await page.evaluate(()=>window.plotCanvas.inspect())
+    assert.ok(live.stats.frames>resumed.stats.frames+3,'next live sample still animates')
+    assert.ok(live.shown.at(-1).y>latest.at(-1)&&live.shown.at(-1).y<95)
+    await send(sequence++,next,false)
+   }
+   // Explicit pause uses the same resume contract (e.g. document visibility).
+   await page.evaluate(()=>window.plotCanvas.pause())
+   await send(sequence++,[5,60],true)
+   const explicitResume=await page.evaluate(()=>window.plotCanvas.inspect())
+   assert.equal(explicitResume.shown.at(-1).y,60);assert.equal(explicitResume.stats.liveLoops,0)
    // Actual canvas pixels exist, not merely a recorded drawing call.
    const pixels=await page.evaluate(()=>{const c=document.querySelector('canvas'),d=c.getContext('2d').getImageData(0,0,c.width,c.height).data;let n=0;for(let i=3;i<d.length;i+=4)if(d[i])n++;return n});assert.ok(pixels>0)
    // 32 isolated chart documents use the exact same runtime. Native lazy appearance

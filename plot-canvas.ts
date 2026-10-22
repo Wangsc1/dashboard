@@ -24,9 +24,10 @@ function stop(){if(raf)cancelAnimationFrame(raf);raf=0;stats.liveLoops=0}
 function frame(at){raf=0;const p=Math.max(0,Math.min(1,(at-start)/duration));shown=from.map((a,i)=>({x:mix(a.x,to[i].x,p),y:mix(a.y,to[i].y,p)}));scale=mix(scaleFrom,scaleTo,p);paint();if(p<1&&active&&!document.hidden){raf=requestAnimationFrame(frame);stats.liveLoops=1}else stats.liveLoops=0}
 window.plotCanvas={
  update(message){if(!message||message.seq<=seq)return false;seq=message.seq;stats.updates++;config=message;document.body.style.background=message.background||'#f2f2f7';
- const values=(message.samples||[]).filter(Number.isFinite).slice(-60),target=canonical(values),oldHistory=history;
+ const values=(message.samples||[]).filter(Number.isFinite).slice(-60),target=canonical(values),oldHistory=history,wasActive=active;
  stop();active=!!message.running;scaleTo=message.percent?100:Math.max(1024,...values);
- if(!active||!shown.length||values.length<2||values.length<oldHistory.length){history=values;shown=target;scale=scaleTo;paint();return true}
+ // Resuming catches up immediately; only subsequent live samples animate.
+ if(!active||!wasActive||!shown.length||values.length<2||values.length<oldHistory.length){history=values;shown=target;scale=scaleTo;paint();return true}
  // Use the last actually painted geometry on interrupted samples. Never jump to an unfinished target.
  let origin=shown;
  if(origin.length>60&&origin[0].x<0)origin=origin.slice(1);
