@@ -17,6 +17,14 @@ function unsel(tree){const p=picker(tree);assert.equal(p.props.value,'__none__')
 function proxyCacheMode(c){return pages.proxyModeCacheForTest?.(c)}
 function patches(){return calls.filter(c=>c.init.method==='PATCH')}
 ;(async()=>{
+  await test('启动预取代理模式，首次显示即有已读取选中值；旧模式快照也能首帧恢复',async()=>{fresh();
+    responder=url=>({body:url.endsWith('/configs')?{mode:'direct'}:url.includes('/providers/')?{providers:{}}:{proxies:{}}})
+    pages.prefetchProxies(a);await settle()
+    const o=owner(pages.ProxyModeControl);let tree=o.render(props(a));assert.equal(picker(tree).props.value,'direct');assert.equal(picker(tree).props.disabled,false);o.dispose()
+    fresh();store.set('dashboard_mode_snapshot_v1',{source:JSON.stringify(a),mode:'global'})
+    const cached=owner(pages.ProxyModeControl);tree=cached.render(props(a));assert.equal(picker(tree).props.value,'global');cached.dispose()
+    const other=owner(pages.ProxyModeControl);unsel(other.render(props(b)));other.dispose()
+  })
   await test('headings/order match providers; menu removes only Global visibility and batch update; provider refresh and preferences remain',async()=>{fresh();
     calls.length=0;pref.savePreferences({showGlobal:false});const saved=pref.getPreferences().showGlobal
     responder=url=>({body:url.includes('/providers/')?{providers:{remote:{vehicleType:'http',proxies:['A']}}}:url.endsWith('/proxies')?{proxies:{PROXY:{type:'Selector',all:['A'],now:'A'},GLOBAL:{type:'Selector',all:['A'],now:'A'},A:{type:'Shadowsocks'}}}:{mode:'rule'}})

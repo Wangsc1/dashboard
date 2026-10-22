@@ -1,7 +1,7 @@
 import { HOME_BG, HomeDashboard, CpuDetails, LiveCpuDetails, CpuDetailFrame } from "./home-ui"
 import { newHistory, appendHistory } from "./openwrt-metrics"
 import { rootToolbar } from "./root-toolbar"
-import { prefetchProxies, prefetchRules, prefetchConnections, ProxiesPage, ConnectionsPage, RulesPage, GroupSection, MorePage as DashboardMorePage } from "./dashboard-pages"
+import { prefetchMoreVersions, prefetchProxies, prefetchRules, prefetchConnections, ProxiesPage, ConnectionsPage, RulesPage, GroupSection, MorePage as DashboardMorePage } from "./dashboard-pages"
 import {
   AppEvents, Animation, Transition, Button, ForEach, Form, HStack, Label, Navigation, NavigationLink, NavigationStack, Picker, Script, Section, SecureField, Spacer,
   Image, Menu, RoundedRectangle, Circle, ScrollView, SVG, Text, ZStack, modifiers, TextField, Toggle, VStack, TabView, Tab, useObservable, useEffect, useState, useMemo,
@@ -166,10 +166,18 @@ function useForeground() {
 
 // First home sample is requested at launch, before any tab exists, so a non-launch home tab can show data on its first frame.
 const overviewPrime = new Map<string, Overview>()
+const overviewPrimeListeners = new Set<(source:string,o:Overview)=>void>()
+const overviewPrimePending = new Map<string,Promise<void>>()
 function primeOverview(active: Controller | null) {
   if (!active || active.kind !== "openwrt") return
   const source = overviewSource(active)
-  void loadOverview(active).then(o => { if (overviewSource(active) === source) overviewPrime.set(source, o) }).catch(() => {})
+  if(overviewPrimePending.has(source))return
+  const pending=loadOverview(active).then(o=>{
+    if(overviewSource(active)!==source)return
+    overviewPrime.set(source,o)
+    for(const fn of overviewPrimeListeners)fn(source,o)
+  }).catch(()=>{}).finally(()=>{overviewPrimePending.delete(source)})
+  overviewPrimePending.set(source,pending)
 }
 function OverviewPage({ active, version, onSwitch, onClose, selected = true }: { active: Controller | null; version: number; onSwitch: () => void; onClose?: () => void; selected?: boolean }) {
   const prefs = usePreferences(["connectionBackground"])
@@ -189,11 +197,18 @@ function OverviewPage({ active, version, onSwitch, onClose, selected = true }: {
   const priming = foreground && !selected && !ov
   const live = showCharts || priming
   useEffect(() => { setHistories(newHistory()); setOv(overviewPrime.get(source) ?? null); setSampleSource(source); setCpuOpen(false) }, [source])
+  useEffect(()=>{
+    const receive=(key:string,o:Overview)=>{if(key===source){setOv(o);setSampleSource(key);setErr("")}}
+    overviewPrimeListeners.add(receive)
+    const cached=overviewPrime.get(source);if(cached)receive(source,cached)
+    return()=>{overviewPrimeListeners.delete(receive)}
+  },[source])
   useEffect(()=>{if(selected)setVisible(true);else setCpuOpen(false)},[selected])
   useEffect(() => {
     if (!active || !live) return
     if (active.kind !== "openwrt") { setErr("主页仅支持 OpenWrt 路由器数据，请在设置添加 OpenWrt"); return }
-    resetOverviewSampling(active)
+    // Do not invalidate the launch request that loadOverview deduplicates with this reader.
+    if(!overviewPrimePending.has(source))resetOverviewSampling(active)
     // Rebase after a pause: a delta spanning the hidden interval is not a live
     // sample. Keep the last same-source CPU display until the next valid delta.
     const previousCpu = sampleSource === source ? ov?.wrt : undefined
@@ -704,7 +719,7 @@ function Root() {
   }, [selection])
   const tab = selection.value
   const active = getActive(), bump = () => { setVersion(v => v + 1) }
-  useEffect(() => { prefetchProxies(active); prefetchRules(active); prefetchConnections(active) }, [active?.id, version])
+  useEffect(() => { prefetchProxies(active); prefetchRules(active); prefetchConnections(active); prefetchMoreVersions(active) }, [active?.id, version])
 
   return <TabView selection={selection} symbolVariant="none" font={14} foregroundStyle={MAIN_FG}>
     <Tab key="home" title="主页" systemImage="apple.homekit" value="home">
@@ -749,6 +764,7 @@ async function run() {
   prefetchRules(getActive())
   prefetchConnections(getActive())
   primeOverview(getActive())
+  prefetchMoreVersions(getActive())
   await Navigation.present({ element: <AppearanceRoot />, modalPresentationStyle: "fullScreen" })
   Script.exit()
 }

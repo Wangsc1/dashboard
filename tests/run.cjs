@@ -737,7 +737,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) { const lazy = ['proxies','rules','connections'].includes(ids[i]) && ids[i] !== id; assert.equal(nodes(tree, types[i]).length, lazy ? 0 : 1); if (!lazy) assert.equal(nodes(tree, types[i])[0].props.selected, ids[i] === id) }
     }
-    assert.equal(api.VERSION, '1.5.209'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.5.210'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('独立导航栈保留业务owner和身份，只有选中页提供可见工具栏', () => {
     pref.savePreferences({ defaultPage: 'overview' })
@@ -913,6 +913,29 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     const primed = calls.length; render(app.OverviewPage, props); await flush(); assert.equal(calls.length, primed)
     tree = render(app.OverviewPage, { ...props, selected: true }); await flush(); tree = render(app.OverviewPage, { ...props, selected: true }); await flush()
     assert.equal(polling().length, 1, 'selected home polls')
+    unmount()
+  })
+  await test('主页预取在组件挂载后才完成：请求不被采样重置作废，未选中主页立即接收结果', async () => {
+    const base=api.listControllers().find(x=>x.kind==='openwrt'),router={...base,id:'delayed-home-prime',url:'http://delayed-home.invalid'}
+    let release;const wait=new Promise(r=>release=r)
+    responder=(_url,init)=>{const body=JSON.parse(init.body);return {wait,body:{id:body.id,result:[0,body.params?.[1]==='session'?{ubus_rpc_session:'delayed-prime'}:{uptime:42,load:[0,0,0],memory:{total:100,free:50},interface:[],data:'2'}]}}}
+    const props={active:router,version:0,onSwitch(){},selected:false}
+    app.primeOverview(router)
+    render(app.OverviewPage,props,true);await flush()
+    release();for(let i=0;i<8;i++)await flush()
+    let tree=render(app.OverviewPage,props);await flush()
+    assert.ok(nodes(tree,home.HomeDashboard)[0].props.overview,'late prime must notify the mounted, unselected home')
+    assert.ok(!text(tree).includes('来源或采样代次已改变'))
+    unmount()
+  })
+  await test('更多版本预取在页面挂载前完成，首帧显示版本，启动入口包含预取',async()=>{
+    const router={id:'versions-prime',name:'versions',kind:'clash',url:'http://versions-prime.invalid'}
+    responder=()=>({body:{version:'prefetched-core-v1'}})
+    pages.prefetchMoreVersions(router);for(let i=0;i<5;i++)await flush()
+    const tree=render(pages.MorePage,{active:router,onChanged(){},selected:false},true)
+    assert.ok(text(tree).includes('prefetched-core-v1'))
+    const src=fs.readFileSync(path.join(root,'index.tsx'),'utf8'),run=src.slice(src.indexOf('async function run()'))
+    assert.ok(run.indexOf('prefetchMoreVersions(getActive())')<run.indexOf('Navigation.present'))
     unmount()
   })
   await test('启动即预取主页数据：未渲染任何主页组件时已发请求，主页首帧直接有数据', async () => {
@@ -1931,7 +1954,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       const diagnostic = logs.filter(x => x.startsWith('[preferences-icon]'))
       for (const stage of ['change','accepted','proxies-render','group-render']) assert.ok(diagnostic.some(x => x.includes('stage=' + stage) && x.includes('enabled=false')))
       assert.ok(diagnostic.every(x => !x.includes('private.invalid') && !x.includes('private-group-name') && !x.includes('secret-')))
-      assert.ok(diagnostic.every(x => x.includes('build=1.5.209') && /instance=[a-z0-9]+/.test(x)))
+      assert.ok(diagnostic.every(x => x.includes('build=1.5.210') && /instance=[a-z0-9]+/.test(x)))
       assert.equal(new Set(diagnostic.map(x => x.match(/instance=([^ ]+)/)[1])).size, 1)
     } finally { context.console = originalConsole; unmount(); pref.savePreferences({ customIcons: true, testURL: 'https://www.gstatic.com/generate_204' }) }
   })

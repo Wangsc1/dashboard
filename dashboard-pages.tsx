@@ -84,12 +84,22 @@ const PROXY_MODE_OPTIONS = [["rule","规则模式"],["direct","直连模式"],["
 const PROXY_MODE_NONE="__none__"
 // Memory-only last confirmed core mode per source; never persisted or shared across sources.
 const proxyModeCache=new Map<string,string>()
+function cachedProxyMode(c:Controller){
+ const key=sourceKey(c),known=proxyModeCache.get(key);if(known)return known
+ try{const x=Storage.get<any>("dashboard_mode_snapshot_v1");if(x?.source===JSON.stringify(c)&&PROXY_MODE_OPTIONS.some(([v])=>v===x.mode)){proxyModeCache.set(key,x.mode);return x.mode}}catch{}
+ return null
+}
+function rememberProxyMode(c:Controller,mode:string){proxyModeCache.set(sourceKey(c),mode);try{Storage.set("dashboard_mode_snapshot_v1",{source:JSON.stringify(c),mode})}catch{}}
+function forgetProxyMode(c:Controller){proxyModeCache.delete(sourceKey(c));try{const x=Storage.get<any>("dashboard_mode_snapshot_v1");if(x?.source===JSON.stringify(c))Storage.set("dashboard_mode_snapshot_v1",null)}catch{}}
+const modePrefetch=new Set<string>()
+function prefetchProxyMode(c:Controller){const key=sourceKey(c);cachedProxyMode(c);if(modePrefetch.has(key))return;modePrefetch.add(key);void loadConfig(c).then(cfg=>{if(PROXY_MODE_OPTIONS.some(([v])=>v===cfg.mode))rememberProxyMode(c,cfg.mode!)}).catch(()=>{}).finally(()=>modePrefetch.delete(key))}
+
 export const proxyModeCacheForTest=(c:Controller)=>proxyModeCache.get(sourceKey(c))
 export function ProxyModeControl({c,enabled,version,onMode}:{c:Controller;enabled:boolean;version:number;onMode?:(mode:string|null)=>void}) {
   type Session = {source:string;cacheKey:string;controller:Controller;alive:boolean;visible:boolean;mode:string|null;pending:string|null;loading:boolean;busy:boolean;error:string;read:number}
   const [holder]=useState<{current:Session|null}>({current:null}),[,redraw]=useState(0)
   const source=JSON.stringify(c)
-  if(holder.current?.source!==source){const cacheKey=sourceKey(c),known=proxyModeCache.get(cacheKey)??null;holder.current={source,cacheKey,controller:{...c},alive:true,visible:enabled,mode:known,pending:null,loading:enabled&&!known,busy:false,error:"",read:0}}
+  if(holder.current?.source!==source){const cacheKey=sourceKey(c),known=cachedProxyMode(c);holder.current={source,cacheKey,controller:{...c},alive:true,visible:enabled,mode:known,pending:null,loading:enabled&&!known,busy:false,error:"",read:0}}
   const session=holder.current!
   if(session.visible!==enabled){session.visible=enabled;session.read++;if(!session.busy){session.mode=proxyModeCache.get(session.cacheKey)??null;session.loading=enabled&&!session.mode}}
   const current=()=>session.alive&&session.visible&&holder.current===session
@@ -99,14 +109,14 @@ export function ProxyModeControl({c,enabled,version,onMode}:{c:Controller;enable
   async function readMode(message="",retainMessage=false,kind:"initial"|"silent"|"verify"="initial") {
     if(!current())return
     const read=++session.read,keepVisible=kind==="verify"||(kind==="silent"&&!!session.mode),quiet=kind==="silent"&&!!session.mode
-    if(!keepVisible){session.mode=null;proxyModeCache.delete(session.cacheKey);session.loading=true;session.error="";paint()}
+    if(!keepVisible){session.mode=null;forgetProxyMode(session.controller);session.loading=true;session.error="";paint()}
     try {
       const cfg=await loadConfig(session.controller)
       if(!current()||read!==session.read)return
-      if(PROXY_MODE_OPTIONS.some(([value])=>value===cfg.mode)){session.mode=cfg.mode!;proxyModeCache.set(session.cacheKey,cfg.mode!);session.error=retainMessage?message:""}
-      else{session.mode=null;proxyModeCache.delete(session.cacheKey);session.error=message?`${message}；内核未提供可识别的当前模式。`:"内核未提供可识别的代理模式，暂不能切换。"}
+      if(PROXY_MODE_OPTIONS.some(([value])=>value===cfg.mode)){session.mode=cfg.mode!;rememberProxyMode(session.controller,cfg.mode!);session.error=retainMessage?message:""}
+      else{session.mode=null;forgetProxyMode(session.controller);session.error=message?`${message}；内核未提供可识别的当前模式。`:"内核未提供可识别的代理模式，暂不能切换。"}
     } catch {
-      if(current()&&read===session.read&&!quiet){session.mode=null;proxyModeCache.delete(session.cacheKey);session.error=message?`${message}；当前模式读取失败，请重试读取。`:"代理模式读取失败，请检查连接与权限后重试。"}
+      if(current()&&read===session.read&&!quiet){session.mode=null;forgetProxyMode(session.controller);session.error=message?`${message}；当前模式读取失败，请重试读取。`:"代理模式读取失败，请检查连接与权限后重试。"}
     } finally {if(current()&&read===session.read){session.loading=false;paint()}}
   }
   // Report only read-back confirmed modes; unknown/loading/failed states report null.
@@ -161,7 +171,7 @@ function hydrateProxyCache(key:string){
 const proxyPrefetch=new Set<string>(),proxyPrefetched=new Set<string>()
 // Start loading as early as possible (before the first screen) and fill the cache; failures stay silent and the page loads normally.
 export function prefetchProxies(active:Controller|null){
-  if(!active)return;const key=sourceKey(active);hydrateProxyCache(key);if(proxyPrefetched.has(key)||proxyPrefetch.has(key))return;proxyPrefetch.add(key)
+  if(!active)return;prefetchProxyMode(active);const key=sourceKey(active);hydrateProxyCache(key);if(proxyPrefetched.has(key)||proxyPrefetch.has(key))return;proxyPrefetch.add(key)
   void Promise.all([loadGroups(active,{includeGlobal:false}).catch(()=>null),loadProviders(active,"proxies").catch(()=>null)]).then(([groups,providers])=>{
     const old=proxyCache.get(key);if(groups||providers){proxyPrefetched.add(key);setProxyCache(key,{groups:groups??old?.groups??[],providers:providers??old?.providers??[]})}
   }).finally(()=>{proxyPrefetch.delete(key)})
@@ -332,9 +342,17 @@ function MoreLine({title,icon,color="systemBlue",detail,subtitle,arrow=false}:an
 function MoreSeparator() { return <Divider padding={{leading:54}}/> }
 function MoreTile({title,icon,color}:any) { return <VStack alignment="center" spacing={10} modifiers={modifiers().frame({minWidth:0,maxWidth:"infinity",minHeight:88,maxHeight:88,alignment:"center"}).background(<RoundedRectangle cornerRadius={9} fill="tertiarySystemGroupedBackground"/>)}><Image systemName={icon} font={23} foregroundStyle={color} frame={{width:28,height:28,alignment:"center"}}/><Text font={12} foregroundStyle="label" lineLimit={1} frame={{height:18,alignment:"center"}}>{title}</Text></VStack> }
 const moreSnapshots=new Map<string,{core?:string;app?:string;runtime?:NikkiRuntime;running?:boolean|null}>()
+const morePrefetch=new Set<string>()
+export function prefetchMoreVersions(active:Controller|null){
+ if(!active)return;const key=sourceKey(active);if(morePrefetch.has(key))return;morePrefetch.add(key)
+ try{const saved=Storage.get<any>("dashboard_versions_snapshot_v1");if(saved?.source===JSON.stringify(active))moreSnapshots.set(key,{...moreSnapshots.get(key),core:saved.core,app:saved.app})}catch{}
+ const remember=(x:{core?:string;app?:string})=>{const patch:typeof x={};if(x.core&&x.core!=="未提供")patch.core=x.core;if(x.app&&x.app!=="未提供")patch.app=x.app;const value={...moreSnapshots.get(key),...patch};moreSnapshots.set(key,value);try{Storage.set("dashboard_versions_snapshot_v1",{source:JSON.stringify(active),core:value.core,app:value.app})}catch{}}
+ void loadRuntimeVersions(active,remember).then(remember).catch(()=>{}).finally(()=>morePrefetch.delete(key))
+}
 export function MorePage({active,onChanged,onClose,selected=true}:{active:Controller|null;onChanged:()=>void;onClose?:()=>void;selected?:boolean}) {
   const p=usePreferences(["theme","defaultPage"])
-  const [core,setCore]=useState("未提供"),[app,setApp]=useState("未提供"),[mode,setMode]=useState("未提供"),[err,setErr]=useState(""),[visible,setVisible]=useState(selected),[busy,setBusy]=useState(false),[running,setRunning]=useState<boolean|null>(null),[guard]=useState({alive:true,source:"",busy:false}),[runtime,setRuntime]=useState<NikkiRuntime|null>(null),[,setClock]=useState(0),[notice,setNotice]=useState(""),[noticeKind,setNoticeKind]=useState("success")
+  const cachedVersions=active?moreSnapshots.get(sourceKey(active)):undefined
+  const [core,setCore]=useState(cachedVersions?.core??"未提供"),[app,setApp]=useState(cachedVersions?.app??"未提供"),[mode,setMode]=useState("未提供"),[err,setErr]=useState(""),[visible,setVisible]=useState(selected),[busy,setBusy]=useState(false),[running,setRunning]=useState<boolean|null>(null),[guard]=useState({alive:true,source:"",busy:false}),[runtime,setRuntime]=useState<NikkiRuntime|null>(null),[,setClock]=useState(0),[notice,setNotice]=useState(""),[noticeKind,setNoticeKind]=useState("success")
   guard.source=active?sourceKey(active):""
   useEffect(()=>()=>{guard.alive=false},[])
   useEffect(()=>{setVisible(selected)},[selected])
