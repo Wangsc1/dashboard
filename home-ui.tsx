@@ -135,6 +135,19 @@ export function HomeDashboard({overview,histories,running,onCpu}:{overview:Overv
   const w=overview?.wrt
   return <VStack spacing={16}><CpuCard w={w} history={histories.cpu.cpu??[]} running={running} onOpen={onCpu}/><HStack spacing={16} alignment="top"><TrafficCard heading="上传" rate={overview?.traffic.up} total={overview?.upTotal} history={histories.up} tone="#2dbf82" running={running}/><TrafficCard heading="下载" rate={overview?.traffic.down} total={overview?.downTotal} history={histories.down} tone="#27b1cf" running={running}/></HStack><HStack spacing={16} alignment="top" background={<HStack spacing={16}><RoundedRectangle cornerRadius={14} fill={PANEL} frame={{minWidth:0,maxWidth:"infinity"}}/><RoundedRectangle cornerRadius={14} fill={PANEL} frame={{minWidth:0,maxWidth:"infinity"}}/></HStack>}><RamCard w={w} running={running}/><LoadCard w={w}/></HStack><DiskCard w={w}/></VStack>
 }
+// A stable sheet owner receives samples through a local subscription. The presentation
+// content itself never changes identity on each poll; only this mounted body updates.
+export interface CpuDetailFrame { overview:Overview|null; histories:OverviewHistory; running:boolean }
+export interface CpuDetailFeed { value:CpuDetailFrame; subscribe(fn:(value:CpuDetailFrame,old:CpuDetailFrame)=>void):void; unsubscribe(fn:(value:CpuDetailFrame,old:CpuDetailFrame)=>void):void }
+export function LiveCpuDetails({feed}:{feed:CpuDetailFeed}) {
+  const [frame,setFrame]=useState(()=>feed.value)
+  useEffect(()=>{
+    const changed=(value:CpuDetailFrame)=>setFrame(value)
+    feed.subscribe(changed);setFrame(feed.value)
+    return()=>feed.unsubscribe(changed)
+  },[feed])
+  return <CpuDetails overview={frame.overview} histories={frame.histories} running={frame.running}/>
+}
 export function CpuDetails({overview,histories,running}:{overview:Overview|null;histories:OverviewHistory;running:boolean}) {
   const w=overview?.wrt,cores=w?.cpus?.filter(x=>x.id!=='cpu')??[],rows=Array.from({length:Math.ceil(cores.length/2)},(_,i)=>cores.slice(i*2,i*2+2))
   const info=[['Uptime',w?fmtUptime(w.uptime,true):'--'],['Arch',w?.arch||'--'],['Cpu',cores.length?String(cores.length):'--'],['Kernel',w?.kernel||'--'],['Board',w?.model||'--']]

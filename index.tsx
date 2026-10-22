@@ -1,4 +1,4 @@
-import { HOME_BG, HomeDashboard, CpuDetails } from "./home-ui"
+import { HOME_BG, HomeDashboard, CpuDetails, LiveCpuDetails, CpuDetailFrame } from "./home-ui"
 import { newHistory, appendHistory } from "./openwrt-metrics"
 import { rootToolbar } from "./root-toolbar"
 import { ProxiesPage, ConnectionsPage, RulesPage, GroupSection, MorePage as DashboardMorePage } from "./dashboard-pages"
@@ -205,6 +205,10 @@ function OverviewPage({ active, version, onSwitch, onClose, selected = true }: {
   }, [source, prefs.connectionBackground, showCharts])
   const shownOv=sampleSource===source?ov:null
   const shownHistory=sampleSource===source?histories:newHistory()
+  // Keep sheet.content stable across sample updates; publish only the live frame.
+  const detailFeed=useObservable<CpuDetailFrame>(()=>({overview:null,histories:newHistory(),running:false}))
+  const detailContent=useMemo(()=><LiveCpuDetails feed={detailFeed}/>,[detailFeed])
+  useEffect(()=>{detailFeed.setValue({overview:shownOv,histories:shownHistory,running:showCharts&&cpuOpen})},[shownOv,shownHistory,showCharts,cpuOpen,detailFeed])
   // Freeze the obscured home chart subtree while the sheet consumes live samples.
   const [homeFrame]=useState(()=>({source:"",overview:null as Overview|null,histories:newHistory()}))
   if(!cpuOpen||homeFrame.source!==source){homeFrame.source=source;homeFrame.overview=shownOv;homeFrame.histories=shownHistory}
@@ -219,7 +223,7 @@ function OverviewPage({ active, version, onSwitch, onClose, selected = true }: {
   if (!active) return <Form navigationTitle="dashboard" navigationBarTitleDisplayMode="inline" toolbar={toolbar} onAppear={() => setVisible(true)} onDisappear={() => setVisible(false)}><NoController /></Form>
   const closeCpu=(value:boolean)=>{setCpuOpen(value);if(!value)setVisible(true)}
   return <VStack spacing={0} navigationTitle={active.name} navigationBarTitleDisplayMode="inline" toolbar={toolbar} onAppear={() => setVisible(true)} onDisappear={() => setVisible(false)}
-    sheet={{isPresented:cpuOpen,onChanged:closeCpu,content:<CpuDetails overview={shownOv} histories={shownHistory} running={showCharts&&cpuOpen}/>}}>
+    sheet={{isPresented:cpuOpen,onChanged:closeCpu,content:detailContent}}>
     <ScrollView background={HOME_BG}>
       <VStack spacing={16} padding={{horizontal:16,top:12,bottom:24}}>
         {all.length>1?<Card><Picker title="当前路由器" pickerStyle="menu" value={active.id} onChanged={(v:string)=>{setActive(v);onSwitch()}}>{all.map(c=><Text key={c.id} tag={c.id}>{c.name}</Text>)}</Picker></Card>:null}

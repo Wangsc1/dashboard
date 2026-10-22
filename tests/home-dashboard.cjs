@@ -113,9 +113,9 @@ function fixture(url,init){if(url.endsWith('/cgi-bin/cgi-download'))return {stat
  await test('CPU sheet开关/后台/切Tab: 单轮询、详情共享样本、旧来源不覆盖',async()=>{
    responder=fixture;const props={active:device,version:0,selected:true,onSwitch(){}};render(app.OverviewPage,props,true);await flush();let view=render(app.OverviewPage,props)
    const polling=()=>[...intervals.values()].filter(x=>x.ms===1000);assert.equal(polling().length,1)
-   nodes(view,home.HomeDashboard)[0].props.onCpu();view=render(app.OverviewPage,props);await flush();assert.equal(view.props.sheet.isPresented,true);assert.equal(polling().length,1);assert.equal(nodes(view,home.HomeDashboard)[0].props.running,false);assert.equal(view.props.sheet.content.props.running,true)
+   nodes(view,home.HomeDashboard)[0].props.onCpu();view=render(app.OverviewPage,props);await flush();assert.equal(view.props.sheet.isPresented,true);assert.equal(polling().length,1);assert.equal(nodes(view,home.HomeDashboard)[0].props.running,false);assert.equal(view.props.sheet.content.props.feed.value.running,true)
    const before=calls.length;view.props.onDisappear();view=render(app.OverviewPage,props);await flush();assert.equal(polling().length,1);assert.equal(calls.length,before)
-   emitScene('background');view=render(app.OverviewPage,props);await flush();assert.equal(polling().length,0);assert.equal(view.props.sheet.content.props.running,false)
+   emitScene('background');view=render(app.OverviewPage,props);await flush();assert.equal(polling().length,0);assert.equal(view.props.sheet.content.props.feed.value.running,false)
    emitScene('active');view=render(app.OverviewPage,props);await flush();assert.equal(polling().length,1)
    view.props.sheet.onChanged(false);view=render(app.OverviewPage,props);await flush();assert.equal(view.props.sheet.isPresented,false);assert.equal(polling().length,1);assert.equal(nodes(view,home.HomeDashboard)[0].props.running,true)
    render(app.OverviewPage,{...props,selected:false});await flush();assert.equal(polling().length,0)
