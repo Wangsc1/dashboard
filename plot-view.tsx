@@ -4,7 +4,7 @@ interface PlotDiagnostic {ms:number;width:number;height:number;viewportWidth:num
 export const PLOT_DIAGNOSTIC_HEIGHT=56
 export interface CanvasPlotProps {samples:number[];tone:string;plotHeight?:number;area?:boolean;running?:boolean;percent?:boolean;plotWidth?:number}
 // Mount the drawing host in the first render, including during sheet presentation.
-// LazyVStack owns lazy creation; running and component cleanup own pause/disposal.
+// The parent owns creation; running and component cleanup own pause/disposal.
 // Native onAppear can arrive only after scrolling, so it must not gate chart creation.
 export function InlineCanvasPlot(props:CanvasPlotProps) {
   const height=(props.plotHeight??96)+PLOT_DIAGNOSTIC_HEIGHT
@@ -60,7 +60,7 @@ export function MountedCanvasPlot({samples,tone,plotHeight=96,area=false,running
   return <VStack alignment="leading" spacing={0} frame={{height:plotHeight+PLOT_DIAGNOSTIC_HEIGHT}}>
     {error?<Text font={11} foregroundStyle="secondaryLabel" frame={{height:plotHeight}}>{error}</Text>:<WebView controller={host.controller} onAppear={()=>{if(host.alive)setTrace(s=>({...s,nativeAppear:s.nativeAppear+1}))}} disabled frame={{minHeight:plotHeight,maxHeight:plotHeight,minWidth:0,maxWidth:'infinity'}}/>}
     <VStack alignment="leading" spacing={0} frame={{height:PLOT_DIAGNOSTIC_HEIGHT}} foregroundStyle="label" font={8} fontDesign="monospaced">
-      <Text>{`D181 ${trace.stage} A:${trace.nativeAppear} ${d?Math.round(d.ms/1000)+'s':'JS:--'}`}</Text>
+      <Text>{`D182 ${trace.stage} A:${trace.nativeAppear} ${d?Math.round(d.ms/1000)+'s':'JS:--'}`}</Text>
       <Text>{d?`C:${d.width}x${d.height} V:${d.viewportWidth}x${d.viewportHeight} H:${+d.hidden}`:'C:-- V:-- H:--'}</Text>
       <Text>{d?`P:${d.attempts} G:${d.grids} F:${d.frames} N:${d.samples} U:${d.updates}`:'P:-- G:-- F:-- N:-- U:--'}</Text>
       <Text>{d?`B:${d.bitmapWidth}x${d.bitmapHeight} ctx:${+d.context} run:${+d.active}`:'B:-- ctx:-- run:--'}</Text>

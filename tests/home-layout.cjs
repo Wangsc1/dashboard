@@ -54,11 +54,11 @@ function slot(n,height){
      for(const r of rects)assert.ok(r.props.frame.height<=24&&r.props.frame.height>0&&r.props.frame.width>0)
    }
  })
- await test('详情页保留LazyVStack与全部核心；无整卡快照/memo，数值/元数据每次使用最新',()=>{
+ await test('详情页普通VStack承载与全部核心；无整卡快照/memo，数值/元数据每次使用最新',()=>{
    const mk=n=>({cpu:{cpu:[1,2],...Object.fromEntries(Array.from({length:32},(_,i)=>['cpu'+i,[n,n+1]]))}})
    const cpus=Array.from({length:32},(_,i)=>({id:'cpu'+i,usage:i}))
    const tree=home.CpuDetails({overview:{wrt:{cpus:[{id:'cpu'},...cpus],cpuMeta:{}}},histories:mk(1),running:true})
-   assert.equal(nodes(tree,'LazyVStack').length,1);assert.equal(nodes(tree,'ScrollView').length,1);assert.equal(nodes(tree,'Button').length,0)
+   assert.equal(nodes(tree,'LazyVStack').length,0);assert.equal(nodes(tree,'ScrollView').length,1);const container=nodes(tree,'ScrollView')[0].props.children[0];assert.equal(container.type,'VStack');assert.equal(container.props.spacing,16);deep(container.props.padding,{horizontal:16,top:12,bottom:24});assert.equal(nodes(tree,'Button').length,0)
    const rs=nodes(tree,home.CoreRow);assert.equal(rs.length,16);assert.equal(rs.flatMap(r=>r.props.cpus).length,32)
    let r=home.CoreRow({cpus:cpus.slice(0,2),w:{cpuMeta:{}},histories:mk(1),running:true});assert.equal(nodes(r,home.CoreCard)[0].props.history[0],1)
    r=home.CoreRow({cpus:[{id:'cpu0',usage:99}],w:{cpuMeta:{cpu0:{mhz:2222}}},histories:mk(50),running:true})
