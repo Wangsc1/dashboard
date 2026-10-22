@@ -748,7 +748,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) { const lazy = ['proxies','rules','connections'].includes(ids[i]) && ids[i] !== id; assert.equal(nodes(tree, types[i]).length, lazy ? 0 : 1); if (!lazy) assert.equal(nodes(tree, types[i])[0].props.selected, ids[i] === id) }
     }
-    assert.equal(api.VERSION, '1.13'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.14'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('独立导航栈保留业务owner和身份，只有选中页提供可见工具栏', () => {
     pref.savePreferences({ defaultPage: 'overview' })
@@ -1395,16 +1395,16 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.ok(text(tree).includes('运行信息'));assert.ok(text(tree).includes('代理配置'));assert.equal(tree.props.overlay,undefined)
     }finally{scripting.Animation=oldAnimation;scripting.Transition=oldTransition;unmount()}
   })
-  await test('更多代理模式立即复用同来源真实读数，首次读取显示读取中，失败不伪造',async()=>{
+  await test('更多页模式读取缓存按来源隔离，不渲染模式详情',async()=>{
     const n={...c,id:'mode-cache-fixture',url:'http://mode-cache.invalid'},other={...c,id:'mode-cache-other',url:'http://mode-cache-other.invalid'}
     responder=()=>({body:{mode:'global',version:'core'}})
     await api.loadConfig(n)
     const original=context.fetch;let release;const gate=new Promise(r=>release=r)
     context.fetch=async(url,init)=>{if(url.endsWith('/configs'))await gate;return original(url,init)}
     try{
-      render(pages.MorePage,{active:n,onChanged(){}},true);await flush();let tree=render(pages.MorePage,{active:n,onChanged(){}});assert.ok(text(tree).includes('全局模式'))
-      render(pages.MorePage,{active:other,onChanged(){}});await flush();tree=render(pages.MorePage,{active:other,onChanged(){}});assert.ok(!text(tree).includes('全局模式'));assert.ok(text(tree).includes('读取中…'))
-      release();await flush();tree=render(pages.MorePage,{active:other,onChanged(){}});assert.ok(text(tree).includes('全局模式'))
+      render(pages.MorePage,{active:n,onChanged(){}},true);await flush()
+      render(pages.MorePage,{active:other,onChanged(){}});await flush();let tree=render(pages.MorePage,{active:other,onChanged(){}});assert.ok(!text(tree).includes('全局模式'))
+      release();await flush();tree=render(pages.MorePage,{active:other,onChanged(){}});assert.ok(api.lastControllerMode(other)==='global')
     }finally{release();context.fetch=original;unmount()}
   })
   await test('连接活动与已关闭仅保留加载更多，不显示已展示和底部历史注释', async () => {
@@ -1849,7 +1849,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       const diagnostic = logs.filter(x => x.startsWith('[preferences-icon]'))
       for (const stage of ['change','accepted','proxies-render','group-render']) assert.ok(diagnostic.some(x => x.includes('stage=' + stage) && x.includes('enabled=false')))
       assert.ok(diagnostic.every(x => !x.includes('private.invalid') && !x.includes('private-group-name') && !x.includes('secret-')))
-      assert.ok(diagnostic.every(x => x.includes('build=1.13') && /instance=[a-z0-9]+/.test(x)))
+      assert.ok(diagnostic.every(x => x.includes('build=1.14') && /instance=[a-z0-9]+/.test(x)))
       assert.equal(new Set(diagnostic.map(x => x.match(/instance=([^ ]+)/)[1])).size, 1)
     } finally { context.console = originalConsole; unmount(); pref.savePreferences({ customIcons: true, testURL: 'https://www.gstatic.com/generate_204' }) }
   })
@@ -1874,11 +1874,11 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     calls.length=0;render(pages.MorePage,props,true);await flush();assert.equal(calls.length,0)
     render(pages.MorePage,{...props,selected:true});await flush()
     render(pages.MorePage,{...props,selected:true});await flush()
-    let tree=render(pages.MorePage,{...props,selected:true});assert.ok(calls.length>0);assert.ok(text(tree).includes('selected-app'));assert.ok(text(tree).includes('全局模式'));assert.ok(intervals.size>0)
+    let tree=render(pages.MorePage,{...props,selected:true});assert.ok(calls.length>0);assert.ok(text(tree).includes('selected-app'));assert.ok(intervals.size>0)
     // Native tab switching may call disappear but omit a later appear. Selection must restart work itself.
     tree.props.onDisappear();render(pages.MorePage,props);await flush();assert.equal(intervals.size,0)
     calls.length=0;render(pages.MorePage,{...props,selected:true});await flush();render(pages.MorePage,{...props,selected:true});await flush()
-    tree=render(pages.MorePage,{...props,selected:true});assert.ok(calls.length>0);assert.ok(text(tree).includes('全局模式'))
+    tree=render(pages.MorePage,{...props,selected:true});assert.ok(calls.length>0)
     // Pushing a subpage while still selected still pauses background work until returning.
     tree.props.onDisappear();render(pages.MorePage,{...props,selected:true});await flush();assert.equal(intervals.size,0)
     calls.length=0;tree.props.onAppear();render(pages.MorePage,{...props,selected:true});await flush();assert.ok(calls.length>0);unmount()
