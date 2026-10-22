@@ -32,7 +32,7 @@ function slot(n,height){
      assert.equal(forwarded.type,load('plot-view').InlineCanvasPlot)
      const out=render(forwarded.type,forwarded.props,true);await flush()
      deep(out.props.frame,plotWidth===undefined?{height}:{width:plotWidth,height})
-     assert.equal(nodes(out,load('plot-view').MountedCanvasPlot).length,0)
+     assert.equal(nodes(out,load('plot-view').MountedCanvasPlot).length,1)
      assert.equal(intervals.size,0)
    }unmount()
  })

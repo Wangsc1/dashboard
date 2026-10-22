@@ -6,32 +6,32 @@ scripting.useState=function(v){const slots=hooks,i=hookIndex++;if(!(i in slots))
 let hosts=[],timeouts=new Map(),nextTimeout=0
 context.setTimeout=(fn)=>{const n=++nextTimeout;timeouts.set(n,fn);return n};context.clearTimeout=n=>timeouts.delete(n)
 context.WebViewController=class {
- constructor(){this.handlers={};this.sent=[];this.disposed=0;hosts.push(this)}
+ constructor(){this.handlers={};this.sent=[];this.disposed=0;this.loads=0;hosts.push(this)}
  async addScriptMessageHandler(name,fn){this.handlers[name]=fn}
- async loadHTML(html){this.html=html;return true}
+ async loadHTML(html){this.loads++;this.html=html;return true}
  evaluateJavaScript(code){this.sent.push(code);return new Promise((resolve,reject)=>{this.resolve=resolve;this.reject=reject})}
  dispose(){this.disposed++}
 }
 const plot=load('plot-view')
 const props={samples:[10,20],tone:'#3485eb',percent:true,running:true}
-async function mount(){const node=render(plot.MountedCanvasPlot,props,true);await flush();node.props.onAppear();await flush();return node}
+async function mount(){const node=render(plot.MountedCanvasPlot,props,true);await flush();return node}
 ;(async()=>{
  await test('主页和每核共用绘制组件，不存在详情专用动画实现',()=>{
   const front=nodes(home.CpuCard({history:[10,20],running:true}),home.GridPlot)[0]
   const detail=home.SampledCpuPlot({samples:[10,20],running:true})
   assert.equal(detail.type,home.GridPlot);assert.equal(home.GridPlot(front.props).type,plot.InlineCanvasPlot);assert.equal(home.GridPlot(detail.props).type,plot.InlineCanvasPlot)
  })
- await test('先原生出现再加载；首帧携带样本；出现/注册顺序不敏感且只加载一次',async()=>{
-  for(const early of [true,false]){
-   const node=render(plot.MountedCanvasPlot,props,true),host=hosts.at(-1)
-   if(early)node.props.onAppear()
-   await flush()
-   if(!early){assert.equal(host.html,undefined);assert.equal(timeouts.size,0);node.props.onAppear();await flush()}
-   const html=host.html;assert.ok(html.includes('const initial={'));assert.ok(html.includes('\"samples\":[10,20]'))
-   node.props.onAppear();await flush();assert.equal(host.html,html)
-   host.handlers.plotReady();await flush();assert.equal(host.sent.length,0,'initial paint needs no evaluateJavaScript round trip')
-   unmount();assert.equal(host.disposed,1);assert.equal(timeouts.size,0)
-  }
+ await test('完全不发送原生出现事件：首屏仍创建并加载且只加载一次，首帧携带样本',async()=>{
+  const slot=render(plot.InlineCanvasPlot,props,true)
+  assert.equal(nodes(slot,plot.MountedCanvasPlot).length,1)
+  assert.equal(slot.props.onAppear,undefined);assert.equal(slot.props.onDisappear,undefined)
+  const node=render(plot.MountedCanvasPlot,props,true),host=hosts.at(-1)
+  assert.equal(node.type,'WebView');assert.equal(node.props.onAppear,undefined)
+  await flush()
+  assert.equal(host.loads,1);assert.ok(host.html.includes('const initial={'));assert.ok(host.html.includes('"samples":[10,20]'))
+  render(plot.MountedCanvasPlot,props);await flush();assert.equal(host.loads,1)
+  host.handlers.plotReady();await flush();assert.equal(host.sent.length,0,'initial paint needs no evaluateJavaScript round trip')
+  unmount();assert.equal(host.disposed,1);assert.equal(timeouts.size,0)
  })
  await test('准备好前合并采样；桥接串行；最新值接续；running=false同步',async()=>{
   await mount();const host=hosts.at(-1);assert.ok(host.html.includes('requestAnimationFrame'));assert.equal(host.sent.length,0)
@@ -45,8 +45,9 @@ async function mount(){const node=render(plot.MountedCanvasPlot,props,true);awai
   await mount();host=hosts.at(-1);host.handlers.plotReady();await flush();render(plot.MountedCanvasPlot,{...props,samples:[1,2,3]});await flush();unmount();host.resolve(true);await flush();assert.equal(host.sent.length,1);assert.equal(host.disposed,1)
   await mount();host=hosts.at(-1);host.handlers.plotReady();await flush();render(plot.MountedCanvasPlot,{...props,samples:[10,30]});await flush();host.reject(Error('bridge failed'));await flush();const out=render(plot.MountedCanvasPlot,props);assert.ok(text(out).includes('曲线绘制层加载失败'));unmount()
  })
- await test('显示槽消失时销毁子绘制层，不启动原生逐帧timer',()=>{
-  let tree=render(plot.InlineCanvasPlot,props,true);assert.equal(nodes(tree,plot.MountedCanvasPlot).length,0);tree.props.onAppear();tree=render(plot.InlineCanvasPlot,props);assert.equal(nodes(tree,plot.MountedCanvasPlot).length,1);tree.props.onDisappear();tree=render(plot.InlineCanvasPlot,props);assert.equal(nodes(tree,plot.MountedCanvasPlot).length,0);unmount();assert.equal(intervals.size,0)
+ await test('组件卸载销毁控制器而非等待消失事件，不启动原生逐帧timer',async()=>{
+  const tree=render(plot.InlineCanvasPlot,props,true);assert.equal(nodes(tree,plot.MountedCanvasPlot).length,1)
+  await mount();const host=hosts.at(-1);unmount();assert.equal(host.disposed,1);assert.equal(intervals.size,0);assert.equal(timeouts.size,0)
  })
 })().catch(e=>{console.error(e);process.exitCode=1})
 `
