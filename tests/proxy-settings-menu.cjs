@@ -11,8 +11,8 @@ const same=(a,b)=>assert.equal(JSON.stringify(a),JSON.stringify(b))
   const prior=pref.getPreferences(),stored=clone(store.get(key)),original=context.Storage.set;let writes=0
   context.Storage.set=(...args)=>{writes++;return original(...args)}
   try{
-   const tree=render(ui.GlobalConfigPage,{active:null},true);await flush()
-   same(nodes(tree,'Section').map(n=>text(n.props.header)),['缓存管理','控制器管理','交互体验'])
+   const tree=render(ui.PanelSettingsSections,{active:null},true);await flush()
+   same(nodes(tree,'Section').map(n=>text(n.props.header)),['缓存管理','控制器管理'])
    assert.ok(!nodes(tree,'Toggle').some(n=>['showHidden','customIcons','disconnectOnSwitch'].includes(n.props.key)))
    for(const title of ['显示隐藏代理组','自定义代理组图标','自动断开旧连接'])assert.ok(!text(tree).includes(title))
    assert.ok(!nodes(tree,'Toggle').some(n=>n.props.key==='nestedDelay'));assert.ok(button(tree,'清除图片缓存'))
@@ -31,7 +31,7 @@ const same=(a,b)=>assert.equal(JSON.stringify(a),JSON.stringify(b))
    assert.equal(toggle(tree,'显示隐藏组').props.value,true);same(Object.keys(tree.props.toolbar),['topBarLeading','topBarTrailing']);tree.props.toolbar.topBarLeading.props.action()
    const beforeCalls=calls.length,beforeHaptics=haptics
    toggle(tree,'显示图标').props.onChanged(value);toggle(tree,'自动断开旧连接').props.onChanged(!value)
-   same(pref.getPreferences(),{...prior,customIcons:value,disconnectOnSwitch:!value});assert.equal(haptics,beforeHaptics+2);assert.equal(calls.length,beforeCalls,'menu actions are local-only')
+   same(pref.getPreferences(),{...prior,customIcons:value,disconnectOnSwitch:!value});assert.equal(haptics,beforeHaptics);assert.equal(calls.length,beforeCalls,'menu actions are local-only')
    await flush();tree=render(pages.ProxiesPage,props);assert.equal(toggle(tree,'显示图标').props.value,value);assert.equal(toggle(tree,'自动断开旧连接').props.value,!value)
    unmount();tree=render(pages.ProxiesPage,props,true);await flush();assert.equal(toggle(tree,'显示图标').props.value,value);assert.equal(toggle(tree,'自动断开旧连接').props.value,!value)
    const saved=cache.get('preferences');cache.delete('preferences');try{const restarted=load('preferences');assert.equal(restarted.getPreferences().customIcons,value);assert.equal(restarted.getPreferences().disconnectOnSwitch,!value);same(restarted.getPreferences().groupIcons,prior.groupIcons);assert.equal(restarted.getPreferences().showHidden,true)}finally{cache.set('preferences',saved)}

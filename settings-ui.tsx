@@ -326,18 +326,16 @@ export function TestURLField() {
     {error ? <Text font={12} foregroundStyle="systemRed">{error}</Text> : null}
   </VStack>
 }
-export function GlobalConfigPage({ active }: { active: Controller | null }) {
-  const p = usePreferences()
-  const toggle = (key: keyof Preferences, title: string) => <Toggle key={key} title={title} value={!!p[key]} onChanged={(v: boolean) => update({ [key]: v })} />
+export function PanelSettingsSections({ onFoldChanged }: { onFoldChanged?: () => void }) {
+  const p = usePreferences(["foldOffline"])
   async function clear() {
     if (!await Dialog.confirm({ title: "清除图片缓存", message: "仅删除本脚本缓存的代理组图片；不会删除账号、密码、密钥、设置或日志。", confirmLabel: "清除" })) return
     const n = clearImageCache(); await Dialog.alert({ message: `已清除 ${n} 项脚本图片缓存；已显示图片在重新进入代理页后重载。` })
   }
-  return <Form background="systemBackground" scrollContentBackground="hidden" navigationTitle="全局配置" navigationBarTitleDisplayMode="inline">
+  return <>
     <Section header={<Text>缓存管理</Text>}><Button title="清除图片缓存" action={clear} /></Section>
-    <Section header={<Text>控制器管理</Text>}>{toggle("foldOffline", "自动折叠离线控制器")}</Section>
-    <Section header={<Text>交互体验</Text>}>{toggle("haptics", "触感反馈")}</Section>
-  </Form>
+    <Section header={<Text>控制器管理</Text>}><Toggle key="foldOffline" title="自动折叠离线控制器" value={p.foldOffline} onChanged={(v: boolean) => { update({ foldOffline: v }); onFoldChanged?.() }} /></Section>
+  </>
 }
 function CloudSettingsPage() {
   const [status, setStatus] = useState(Storage.get<string>("dashboard_cloud_last") ?? "尚未备份"), [busy, setBusy] = useState(false)

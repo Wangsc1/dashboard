@@ -136,12 +136,12 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     unmount(); pref.savePreferences({ customIcons: true })
   })
   await test('全局配置开关/滑块及更多页主题连续修改，保存及当前页状态一致', async () => {
-    const props = { active: null }; let tree = render(ui.GlobalConfigPage, props, true); await flush()
+    const props = { active: null }; let tree = render(ui.PanelSettingsSections, props, true); await flush()
     for (const value of [false, true, false, true, false]) {
-      nodes(tree, 'Toggle').find(n => n.props.key === 'haptics').props.onChanged(value)
-      tree = render(ui.GlobalConfigPage, props); await flush()
-      assert.equal(nodes(tree, 'Toggle').find(n => n.props.key === 'haptics').props.value, value)
-      assert.equal(pref.getPreferences().haptics, value)
+      nodes(tree, 'Toggle').find(n => n.props.key === 'foldOffline').props.onChanged(value)
+      tree = render(ui.PanelSettingsSections, props); await flush()
+      assert.equal(nodes(tree, 'Toggle').find(n => n.props.key === 'foldOffline').props.value, value)
+      assert.equal(pref.getPreferences().foldOffline, value)
     }
     const moreProps = { active: null, onChanged() {} }
     tree = render(pages.MorePage, moreProps, true); await flush()
@@ -273,9 +273,9 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     unmount()
   })
   await test('全局配置移除主题/启动设置后，剩余分组顺序保持', () => {
-    const tree = render(ui.GlobalConfigPage, { active: null }, true)
+    const tree = render(ui.PanelSettingsSections, { active: null }, true)
     const headers = nodes(tree, 'Section').map(n => text(n.props.header))
-    assert.equal(headers.join('|'), '缓存管理|控制器管理|交互体验')
+    assert.equal(headers.join('|'), '缓存管理|控制器管理')
     unmount()
   })
   await test('删除保存测速链接按钮；输入结束自动保存、拒绝无效值并显示失败', async () => {
@@ -449,7 +449,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     assert.equal(store.has('dashboard_image_v140_' + encodeURIComponent('https://icons.invalid/a.png')), false)
   })
   await test('延迟阈值边界与触感开关', () => {
-    pref.savePreferences({ delayGreen: 240, delayRed: 500, haptics: true }); pref.feedback(); assert.equal(haptics > 0, true)
+    pref.savePreferences({ delayGreen: 240, delayRed: 500, haptics: true }); pref.feedback(); assert.equal(pref.getPreferences().haptics, false); assert.equal(haptics, 0)
     assert.equal(api.delayColor(239), 'systemGreen'); assert.equal(api.delayColor(240), 'systemYellow'); assert.equal(api.delayColor(500), 'systemYellow'); assert.equal(api.delayColor(501), 'systemRed'); assert.equal(api.delayColor(0), 'systemRed')
   })
   await test('iCloud备份白名单/校验：无秘密；恢复合并不删本地且保留密码', () => {
@@ -626,13 +626,13 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
   await test('设置子页Form统一原生白底，隐藏分组滚动背景且保留主题适配', () => {
     const src = fs.readFileSync(path.join(root, 'settings-ui.tsx'), 'utf8')
     const forms = src.match(/<Form\b[^>]*>/g)
-    assert.equal(forms.length, 4)
+    assert.equal(forms.length, 3)
     assert.ok(forms.every(form => form.includes('background="systemBackground"') && form.includes('scrollContentBackground="hidden"')))
   })
   await test('日志设置移到运行日志顶部，保留已存值及保存行为，全局配置不再重复', () => {
     const before = pref.getPreferences()
     pref.savePreferences({ logLimit: 700, detailedAPI: false })
-    let tree = render(ui.GlobalConfigPage, { active: null }, true)
+    let tree = render(ui.PanelSettingsSections, { active: null }, true)
     assert.ok(!text(tree).includes('运行日志')); assert.ok(!nodes(tree, ui.Range).some(n => n.props.title === '最大记录条数'))
     tree = render(ui.LogsPage, {}, true)
     const first = nodes(tree, 'Section')[0]
@@ -674,7 +674,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     const dashboard=render(home.HomeDashboard,{overview:null,histories:metrics.newHistory(),running:false,onCpu(){}},true)
     assert.equal(nodes(dashboard,home.CpuCard).length,1);assert.equal(nodes(dashboard,home.TrafficCard).length,2);assert.equal(nodes(dashboard,home.RamCard).length,1);assert.equal(nodes(dashboard,home.LoadCard).length,1);assert.equal(nodes(dashboard,home.DiskCard).length,1)
     const appearance = render(app.AppearanceRoot, {}, true); assert.equal(appearance.props.preferredColorScheme, 'dark'); tree = render(app.Root, {}, true); assert.equal(nodes(tree,'TabView')[0].props.selection.value, 'rules'); assert.equal(nodes(tree, app.RulesPage).length, 1)
-    tree = render(ui.GlobalConfigPage, { active: null }, true); assert.ok(!text(tree).includes('应用图标')); assert.ok(!nodes(tree, 'Toggle').some(n => n.props.title === '自定义代理组图标'))
+    tree = render(ui.PanelSettingsSections, { active: null }, true); assert.ok(!text(tree).includes('应用图标')); assert.ok(!nodes(tree, 'Toggle').some(n => n.props.title === '自定义代理组图标'))
   })
   await test('曲线几何：真实历史不变、横向连续滚动、末端视觉插值和无过冲路径', () => {
     const chart = load('chart'), previous = [100, 300], current = [100, 300, 900]
@@ -742,7 +742,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) { const lazy = ['proxies','rules','connections'].includes(ids[i]) && ids[i] !== id; assert.equal(nodes(tree, types[i]).length, lazy ? 0 : 1); if (!lazy) assert.equal(nodes(tree, types[i])[0].props.selected, ids[i] === id) }
     }
-    assert.equal(api.VERSION, '1.5.199'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.5.200'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('独立导航栈保留业务owner和身份，只有选中页提供可见工具栏', () => {
     pref.savePreferences({ defaultPage: 'overview' })
@@ -840,7 +840,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     unmount(); assert.equal(intervals.size, 0)
     render(app.OverviewPage, props, true); await flush(); assert.equal(polling().length, 1)
     unmount(); assert.equal(intervals.size, 0)
-    const tree = render(ui.GlobalConfigPage, { active: null }, true); assert.ok(!text(tree).includes('碎片化移除特效')); unmount()
+    const tree = render(ui.PanelSettingsSections, { active: null }, true); assert.ok(!text(tree).includes('碎片化移除特效')); unmount()
   })
   await test('后台暂停前台恢复且导航入口身份不变；卸载移除前后台监听', async () => {
     pref.savePreferences({ connectionBackground: false })
@@ -864,6 +864,26 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     }
     unmount(); assert.equal(intervals.size, 0); assert.equal(sceneListeners.size, 0)
     emitScene('active'); assert.equal(intervals.size, 0)
+  })
+  await test('面板底部内嵌缓存及离线折叠，无全局入口与触感设置，旧触感开启值失效', async () => {
+    const before = pref.getPreferences(), beforeHaptics = haptics
+    for (const active of [null, c]) {
+      let tree = render(app.SettingsPage, { active, onChanged() {} }, true)
+      assert.ok(!text(tree).includes('全局配置'))
+      const section = nodes(tree, ui.PanelSettingsSections)[0]
+      assert.equal(tree.props.children.at(-1).type, ui.PanelSettingsSections)
+      pref.savePreferences({ foldOffline: true }); section.props.onFoldChanged()
+      assert.equal(hooks[0].foldOffline, true)
+      unmount()
+    }
+    let notified = 0
+    let tree = render(ui.PanelSettingsSections, { onFoldChanged() { notified++ } }, true); await flush()
+    assert.equal(nodes(tree, 'Toggle').length, 1); assert.ok(!text(tree).includes('交互体验')); assert.ok(!text(tree).includes('触感反馈'))
+    nodes(tree, 'Toggle')[0].props.onChanged(false); assert.equal(pref.getPreferences().foldOffline, false); assert.equal(notified, 1)
+    const beforeConfirms = confirms.length
+    context.confirmResult = false; await button(tree, '清除图片缓存').props.action(); assert.equal(confirms.length, beforeConfirms + 1)
+    pref.savePreferences({ haptics: true }); pref.feedback(); assert.equal(pref.getPreferences().haptics, false); assert.equal(haptics, beforeHaptics)
+    unmount(); pref.savePreferences(before)
   })
   await test('设置恢复时偏好未变不重建子页；离线折叠改变仍同步', () => {
     pref.savePreferences({ foldOffline: false })
@@ -1006,7 +1026,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     const src = fs.readFileSync(path.join(root, 'index.tsx'), 'utf8'), body = src.slice(src.indexOf('function SettingsPage'), src.indexOf('function MorePage'))
     const at = s => body.indexOf(s)
     assert.ok(at('title="添加 OpenWrt"') < at('<Text>路由器详情</Text>')); assert.ok(!src.includes('AppearancePage'))
-    assert.ok(body.indexOf('title="全局配置"') < body.indexOf('title="网络接口"')); assert.ok(body.indexOf('title="软件管理"') < body.indexOf('title="运行日志"', body.indexOf('title="软件管理"')))
+    assert.ok(!body.includes('全局配置')); assert.ok(body.indexOf('<PanelSettingsSections') > body.lastIndexOf('title="运行日志"')); assert.ok(body.indexOf('title="软件管理"') < body.indexOf('title="运行日志"', body.indexOf('title="软件管理"')))
     assert.ok(!src.includes('page === "appearance"') && !src.includes('page === "global"') && !src.includes('setPage("appearance")') && !src.includes('setPage("global")'))
   })
   await test('六卡104pt；速率SVG全高背景且前景文字最后绘制；连接内存无曲线', () => {
@@ -1195,7 +1215,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     for(const value of ['1.26.2','alpha-94b13ae']){const t=nodes(tree,'Text').find(x=>text(x)===value);assert.ok(t);assert.equal(t.props.fixedSize.horizontal,true)}
     const versionRow=nodes(tree,'HStack').find(x=>text(x).includes('alpha-94b13ae')&&!text(x).includes('运行时间'));assert.ok(!text(versionRow).includes('运行时间'))
     assert.equal(tree.props.background,'systemBackground');unmount()
-    for(const [Page,props] of [[pages.DNSPage,{c:n}],[pages.ManagementPage,{c:n,kind:'profile'}],[ui.KernelConfigPage,{c:n}],[ui.GlobalConfigPage,{active:n}],[ui.LogsPage,{}],[app.SettingsPage,{active:n,onChanged(){}}]]){
+    for(const [Page,props] of [[pages.DNSPage,{c:n}],[pages.ManagementPage,{c:n,kind:'profile'}],[ui.KernelConfigPage,{c:n}],[ui.LogsPage,{}],[app.SettingsPage,{active:n,onChanged(){}}]]){
       tree=render(Page,props,true);assert.equal(tree.props.background,'systemBackground');if(tree.type==='Form')assert.equal(tree.props.scrollContentBackground,'hidden');unmount()
     }
     tree=render(app.Root,{},true);const stack=nodes(tree,'NavigationStack').find(x=>x.props.key==='more-stack');assert.equal(stack.props.scrollContentBackground,'hidden');assert.equal(stack.props.background,'systemBackground');unmount()
@@ -1401,11 +1421,11 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     assert.equal(pref.NODE_SORT_OPTIONS.length, 5)
   })
   await test('全局配置移除iCloud同步与代理内核区块，其他内核页面保留', () => {
-    const src = fs.readFileSync(path.join(root, 'settings-ui.tsx'), 'utf8'), body = src.slice(src.indexOf('export function GlobalConfigPage'), src.indexOf('function CloudSettingsPage'))
+    const src = fs.readFileSync(path.join(root, 'settings-ui.tsx'), 'utf8'), body = src.slice(src.indexOf('export function PanelSettingsSections'), src.indexOf('function CloudSettingsPage'))
     assert.ok(!body.includes('iCloud 同步')); assert.ok(!body.includes('代理内核')); assert.ok(!body.includes('CloudSettingsPage')); assert.ok(!body.includes('KernelConfigPage')); assert.ok(src.includes('export function KernelConfigPage'))
   })
   await test('全局配置移除外观与测速入口，保留缓存管理', () => {
-    const src = fs.readFileSync(path.join(root, 'settings-ui.tsx'), 'utf8'), body = src.slice(src.indexOf('export function GlobalConfigPage'), src.indexOf('function CloudSettingsPage'))
+    const src = fs.readFileSync(path.join(root, 'settings-ui.tsx'), 'utf8'), body = src.slice(src.indexOf('export function PanelSettingsSections'), src.indexOf('function CloudSettingsPage'))
     assert.ok(!body.includes('（本地替代）')); assert.ok(!body.includes('（长按组标题）')); assert.ok(!body.includes('（淡出替代）'))
     assert.ok(body.includes('clearImageCache')); for (const k of ['ThresholdRange','requestTimeout','testTimeout','TestURLField']) assert.ok(!body.includes(k))
     for (const k of ['theme','defaultPage','showHidden','customIcons']) assert.ok(!body.includes(k))
@@ -1418,12 +1438,12 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     pref.savePreferences({ showWrt: false }); assert.equal(render(Probe, { enabled: false }), first)
     render(Probe, { enabled: true }); await flush(); assert.equal(render(Probe, { enabled: true }).showWrt, false)
     unmount(); pref.savePreferences({ showWrt: true })
-    const src = fs.readFileSync(path.join(root, 'settings-ui.tsx'), 'utf8'), body = src.slice(src.indexOf('export function GlobalConfigPage'), src.indexOf('function CloudSettingsPage'))
+    const src = fs.readFileSync(path.join(root, 'settings-ui.tsx'), 'utf8'), body = src.slice(src.indexOf('export function PanelSettingsSections'), src.indexOf('function CloudSettingsPage'))
     assert.ok(!body.includes('编辑组图标')); assert.ok(!body.includes('IconsPage')); assert.ok(!body.includes('自定义代理组图标'))
   })
   await test('全局配置包含迁移项且无概览组，两个外观入口都删除', async () => {
     pref.savePreferences({ theme: 'dark', customIcons: true, showWrt: false })
-    let tree = render(ui.GlobalConfigPage, { active: null }, true)
+    let tree = render(ui.PanelSettingsSections, { active: null }, true)
     assert.ok(!text(tree).includes('概览页面'))
     for (const key of ['showWrt','droplets','connectionBackground','ripple']) assert.ok(!nodes(tree, 'Toggle').some(n => n.props.key === key))
     for (const title of ['外观模式','默认打开界面']) assert.ok(!nodes(tree, ui.Choice).some(n => n.props.title === title))
@@ -1434,12 +1454,12 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     pref.savePreferences({ theme: 'system', showWrt: true }); unmount()
   })
   await test('全局配置移除列表与动画整组和显示Global开关，其余设置保留', () => {
-    const tree = render(ui.GlobalConfigPage, { active: null }, true)
+    const tree = render(ui.PanelSettingsSections, { active: null }, true)
     assert.ok(!text(tree).includes('列表与动画'))
     for (const title of ['连接列表样式','代理卡片样式']) assert.ok(!nodes(tree, ui.Choice).some(n => n.props.title === title))
     for (const key of ['collapseGesture','showGlobal']) assert.ok(!nodes(tree, 'Toggle').some(n => n.props.key === key))
     for (const key of ['showHidden','customIcons','disconnectOnSwitch']) assert.ok(!nodes(tree, 'Toggle').some(n => n.props.key === key))
-    assert.ok(!nodes(tree, 'Toggle').some(n => n.props.key === 'nestedDelay')); assert.ok(nodes(tree, 'Toggle').some(n => n.props.key === 'haptics'))
+    assert.ok(!nodes(tree, 'Toggle').some(n => n.props.key === 'nestedDelay')); assert.ok(!nodes(tree, 'Toggle').some(n => n.props.key === 'haptics'))
     { const k = fs.readFileSync(path.join(root, 'settings-ui.tsx'), 'utf8'); const a = k.indexOf('toggle("ipv6", "IPv6")'), b = k.indexOf('<HeaderFields icon='), c = k.indexOf('<NestedDelayRow'), d = k.indexOf('Text>绑定地址'); assert.ok(a > 0 && a < b && b < c && c < d) }
     assert.ok(!nodes(tree, ui.Choice).some(n => n.props.title === '外观模式')); assert.ok(button(tree, '清除图片缓存'))
     unmount()
@@ -1776,7 +1796,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       const diagnostic = logs.filter(x => x.startsWith('[preferences-icon]'))
       for (const stage of ['change','accepted','proxies-render','group-render']) assert.ok(diagnostic.some(x => x.includes('stage=' + stage) && x.includes('enabled=false')))
       assert.ok(diagnostic.every(x => !x.includes('private.invalid') && !x.includes('private-group-name') && !x.includes('secret-')))
-      assert.ok(diagnostic.every(x => x.includes('build=1.5.199') && /instance=[a-z0-9]+/.test(x)))
+      assert.ok(diagnostic.every(x => x.includes('build=1.5.200') && /instance=[a-z0-9]+/.test(x)))
       assert.equal(new Set(diagnostic.map(x => x.match(/instance=([^ ]+)/)[1])).size, 1)
     } finally { context.console = originalConsole; unmount(); pref.savePreferences({ customIcons: true, testURL: 'https://www.gstatic.com/generate_204' }) }
   })

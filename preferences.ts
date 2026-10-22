@@ -27,7 +27,7 @@ export function traceIconPreference(stage: "change" | "accepted" | "global-rende
   try {
     const raw = Storage.get<Partial<Preferences>>(KEY)
     const stored = typeof raw?.customIcons === "boolean" ? raw.customIcons : "unavailable"
-    console.log(`[preferences-icon] build=1.5.199 instance=${preferenceInstance} revision=${preferenceRevision} stage=${stage} enabled=${enabled} snapshot=${getPreferences().customIcons} stored=${stored}`)
+    console.log(`[preferences-icon] build=1.5.200 instance=${preferenceInstance} revision=${preferenceRevision} stage=${stage} enabled=${enabled} snapshot=${getPreferences().customIcons} stored=${stored}`)
   } catch { console.log("[preferences-icon] diagnostic-unavailable") }
 }
 export function preferenceTrace(stage: string) { console.log(`[preferences] revision=${preferenceRevision} ${stage}`) }
@@ -45,6 +45,7 @@ export function normalizePreferences(raw: Partial<Preferences>): Preferences {
     const v = raw[k]
     if (typeof v === typeof DEFAULTS[k] && v !== null) (p as any)[k] = v
   }
+  p.haptics = false
   for (const [k, choices] of Object.entries({ theme: ["system", "light", "dark"], connectionStyle: ["standard", "compact"], proxyStyle: ["list", "compact"], defaultPage: ["overview", "proxies", "rules", "connections", "more"], nodeSort: ["default", "name", "nameDesc", "delay", "delayDesc"] })) {
     if (!choices.includes((p as any)[k])) (p as any)[k] = (DEFAULTS as any)[k]
   }
