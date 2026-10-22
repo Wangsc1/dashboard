@@ -10,7 +10,7 @@ const {chromium,webkit}=require(process.env.PLAYWRIGHT_PATH||'/tmp/neko-editor-b
   try{
    const page=await browser.newPage({viewport:{width:329,height:96},deviceScaleFactor:3}),errors=[],requests=[]
    page.on('pageerror',e=>errors.push(e.message));page.on('request',r=>requests.push(r.url()));await page.route('**/*',r=>r.abort())
-   const bridge='<script>window.readyCalls=0;window.webkit={messageHandlers:{plotReady:{postMessage(){window.readyCalls++;return Promise.resolve(true)}}}};</script>'
+   const bridge='<script>window.readyCalls=0;window.diagnostics=[];window.webkit={messageHandlers:{plotDiagnostic:{postMessage(value){window.diagnostics.push(value);return Promise.resolve(true)}},plotReady:{postMessage(){window.readyCalls++;return Promise.resolve(true)}}}};</script>'
    const doc=html.replace('<script>',bridge+'<script>')
    await page.setContent(doc);await page.waitForFunction(()=>window.plotCanvas&&window.readyCalls===1)
    const send=(seq,samples,running=true)=>page.evaluate(m=>window.plotCanvas.update(m),{seq,samples,running,tone:'#3485eb',percent:true,area:false})
@@ -53,10 +53,19 @@ const {chromium,webkit}=require(process.env.PLAYWRIGHT_PATH||'/tmp/neko-editor-b
    // A newly mounted document paints its inline data before the ready callback,
    // with no native update/evaluate call needed for the first curve.
    const initial={seq:101,samples:[10,30,20],running:true,tone:'#3485eb',percent:true}
-   const firstDoc=mod.exports.plotCanvasHTML(initial).replace('<script>',bridge+'<script>')
+   const firstDoc=mod.exports.plotCanvasHTML(initial,true).replace('<script>',bridge+'<script>')
    await page.setContent(firstDoc);await page.waitForFunction(()=>window.readyCalls===1&&window.plotCanvas?.inspect().seq===101)
    const first=await page.evaluate(()=>{const c=document.querySelector('canvas'),d=c.getContext('2d').getImageData(0,0,c.width,c.height).data;return {state:window.plotCanvas.inspect(),pixels:d.some((v,i)=>i%4===3&&v>0)}})
    assert.deepEqual(first.state.history,initial.samples);assert.equal(first.state.shown.at(-1).y,20);assert.equal(first.state.stats.liveLoops,0);assert.ok(first.pixels)
+   await page.waitForFunction(()=>window.diagnostics.length>=2)
+   const report=await page.evaluate(()=>window.diagnostics.at(-1))
+   assert.equal(report.seq,101);assert.equal(report.samples,3);assert.equal(report.width,329);assert.equal(report.height,96);assert.ok(report.grids>0);assert.ok(report.frames>0);assert.equal(report.context,true);assert.equal(report.error,'')
+   await page.waitForTimeout(1100)
+   const unchanged=await page.evaluate(()=>window.diagnostics.at(-1))
+   assert.equal(unchanged.frames,report.frames,'diagnostic timer does not paint');assert.equal(unchanged.updates,report.updates)
+   await page.evaluate(()=>{document.querySelector('canvas').style.display='none'})
+   await page.waitForFunction(()=>window.diagnostics.at(-1)?.width===0)
+   const zero=await page.evaluate(()=>window.diagnostics.at(-1));assert.equal(zero.height,0);assert.equal(zero.grids,unchanged.grids);assert.ok(zero.attempts>=unchanged.attempts)
    // 32 isolated chart documents use the exact same runtime. Native lazy appearance
    // determines how many are mounted on iPhone, which cannot be proven here.
    await page.setContent('<body></body>');await page.evaluate(doc=>{for(let i=0;i<32;i++){const f=document.createElement('iframe');f.style='width:140px;height:76px';f.srcdoc=doc;document.body.append(f)}},doc)

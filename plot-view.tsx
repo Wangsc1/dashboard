@@ -1,5 +1,6 @@
-import { VStack, Text, WebView, useState, useEffect, useColorScheme } from 'scripting'
+import { VStack, ZStack, Text, WebView, useState, useEffect, useColorScheme } from 'scripting'
 import { plotCanvasHTML } from './plot-canvas'
+interface PlotDiagnostic {ms:number;width:number;height:number;viewportWidth:number;viewportHeight:number;bitmapWidth:number;bitmapHeight:number;context:boolean;hidden:boolean;attempts:number;grids:number;frames:number;updates:number;samples:number;seq:number;active:boolean;error:string}
 export interface CanvasPlotProps {samples:number[];tone:string;plotHeight?:number;area?:boolean;running?:boolean;percent?:boolean;plotWidth?:number}
 // Mount the drawing host in the first render, including during sheet presentation.
 // LazyVStack owns lazy creation; running and component cleanup own pause/disposal.
@@ -12,12 +13,13 @@ export function InlineCanvasPlot(props:CanvasPlotProps) {
 }
 export function MountedCanvasPlot({samples,tone,plotHeight=96,area=false,running=true,percent=false}:CanvasPlotProps) {
   const [error,setError]=useState('')
+  const [trace,setTrace]=useState({stage:'mount',nativeAppear:0,web:null as PlotDiagnostic|null})
   const theme=useColorScheme()
   const [host]=useState(()=>({controller:new WebViewController({ephemeral:true}),alive:true,ready:false,busy:false,registered:false,loaded:false,seq:0,pending:null as null|{seq:number;samples:number[];tone:string;area:boolean;running:boolean;percent:boolean;background:string},flush:()=>{}}))
   useEffect(()=>{
     host.alive=true
     let timeout:ReturnType<typeof setTimeout>|undefined
-    const fail=()=>{if(host.alive){setError('曲线绘制层加载失败');host.ready=false}}
+    const fail=()=>{if(host.alive){setError('曲线绘制层加载失败');host.ready=false;setTrace(s=>({...s,stage:'error'}))}}
     const flush=()=>{
       if(!host.alive||!host.ready||host.busy||!host.pending)return
       const payload=host.pending;host.pending=null;host.busy=true
@@ -31,13 +33,19 @@ export function MountedCanvasPlot({samples,tone,plotHeight=96,area=false,running
       host.loaded=true
       const initial=host.pending;host.pending=null
       timeout=setTimeout(fail,8000)
-      void host.controller.loadHTML(plotCanvasHTML(initial??undefined)).then(ok=>{if(host.alive&&ok===false)fail()},fail)
+      setTrace(s=>({...s,stage:'loading'}))
+      void host.controller.loadHTML(plotCanvasHTML(initial??undefined,true)).then(ok=>{if(!host.alive)return;if(ok===false)fail();else setTrace(s=>({...s,stage:host.ready?'ready':'loaded'}))},fail)
     }
-    void host.controller.addScriptMessageHandler('plotReady',()=>{
+    void Promise.all([
+      host.controller.addScriptMessageHandler<PlotDiagnostic>('plotDiagnostic',value=>{
+        if(host.alive&&value&&Number.isFinite(value.ms))setTrace(s=>({...s,web:value}))
+        return true
+      }),
+      host.controller.addScriptMessageHandler('plotReady',()=>{
       if(!host.alive)return false
       if(timeout!==undefined)clearTimeout(timeout)
-      host.ready=true;flush();return true
-    }).then(()=>{host.registered=true;start()},fail)
+      host.ready=true;setTrace(s=>({...s,stage:'ready'}));flush();return true
+    })]).then(()=>{host.registered=true;start()},fail)
     start()
     return()=>{host.alive=false;host.ready=false;host.pending=null;if(timeout!==undefined)clearTimeout(timeout);host.controller.dispose()}
   },[host])
@@ -45,5 +53,15 @@ export function MountedCanvasPlot({samples,tone,plotHeight=96,area=false,running
     host.pending={seq:++host.seq,samples:samples.filter(Number.isFinite).slice(-60),tone,area,running,percent,background:theme==='dark'?'#1c1c1e':'#f2f2f7'}
     host.flush()
   },[samples,tone,area,running,percent,theme,host])
-  return error?<Text font={11} foregroundStyle="secondaryLabel" frame={{height:plotHeight}}>{error}</Text>:<WebView controller={host.controller} disabled frame={{minHeight:plotHeight,maxHeight:plotHeight,minWidth:0,maxWidth:'infinity'}}/>
+  const d=trace.web
+  return <ZStack alignment="topLeading" frame={{height:plotHeight}}>
+    {error?<Text font={11} foregroundStyle="secondaryLabel" frame={{height:plotHeight}}>{error}</Text>:<WebView controller={host.controller} onAppear={()=>{if(host.alive)setTrace(s=>({...s,nativeAppear:s.nativeAppear+1}))}} disabled frame={{minHeight:plotHeight,maxHeight:plotHeight,minWidth:0,maxWidth:'infinity'}}/>}
+    <VStack alignment="leading" spacing={0} padding={2} background="secondarySystemBackground" foregroundStyle="label" font={8} fontDesign="monospaced">
+      <Text>{`D180 ${trace.stage} A:${trace.nativeAppear} ${d?Math.round(d.ms/1000)+'s':'JS:--'}`}</Text>
+      <Text>{d?`C:${d.width}x${d.height} V:${d.viewportWidth}x${d.viewportHeight} H:${+d.hidden}`:'C:-- V:-- H:--'}</Text>
+      <Text>{d?`P:${d.attempts} G:${d.grids} F:${d.frames} N:${d.samples} U:${d.updates}`:'P:-- G:-- F:-- N:-- U:--'}</Text>
+      <Text>{d?`B:${d.bitmapWidth}x${d.bitmapHeight} ctx:${+d.context} run:${+d.active}`:'B:-- ctx:-- run:--'}</Text>
+      {d?.error?<Text>{`ERR:${d.error}`}</Text>:null}
+    </VStack>
+  </ZStack>
 }
