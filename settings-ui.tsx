@@ -150,7 +150,7 @@ function IconsPage() {
   }
   return <Form background="systemBackground" scrollContentBackground="hidden" navigationTitle="自定义代理组图标" navigationBarTitleDisplayMode="inline"><Section footer={<Text>本地替代：按组名配置 SF Symbols；未覆盖时使用内核提供的 HTTPS 图标（仅脚本管理的缓存）。不修改内核配置。</Text>}><TextField title="图标映射 JSON" value={text} onChanged={setText} prompt={'{"节点选择":"globe"}'} /><Button title="保存图标" action={save} /><Text foregroundStyle="secondaryLabel">{err}</Text></Section></Form>
 }
-function HeaderFields() {
+function HeaderFields({ icon }: { icon: any }) {
   const p = usePreferences()
   const [rows, setRows] = useState(() => {
     try { const entries = Object.entries(JSON.parse(getHeaderText())).map(([key, value]) => ({ key, value: String(value) })); return entries.length ? entries : [{ key: "", value: "" }] }
@@ -169,14 +169,18 @@ function HeaderFields() {
     }
     try { saveHeaders(JSON.stringify(obj)); setError("") } catch (e: any) { setError(String(e.message)) }
   }
-  return <>
-    <Toggle title="自定义请求头" value={p.headersEnabled} onChanged={(v: boolean) => update({ headersEnabled: v })} />
+  return <VStack spacing={0} frame={{ maxWidth: "infinity", alignment: "leading" }}>
+    <HStack spacing={12} padding={{ vertical: 12 }}>{icon}<Toggle title="自定义请求头" value={p.headersEnabled} onChanged={(v: boolean) => update({ headersEnabled: v })} frame={{ height: 31 }} /></HStack>
     {p.headersEnabled ? rows.flatMap((r, i) => [
-      <HStack key={`header-key-${i}`} spacing={16}><Text frame={{ width: 64, alignment: "leading" }}>Key</Text><TextField title="例如 X-Is-Me" value={r.key} onChanged={(v: string) => edit(i, "key", v)} autocorrectionDisabled textInputAutocapitalization="never" /></HStack>,
-      <HStack key={`header-value-${i}`} spacing={16}><Text frame={{ width: 64, alignment: "leading" }}>Value</Text><TextField title="例如 YES" value={r.value} onChanged={(v: string) => edit(i, "value", v)} autocorrectionDisabled textInputAutocapitalization="never" /></HStack>,
+      <HStack key={`header-key-${i}`} spacing={16} padding={{ bottom: 8 }}><Text frame={{ width: 64, alignment: "leading" }}>Key</Text><TextField title="例如 X-Is-Me" value={r.key} onChanged={(v: string) => edit(i, "key", v)} autocorrectionDisabled textInputAutocapitalization="never" /></HStack>,
+      <HStack key={`header-value-${i}`} spacing={16} padding={{ bottom: 12 }}><Text frame={{ width: 64, alignment: "leading" }}>Value</Text><TextField title="例如 YES" value={r.value} onChanged={(v: string) => edit(i, "value", v)} autocorrectionDisabled textInputAutocapitalization="never" /></HStack>,
     ]) : null}
-    {error ? <Text font={12} foregroundStyle="systemRed">{error}</Text> : null}
-  </>
+    {error ? <Text font={12} foregroundStyle="systemRed" padding={{ bottom: 10 }}>{error}</Text> : null}
+  </VStack>
+}
+function NestedDelayRow({ icon }: { icon: any }) {
+  const p = usePreferences(["nestedDelay"])
+  return <HStack spacing={12} padding={{ vertical: 12 }}>{icon}<Toggle title="嵌套代理组延迟显示" value={p.nestedDelay} onChanged={(v: boolean) => update({ nestedDelay: v })} frame={{ height: 31 }} /></HStack>
 }
 
 export function KernelConfigPage({ c }: { c: Controller }) {
@@ -280,6 +284,10 @@ export function KernelConfigPage({ c }: { c: Controller }) {
         {separator()}
         <HStack spacing={12} padding={{ vertical: 12 }}>{icon("number", "systemPurple")}{toggle("ipv6", "IPv6")}</HStack>
         {separator()}
+        <HeaderFields icon={icon("list.bullet.rectangle", "systemOrange")} />
+        {separator()}
+        <NestedDelayRow icon={icon("arrow.triangle.branch", "systemTeal")} />
+        {separator()}
         <HStack spacing={12} padding={{ vertical: 12 }}>{icon("link", "systemGreen")}<Text>绑定地址</Text><Spacer />{field("bind-address", "绑定地址", false)}</HStack>
       </>)}
       {heading("TUN 模式")}
@@ -328,10 +336,6 @@ export function GlobalConfigPage({ active }: { active: Controller | null }) {
     <Section header={<Text>控制器管理</Text>}>{toggle("foldOffline", "自动折叠离线控制器")}</Section>
     <Section header={<Text>交互体验</Text>}>{toggle("haptics", "触感反馈")}</Section>
     <Section header={<Text>延迟阈值设置</Text>}><ThresholdRange /></Section>
-    <Section header={<Text>网络请求</Text>}>
-      <HeaderFields />
-      {toggle("nestedDelay", "嵌套代理组延迟显示")}
-    </Section>
     <Section header={<Text>连接超时</Text>}><Range title="连接超时时间" divider min={1} max={30} value={p.requestTimeout} suffix=" s" onChanged={n => update({ requestTimeout: n })} /></Section>
     <Section header={<Text>测速设置</Text>}><TestURLField /><Range title="超时时间" min={1000} max={10000} step={100} value={p.testTimeout} suffix=" ms" onChanged={n => update({ testTimeout: n })} /></Section>
     <Section header={<Text>运行日志</Text>}><Range title="最大记录条数" min={100} max={2000} step={100} value={p.logLimit} onChanged={n => update({ logLimit: n })} />{toggle("detailedAPI", "记录详细 API 请求")}</Section>

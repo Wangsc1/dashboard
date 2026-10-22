@@ -30,7 +30,7 @@ function rawNodes(tree,name){const out=[];function walk(n){if(!n||typeof n!=='ob
     assert.equal(tree.props.toolbar.topBarTrailing,undefined);assert.equal(tree.props.navigationTitle,active?.name??'更多');if(active){assert.ok(text(tree).includes('运行信息'));assert.ok(nodes(tree,'NavigationLink').length>=5)}
     page.close()
    }
-   const global=owner(ui.GlobalConfigPage),tree=global.render({active:null});await global.flush();same(nodes(tree,ui.Choice),[]);same(nodes(tree,'Section').map(n=>text(n.props.header)),['缓存管理','控制器管理','交互体验','延迟阈值设置','网络请求','连接超时','测速设置','运行日志']);global.close()
+   const global=owner(ui.GlobalConfigPage),tree=global.render({active:null});await global.flush();same(nodes(tree,ui.Choice),[]);same(nodes(tree,'Section').map(n=>text(n.props.header)),['缓存管理','控制器管理','交互体验','延迟阈值设置','连接超时','测速设置','运行日志']);global.close()
    same(pref.getPreferences(),prior);same(store.get(key),stored);assert.equal(writes,0);assert.equal(calls.length,0)
   }finally{context.Storage.set=original}
  })
