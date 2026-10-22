@@ -191,7 +191,7 @@ export function KernelConfigPage({ c }: { c: Controller }) {
   // One source-scoped session owns drafts and a serial, latest-value queue.
   // Native callbacks may outlive their render; never read their captured state.
   type Edit = { value: any; revision: number }
-  type Session = { source: string; controller: Controller; active: boolean; cfg: ClashConfig | null; dirty: Record<string, any>; revisions: Record<string, number>; pending: Map<string, Edit>; errors: Record<string, string>; loading: boolean; saving: boolean }
+  type Session = { source: string; controller: Controller; active: boolean; cfg: ClashConfig | null; dirty: Record<string, any>; revisions: Record<string, number>; pending: Map<string, Edit>; errors: Record<string, string>; loading: boolean; saving: boolean; tunSaving?: boolean }
   const [holder] = useState<{ current: Session | null }>({ current: null })
   const [, redraw] = useState(0)
   const source = JSON.stringify(c)
@@ -216,7 +216,7 @@ export function KernelConfigPage({ c }: { c: Controller }) {
   const provided = (key: string) => key === "tun" ? typeof session.cfg?.tun?.enable === "boolean" : key === "tun.stack" ? typeof (session.cfg as any)?.tun?.stack === "string" : (session.cfg as any)?.[key] !== undefined
   async function drain() {
     if (!current() || session.loading || session.saving) return
-    session.saving = true; paint()
+    session.saving = true; session.tunSaving = false; paint()
     try {
       while (current() && session.pending.size) {
         const batch = new Map(session.pending); session.pending.clear()
@@ -227,6 +227,9 @@ export function KernelConfigPage({ c }: { c: Controller }) {
           if (next !== previous) patch[key] = edit.value
         }
         try {
+          // The TUN rows confirm inline and never surface the page-level
+          // "saving" hint; other fields keep it, failure notices unchanged.
+          session.tunSaving = Object.keys(patch).every(k => k === "tun" || k === "tun.stack") && Object.keys(patch).length > 0
           if (Object.keys(patch).length) await patchConfig(session.controller, patch)
           if (!current()) return
           session.cfg = { ...session.cfg, ...patch, ...(patch.tun ? { tun: { ...session.cfg?.tun, enable: patch.tun.enable } } : {}), ...("tun.stack" in patch ? { tun: { ...session.cfg?.tun, stack: patch["tun.stack"] } } : {}) }
@@ -238,7 +241,7 @@ export function KernelConfigPage({ c }: { c: Controller }) {
           if (!current()) return
           for (const key of batch.keys()) session.errors[key] = "保存失败；改动已保留，请再次选择或结束编辑重试"
         }
-        paint()
+        session.tunSaving = false;paint()
       }
     } finally { if (current()) { session.saving = false; paint() } }
   }
@@ -265,6 +268,16 @@ export function KernelConfigPage({ c }: { c: Controller }) {
     delete session.errors[key]; paint()
     if (immediate) commit(key)
   }
+  // TUN fields may change on other surfaces (another panel or device write).
+  // Each re-show refreshes silently; drafts and errors are never overwritten,
+  // and an in-flight or failing load keeps the previous visible values.
+  const silentRefresh = () => {
+    if (!current() || session.loading || session.saving || session.pending.size) return
+    void (async () => {
+      try { const result = await loadConfig(session.controller); if (current()) { session.cfg = result; paint() } }
+      catch { if (current()) paint() }
+    })()
+  }
   const cfg = session.cfg, dirty = session.dirty, busy = session.loading && !session.cfg
   const err = Object.values(session.errors).join("\n")
   const icon = (name: string, color: string) => <Image systemName={name} font={21} foregroundStyle={color} frame={{ width: 24 }} />
@@ -275,7 +288,7 @@ export function KernelConfigPage({ c }: { c: Controller }) {
   const toggle = (key: string, title: string) => provided(key)
     ? <Toggle title={title} value={key === "tun" ? (dirty.tun?.enable ?? cfg?.tun?.enable) : (dirty[key] ?? (cfg as any)?.[key])} onChanged={(v: boolean) => change(key, key === "tun" ? { enable: v } : v)} disabled={busy} frame={{height:31}} />
     : <HStack frame={{minHeight:31,maxHeight:31,maxWidth:"infinity"}}><Text>{title}</Text><Spacer /><Text font={14} foregroundStyle="secondaryLabel">{busy ? "" : "未提供"}</Text></HStack>
-  return <ScrollView navigationTitle="代理配置" navigationBarTitleDisplayMode="inline" background="systemBackground">
+  return <ScrollView onAppear={silentRefresh} navigationTitle="代理配置" navigationBarTitleDisplayMode="inline" background="systemBackground">
     <VStack alignment="leading" spacing={10} padding={{ horizontal: 20, vertical: 16 }} frame={{maxWidth:"infinity",alignment:"leading"}}>
       {heading("端口配置")}
       {card(([ ["mixed-port", "混合端口"], ["port", "HTTP 端口"], ["socks-port", "SOCKS5 端口"], ["redir-port", "透明代理端口"], ["tproxy-port", "TProxy 端口"] ]).map(([key, title], i) => <VStack key={key} spacing={0}>
@@ -297,8 +310,8 @@ export function KernelConfigPage({ c }: { c: Controller }) {
       {card(<>
         <HStack spacing={12} padding={{ vertical: 12 }}>{icon("shield", "systemPurple")}{toggle("tun", "TUN 模式")}</HStack>
         {separator()}
-        <HStack spacing={12} padding={{ vertical: 12 }}>{icon("stack", "systemIndigo")}<Text>Tun 堆栈</Text><Spacer />
-          <Menu disabled={busy || !provided("tun.stack")} label={<HStack spacing={6}><Text foregroundStyle="secondaryLabel">{TUN_STACKS.find(([value]) => value === (dirty["tun.stack"] ?? (cfg as any)?.tun?.stack))?.[1] ?? (busy ? "" : "未知")}</Text><Image systemName="chevron.up.chevron.down" font={12} foregroundStyle="secondaryLabel" /></HStack>}>
+        <HStack spacing={12} padding={{ vertical: 12 }} frame={{ minHeight: 31, maxHeight: 31, maxWidth: "infinity" }}>{icon("rhombus", "systemIndigo")}<Text>TUN 堆栈</Text><Spacer />
+          <Menu frame={{ height: 31 }} disabled={busy || !provided("tun.stack")} label={<HStack spacing={6}><Text foregroundStyle="secondaryLabel">{TUN_STACKS.find(([value]) => value === (dirty["tun.stack"] ?? (cfg as any)?.tun?.stack))?.[1] ?? (busy ? "" : "未知")}</Text><Image systemName="chevron.up.chevron.down" font={12} foregroundStyle="secondaryLabel" /></HStack>}>
             {TUN_STACKS.map(([value, label]) => <Button key={value} title={label + ((dirty["tun.stack"] ?? (cfg as any)?.tun?.stack) === value ? " ✓" : "")} action={() => change("tun.stack", value)} />)}
           </Menu>
         </HStack>
@@ -311,7 +324,7 @@ export function KernelConfigPage({ c }: { c: Controller }) {
       </HStack>)}
       <VStack alignment="leading" spacing={4} frame={{minHeight:20,maxWidth:"infinity",alignment:"leading"}}>
         {busy ? <Text font={13} foregroundStyle="secondaryLabel">读取中…</Text> : null}
-        {session.saving ? <Text font={13} foregroundStyle="secondaryLabel">保存中…</Text> : null}
+        {session.saving && !session.tunSaving ? <Text font={13} foregroundStyle="secondaryLabel">保存中…</Text> : null}
         {err ? <Text font={13} foregroundStyle="secondaryLabel">{err}</Text> : null}
       </VStack>
     </VStack>

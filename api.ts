@@ -2,7 +2,7 @@ import { TimingToken, timingToken, timing, timingReadContext, timingSpan } from 
 import { CpuSampler, CpuUsage, CpuMeta, parseCpuInfo, thermalCelsius } from "./openwrt-metrics"
 
 import { getPreferences, customHeaders, recordEvent, controllerHealth, feedback } from "./preferences"
-export const VERSION = "1.19"
+export const VERSION = "1.20"
 
 export type Kind = "clash" | "openwrt"
 export type Plugin = "openclash" | "nikki" | "mihomo"
@@ -632,7 +632,11 @@ function rememberKernelConfig(c: Controller, cfg: any) {
   if (!cfg || typeof cfg !== "object") return
   const snap: any = {}
   for (const k of KERNEL_CONFIG_KEYS) if (cfg[k] !== undefined && cfg[k] !== null) snap[k] = cfg[k]
-  if (typeof cfg.tun?.enable === "boolean") snap.tun = { enable: cfg.tun.enable }
+  if (typeof cfg.tun?.enable === "boolean" || typeof cfg.tun?.stack === "string") {
+    snap.tun = {}
+    if (typeof cfg.tun.enable === "boolean") snap.tun.enable = cfg.tun.enable
+    if (typeof cfg.tun.stack === "string") snap.tun.stack = cfg.tun.stack
+  }
   const key = JSON.stringify(c)
   if (!Object.keys(snap).length) { kernelConfigSnapshots.delete(key); return }
   if (kernelConfigSnapshots.size > 30 && !kernelConfigSnapshots.has(key)) kernelConfigSnapshots.clear()
