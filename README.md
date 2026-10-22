@@ -1,6 +1,6 @@
 # dashboard
 
-运行于 iPhone **Scripting** 的 OpenWrt 与 Clash/Mihomo 管理面板，不是 Scriptable 脚本，也不是独立 iOS App。
+运行于 iPhone **Scripting** 的 OpenWrt 与 Clash/Mihomo 管理面板。
 
 ## 功能
 
