@@ -860,7 +860,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) { const lazy = ['proxies','rules','connections'].includes(ids[i]) && ids[i] !== id; assert.equal(nodes(tree, types[i]).length, lazy ? 0 : 1); if (!lazy) assert.equal(nodes(tree, types[i])[0].props.selected, ids[i] === id) }
     }
-    assert.equal(api.VERSION, '1.29'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.30'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('独立导航栈保留业务owner和身份，只有选中页提供可见工具栏', () => {
     pref.savePreferences({ defaultPage: 'overview' })
@@ -942,7 +942,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     let tree = render(ui.PanelSettingsSections, {}, true); await flush()
     assert.equal(nodes(tree, 'Toggle').length, 0); assert.ok(!text(tree).includes('交互体验')); assert.ok(!text(tree).includes('触感反馈'))
     const beforeConfirms = confirms.length
-    context.confirmResult = false; await button(tree, '清除图片缓存').props.action(); assert.equal(confirms.length, beforeConfirms + 1)
+    context.confirmResult = false; await button(tree, '清除缓存').props.action(); assert.equal(confirms.length, beforeConfirms + 1)
     pref.savePreferences({ haptics: true }); pref.feedback(); assert.equal(pref.getPreferences().haptics, false); assert.equal(haptics, beforeHaptics)
     unmount(); pref.savePreferences(before)
   })
@@ -1361,13 +1361,13 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
   await test('版本数据：真实接口结构、请求先后顺序、单路失败及Nikki兜底', async () => {
     unmount()
     const n={...c,id:'runtime-versions',kind:'openwrt',plugin:'nikki',host:'runtime.invalid',url:'http://runtime.invalid',auto:false,cport:9090}
-    let direct={version:'live-core'},local={app:'1.29.2',core:'alpha-94b13ae'},directFailed=false,localFailed=false,waitFor='',release
+    let direct={version:'live-core'},local={app:'1.30.2',core:'alpha-94b13ae'},directFailed=false,localFailed=false,waitFor='',release
     responder=(url,init)=>{
       if(url.endsWith('/ubus')){const p=JSON.parse(init.body).params;if(p[1]==='session')return {body:{result:[0,{ubus_rpc_session:'runtime-session'}]}};if(localFailed)return {status:500};return {body:{result:[0,local]},...(waitFor==='local'?{wait:new Promise(r=>{release=r})}:{})}}
       if(directFailed)return {status:500};return {body:direct,...(waitFor==='direct'?{wait:new Promise(r=>{release=r})}:{})}
     }
-    for(const delayed of ['local','direct']){waitFor=delayed;const pending=api.loadRuntimeVersions(n);await flush();assert.equal(typeof release,'function');release();const v=await pending;assert.deepEqual(clone(v),{core:'live-core',app:'1.29.2',failed:false})}
-    waitFor='';directFailed=true;assert.deepEqual(clone(await api.loadRuntimeVersions(n)),{core:'alpha-94b13ae',app:'1.29.2',failed:false})
+    for(const delayed of ['local','direct']){waitFor=delayed;const pending=api.loadRuntimeVersions(n);await flush();assert.equal(typeof release,'function');release();const v=await pending;assert.deepEqual(clone(v),{core:'live-core',app:'1.30.2',failed:false})}
+    waitFor='';directFailed=true;assert.deepEqual(clone(await api.loadRuntimeVersions(n)),{core:'alpha-94b13ae',app:'1.30.2',failed:false})
     directFailed=false;local={};assert.deepEqual(clone(await api.loadRuntimeVersions(n)),{core:'live-core',app:'未提供',failed:true})
     localFailed=true;assert.equal((await api.loadRuntimeVersions(n)).core,'live-core')
     directFailed=true;assert.deepEqual(clone(await api.loadRuntimeVersions(n)),{core:'未提供',app:'未提供',failed:true})
@@ -1375,9 +1375,9 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
   })
   await test('更多版本行单独保留数值空间，白底及子页背景不使用分组灰底', async () => {
     const n={...c,id:'runtime-visible',kind:'openwrt',plugin:'nikki',host:'runtime-ui.invalid',url:'http://runtime-ui.invalid',auto:false,cport:9090}
-    responder=(url,init)=>{if(url.endsWith('/ubus')){const p=JSON.parse(init.body).params;return {body:{result:[0,p[1]==='session'?{ubus_rpc_session:'runtime-ui-session'}:p[2]==='version'?{app:'1.29.2',core:'alpha-94b13ae'}:{}]}}}return {body:url.endsWith('/version')?{version:'alpha-94b13ae'}:{mode:'rule'}}}
+    responder=(url,init)=>{if(url.endsWith('/ubus')){const p=JSON.parse(init.body).params;return {body:{result:[0,p[1]==='session'?{ubus_rpc_session:'runtime-ui-session'}:p[2]==='version'?{app:'1.30.2',core:'alpha-94b13ae'}:{}]}}}return {body:url.endsWith('/version')?{version:'alpha-94b13ae'}:{mode:'rule'}}}
     render(pages.MorePage,{active:n,onChanged(){}},true);await flush();let tree=render(pages.MorePage,{active:n,onChanged(){}})
-    for(const value of ['1.29.2','alpha-94b13ae']){const t=nodes(tree,'Text').find(x=>text(x)===value);assert.ok(t);assert.equal(t.props.fixedSize.horizontal,true)}
+    for(const value of ['1.30.2','alpha-94b13ae']){const t=nodes(tree,'Text').find(x=>text(x)===value);assert.ok(t);assert.equal(t.props.fixedSize.horizontal,true)}
     const versionRow=nodes(tree,'HStack').find(x=>text(x).includes('alpha-94b13ae')&&!text(x).includes('运行时间'));assert.ok(!text(versionRow).includes('运行时间'))
     assert.equal(tree.props.background,'systemBackground');unmount()
     for(const [Page,props] of [[pages.DNSPage,{c:n}],[pages.ManagementPage,{c:n,kind:'profile'}],[ui.KernelConfigPage,{c:n}],[ui.LogsPage,{}],[app.SettingsPage,{active:n,onChanged(){}}]]){
@@ -1613,7 +1613,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     for (const key of ['showWrt','droplets','connectionBackground','ripple']) assert.ok(!nodes(tree, 'Toggle').some(n => n.props.key === key))
     for (const title of ['外观模式','默认打开界面']) assert.ok(!nodes(tree, ui.Choice).some(n => n.props.title === title))
     assert.ok(!nodes(tree, 'Toggle').some(n => n.props.key === 'customIcons')); assert.equal(pref.getPreferences().customIcons, true)
-    assert.ok(button(tree, '清除图片缓存'))
+    assert.ok(button(tree, '清除缓存'))
     assert.equal(pref.getPreferences().theme, 'dark')
     const src = fs.readFileSync(path.join(root, 'index.tsx'), 'utf8'); assert.ok(!src.includes('AppearancePage')); assert.ok(!src.includes('prefs.showWrt'))
     pref.savePreferences({ theme: 'system', showWrt: true }); unmount()
@@ -1626,7 +1626,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     for (const key of ['showHidden','customIcons','disconnectOnSwitch']) assert.ok(!nodes(tree, 'Toggle').some(n => n.props.key === key))
     assert.ok(!nodes(tree, 'Toggle').some(n => n.props.key === 'nestedDelay')); assert.ok(!nodes(tree, 'Toggle').some(n => n.props.key === 'haptics'))
     { const k = fs.readFileSync(path.join(root, 'settings-ui.tsx'), 'utf8'); const a = k.indexOf('toggle("ipv6", "IPv6")'), b = k.indexOf('<HeaderFields icon='), c = k.indexOf('<NestedDelayRow'), d = k.indexOf('Text>绑定地址'); assert.ok(a > 0 && a < b && b < c && c < d) }
-    assert.ok(!nodes(tree, ui.Choice).some(n => n.props.title === '外观模式')); assert.ok(button(tree, '清除图片缓存'))
+    assert.ok(!nodes(tree, ui.Choice).some(n => n.props.title === '外观模式')); assert.ok(button(tree, '清除缓存'))
     unmount()
   })
   await test('关闭自定义图标隐藏默认、映射及网络图标，迟到下载不恢复图标', async () => {
@@ -1965,7 +1965,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       const diagnostic = logs.filter(x => x.startsWith('[preferences-icon]'))
       for (const stage of ['change','accepted','proxies-render','group-render']) assert.ok(diagnostic.some(x => x.includes('stage=' + stage) && x.includes('enabled=false')))
       assert.ok(diagnostic.every(x => !x.includes('private.invalid') && !x.includes('private-group-name') && !x.includes('secret-')))
-      assert.ok(diagnostic.every(x => x.includes('build=1.29') && /instance=[a-z0-9]+/.test(x)))
+      assert.ok(diagnostic.every(x => x.includes('build=1.30') && /instance=[a-z0-9]+/.test(x)))
       assert.equal(new Set(diagnostic.map(x => x.match(/instance=([^ ]+)/)[1])).size, 1)
     } finally { context.console = originalConsole; unmount(); pref.savePreferences({ customIcons: true, testURL: 'https://www.gstatic.com/generate_204' }) }
   })
@@ -2039,7 +2039,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
   await test('主页内存固定一位小数，流量默认精度不变', () => {
     assert.deepEqual(Array.from(api.fmtParts(128.56 * 1048576, false, 1)), ['128.6', 'MB'])
     assert.deepEqual(Array.from(api.fmtParts(128 * 1048576, false, 1)), ['128.0', 'MB'])
-    assert.deepEqual(Array.from(api.fmtParts(1.29 * 1073741824, false, 1)), ['1.3', 'GB'])
+    assert.deepEqual(Array.from(api.fmtParts(1.30 * 1073741824, false, 1)), ['1.3', 'GB'])
     assert.deepEqual(Array.from(api.fmtParts(128 * 1048576)), ['128.00', 'MB'])
     assert.ok(fs.readFileSync(path.join(root,'home-ui.tsx'),'utf8').includes('RamCard'))
   })

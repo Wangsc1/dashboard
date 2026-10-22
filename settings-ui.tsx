@@ -359,11 +359,11 @@ export function TestURLField() {
 export function panelRowBackground() { return <RoundedRectangle cornerRadius={0} fill="secondarySystemBackground" /> }
 export function PanelSettingsSections() {
   async function clear() {
-    if (!await Dialog.confirm({ title: "清除图片缓存", message: "仅删除本脚本缓存的代理组图片；不会删除账号、密码、密钥、设置或日志。", confirmLabel: "清除" })) return
+    if (!await Dialog.confirm({ title: "清除缓存", message: "仅删除本脚本缓存的代理组图片；不会删除账号、密码、密钥、设置或日志。", confirmLabel: "清除" })) return
     const n = clearImageCache(); await Dialog.alert({ message: `已清除 ${n} 项脚本图片缓存；已显示图片在重新进入代理页后重载。` })
   }
   return <>
-    <Section listRowBackground={panelRowBackground()} header={<Text>缓存管理</Text>}><Button title="清除图片缓存" action={clear} /></Section>
+    <Section listRowBackground={panelRowBackground()} header={<Text>缓存管理</Text>}><Button title="清除缓存" action={clear} /></Section>
   </>
 }
 function CloudSettingsPage() {
