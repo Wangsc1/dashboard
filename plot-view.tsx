@@ -12,6 +12,8 @@ export function InlineCanvasPlot(props:CanvasPlotProps) {
 }
 export function MountedCanvasPlot({samples,tone,plotHeight=96,area=false,running=true,percent=false}:CanvasPlotProps) {
   const [error,setError]=useState('')
+  // A WebView is white until its document exists; stay transparent so the card colour shows through until the canvas has drawn.
+  const [shown,setShown]=useState(false)
   const theme=useColorScheme()
   const [host]=useState(()=>({controller:new WebViewController({ephemeral:true}),alive:true,ready:false,busy:false,registered:false,loaded:false,seq:0,pending:null as null|{seq:number;samples:number[];tone:string;area:boolean;running:boolean;percent:boolean;background:string},flush:()=>{}}))
   useEffect(()=>{
@@ -36,7 +38,7 @@ export function MountedCanvasPlot({samples,tone,plotHeight=96,area=false,running
     void host.controller.addScriptMessageHandler('plotReady',()=>{
       if(!host.alive)return false
       if(timeout!==undefined)clearTimeout(timeout)
-      host.ready=true;flush();return true
+      host.ready=true;flush();setShown(true);return true
     }).then(()=>{host.registered=true;start()},fail)
     start()
     return()=>{host.alive=false;host.ready=false;host.pending=null;if(timeout!==undefined)clearTimeout(timeout);host.controller.dispose()}
@@ -45,5 +47,5 @@ export function MountedCanvasPlot({samples,tone,plotHeight=96,area=false,running
     host.pending={seq:++host.seq,samples:samples.filter(Number.isFinite).slice(-60),tone,area,running,percent,background:theme==='dark'?'#1c1c1e':'#f2f2f7'}
     host.flush()
   },[samples,tone,area,running,percent,theme,host])
-  return error?<Text font={11} foregroundStyle="secondaryLabel" frame={{height:plotHeight}}>{error}</Text>:<WebView controller={host.controller} disabled frame={{minHeight:plotHeight,maxHeight:plotHeight,minWidth:0,maxWidth:'infinity'}}/>
+  return error?<Text font={11} foregroundStyle="secondaryLabel" frame={{height:plotHeight}}>{error}</Text>:<WebView controller={host.controller} disabled opacity={shown?1:0} frame={{minHeight:plotHeight,maxHeight:plotHeight,minWidth:0,maxWidth:'infinity'}}/>
 }

@@ -21,6 +21,12 @@ async function mount(){const node=render(plot.MountedCanvasPlot,props,true);awai
   const detail=home.SampledCpuPlot({samples:[10,20],running:true})
   assert.equal(detail.type,home.GridPlot);assert.equal(home.GridPlot(front.props).type,plot.InlineCanvasPlot);assert.equal(home.GridPlot(detail.props).type,plot.InlineCanvasPlot)
  })
+ await test('绘制层就绪前WebView透明，避免白块闪现；就绪后显示',async()=>{
+  let node=render(plot.MountedCanvasPlot,props,true);await flush();const host=hosts.at(-1)
+  assert.equal(nodes(node,'WebView')[0].props.opacity,0)
+  host.handlers.plotReady();await flush();node=render(plot.MountedCanvasPlot,props)
+  assert.equal(nodes(node,'WebView')[0].props.opacity,1)
+ })
  await test('完全不发送原生出现事件：首屏仍创建并加载且只加载一次，首帧携带样本',async()=>{
   const slot=render(plot.InlineCanvasPlot,props,true)
   assert.equal(nodes(slot,plot.MountedCanvasPlot).length,1)
