@@ -1,4 +1,4 @@
-import { HStack, VStack, Text, Image, RoundedRectangle, Spacer, ScrollView, LazyVStack, Chart, LineChart, AreaChart, ZStack, NavigationStack, modifiers, useState, useEffect, useMemo, GeometryReader, useColorScheme } from "scripting"
+import { HStack, VStack, Text, Image, RoundedRectangle, Spacer, ScrollView, LazyVStack, Animation, Chart, LineChart, AreaChart, ZStack, NavigationStack, modifiers, useState, useEffect, useMemo, GeometryReader, useColorScheme } from "scripting"
 import { Overview, WrtInfo, fmtBytes, fmtSpeed, fmtUptime } from "./api"
 import { CpuUsage, OverviewHistory } from "./openwrt-metrics"
 export const HOME_BG = "systemBackground"
@@ -16,21 +16,28 @@ export function MetricNumber({value,unit="",pointSize=16,tone="label",digits=0,r
   },[target,unit,running])
   return <Text font={pointSize} fontWeight="semibold" foregroundStyle={tone} lineLimit={1} minimumScaleFactor={0.65}>{`${shown}${unit}`}</Text>
 }
-// Minimal documented native Chart: category labels, one direct frame, no Date domain,
-// hand-built axis values or animation. Fewer than two samples keeps only the fixed slot.
-export function GridPlot({samples,tone,plotHeight=96,area=false,percent=false}:{samples:number[];tone:string;plotHeight?:number;area?:boolean;running?:boolean;percent?:boolean}) {
+// Minimal documented native Chart: fixed 60 category labels declared through the documented
+// `chartXScale` string[] form; existing samples occupy the LAST n labels (right-aligned, no
+// fake zeros). No Date domain, hand-built axis values or animation; <2 points keeps only the slot.
+// ONE-SWITCH animation (officially `animation={{animation, value}}`). 1.5.164 removed it while
+// investigating Charts crashes; if crashes return after re-enabling, set this to false first.
+export const CHART_ANIMATION=true
+const PLOT_LABELS=Array.from({length:60},(_,i)=>String(i).padStart(2,"0"))
+export function GridPlot({samples,tone,plotHeight=96,area=false,running=true,percent=false}:{samples:number[];tone:string;plotHeight?:number;area?:boolean;running?:boolean;percent?:boolean}) {
   const values=samples.slice(-60).filter(Number.isFinite),top=percent?100:Math.max(1024,...values)
-  const marks=useMemo(()=>values.map((value,i)=>({label:String(i).padStart(2,"0"),value,foregroundStyle:tone,interpolationMethod:"monotone" as const,lineStyle:{lineWidth:1.5,lineCap:"round" as const}})),[samples,tone])
+  const marks=useMemo(()=>values.map((value,i)=>({label:PLOT_LABELS[60-values.length+i],value,foregroundStyle:tone,interpolationMethod:"monotone" as const,lineStyle:{lineWidth:1.5,lineCap:"round" as const}})),[samples,tone])
   if(values.length<2)return <VStack frame={{height:plotHeight}}/>
   return <Chart frame={{height:plotHeight}} chartLegend="hidden" chartXAxis="hidden"
+    chartXScale={PLOT_LABELS}
     chartYScale={{domain:{from:0,to:top},type:"linear"}}
-    chartYAxis={{valueLabel:false,tick:false,gridLine:{stroke:{lineWidth:0.5,dash:[3,3]}}}}>
+    chartYAxis={{valueLabel:false,tick:false,gridLine:{stroke:{lineWidth:0.5,dash:[3,3]}}}}
+    animation={CHART_ANIMATION&&running?{animation:Animation.linear(0.9),value:values.reduce((a,b)=>a+b,0)}:undefined}>
     {area?<AreaChart marks={marks.map(m=>({...m,opacity:0.10}))}/>:null}
     <LineChart marks={marks}/>
   </Chart>
 }
 export function CpuBreakdown({cpu,running}:{cpu?:CpuUsage;running:boolean}) {
-  return <HStack spacing={16} alignment="bottom"><HStack spacing={0} frame={{minWidth:0,maxWidth:"infinity"}}>{([['SYS',cpu?.system],['USER',cpu?.user],['STEAL',cpu?.steal]] as const).map(([title,value])=><VStack key={title} alignment="leading" spacing={3} frame={{minWidth:0,maxWidth:"infinity"}}><Text font={10} fontWeight="semibold" foregroundStyle="secondaryLabel" lineLimit={1} minimumScaleFactor={0.65}>{title}</Text><MetricNumber value={value} digits={1} pointSize={14} running={running}/></VStack>)}</HStack><HStack alignment="lastTextBaseline" spacing={2} fixedSize={{horizontal:false,vertical:true}}><MetricNumber running={running} value={cpu?.usage} digits={1} pointSize={22} tone="#3485eb"/><Text font={11} foregroundStyle="#3485eb">%</Text></HStack></HStack>
+  return <HStack spacing={0} alignment="bottom"><HStack spacing={22}>{([['SYS',cpu?.system],['USER',cpu?.user],['STEAL',cpu?.steal]] as const).map(([title,value])=><VStack key={title} alignment="leading" spacing={3}><Text font={10} fontWeight="semibold" foregroundStyle="secondaryLabel" lineLimit={1}>{title}</Text><MetricNumber value={value} digits={1} pointSize={14} running={running}/></VStack>)}</HStack><Spacer/><HStack alignment="lastTextBaseline" spacing={2}><MetricNumber running={running} value={cpu?.usage} digits={1} pointSize={22} tone="#3485eb"/><Text font={11} foregroundStyle="#3485eb">%</Text></HStack></HStack>
 }
 export function CpuCard({w,history,running,onOpen,detail=false}:{w?:WrtInfo;history:number[];running:boolean;onOpen?:()=>void;detail?:boolean}) {
   return <HomeCard onOpen={onOpen}><HStack><Text font={detail?15:16} fontWeight="semibold">{detail?w?.cpuModel||"CPU 型号未提供":"CPU"}</Text><Spacer/>{!detail?<Text font={11} foregroundStyle="#3485eb" padding={{horizontal:8,vertical:4}} background={<RoundedRectangle cornerRadius={8} fill={{light:"#edf5ff",dark:"#24374d"}}/>}>{w?.temperature===undefined?"-- °C":`${w.temperature.toFixed(1)} °C`}</Text>:null}</HStack><GridPlot samples={history} tone="#3485eb" percent running={running}/><CpuBreakdown cpu={w?.cpus?.find(c=>c.id==='cpu')} running={running&&!detail}/></HomeCard>
@@ -39,24 +46,21 @@ export function TrafficCard({heading,rate,total,history,tone,running}:{heading:s
   const parts=rate===undefined?undefined:fmtSpeed(rate).split(' '),value=parts?Number(parts[0]):undefined,unit=parts?" "+parts.slice(1).join(' '):""
   return <HomeCard><HStack spacing={3}><Text font={16} fontWeight="semibold">{heading}</Text><Spacer/><MetricNumber running={running} value={value} unit={unit} pointSize={14} tone={tone} digits={value!==undefined&&value<100?1:0}/></HStack><GridPlot samples={history} tone={tone} plotHeight={66} area running={running}/><Text font={12} foregroundStyle="secondaryLabel">{`已用 ${total===undefined?'--':fmtBytes(total)}`}</Text></HomeCard>
 }
+// Deterministic bars: no GeometryReader. Equal flexible-width bars, one fixed 24pt row height.
+const BAR_ROW={minWidth:0,maxWidth:"infinity" as const,minHeight:24,maxHeight:24}
+const BAR_CELL={minWidth:0,maxWidth:"infinity" as const,minHeight:24,maxHeight:24}
 export function CapacityBars({fraction,tone}:{fraction?:number;tone:string}) {
   const n=fraction===undefined?0:Math.round(Math.max(0,Math.min(1,fraction))*24)
-  return <GeometryReader modifiers={modifiers().frame({height:28}).frame({minWidth:0,maxWidth:"infinity"})}>{geometry=>{
-    const W=Math.max(0,geometry.size.width),gap=W*2.5/144,bar=Math.max(0,(W-23*gap)/24)
-    return <HStack spacing={gap} frame={{width:W,height:28}}>{Array.from({length:24},(_,i)=><RoundedRectangle key={String(i)} cornerRadius={Math.min(1.75,bar/2)} fill={{color:tone,opacity:i<n?0.85:0.12}} frame={{width:bar,height:24}}/>)}</HStack>
-  }}</GeometryReader>
+  return <HStack spacing={2} frame={BAR_ROW}>{Array.from({length:24},(_,i)=><RoundedRectangle key={String(i)} cornerRadius={1.75} fill={{color:tone,opacity:i<n?0.85:0.12}} frame={BAR_CELL}/>)}</HStack>
 }
 export const LOAD_TONES={light:["#17965b","#c16b13","#287ed6"],dark:["#39d98a","#ffaf40","#56b5ff"]}
 export function LoadBars({fraction,tone}:{fraction?:number;tone:string}) {
   const known=fraction!==undefined&&Number.isFinite(fraction)&&fraction>=0
   const height=known?24*Math.min(1,fraction):undefined
-  return <GeometryReader modifiers={modifiers().frame({height:28}).frame({minWidth:0,maxWidth:"infinity"})}>{geometry=>{
-    const W=Math.max(0,geometry.size.width),gap=W*2.5/144,bar=Math.max(0,(W-23*gap)/24)
-    return <HStack spacing={gap} frame={{width:W,height:28}}>{Array.from({length:24},(_,i)=><ZStack key={String(i)} alignment="bottom" frame={{width:bar,height:24}}>
-      <RoundedRectangle cornerRadius={Math.min(1.75,bar/2)} fill={{color:tone,opacity:0.12}} frame={{width:bar,height:24}}/>
-      {height===undefined?null:<RoundedRectangle cornerRadius={Math.min(1.75,bar/2,height/2)} fill={tone} frame={{width:bar,height}}/>}
-    </ZStack>)}</HStack>
-  }}</GeometryReader>
+  return <HStack spacing={2} frame={BAR_ROW}>{Array.from({length:24},(_,i)=><ZStack key={String(i)} alignment="bottom" frame={BAR_CELL}>
+    <RoundedRectangle cornerRadius={1.75} fill={{color:tone,opacity:0.12}} frame={BAR_CELL}/>
+    {height===undefined||height<=0?null:<RoundedRectangle cornerRadius={Math.min(1.75,height/2)} fill={tone} frame={{minWidth:0,maxWidth:"infinity",minHeight:height,maxHeight:height}}/>}
+  </ZStack>)}</HStack>
 }
 // Intrinsic content sets the row height; its background paints equal-height cards.
 // Neither the card nor the row asks for an infinite height proposal.
@@ -65,7 +69,7 @@ export function CompactMetricCard({heading,trailing,bars,footer}:{heading:string
     modifiers={modifiers().frame({minWidth:0,maxWidth:"infinity",alignment:"leading"}).padding(16)}><HStack spacing={4}><Text font={16} fontWeight="semibold">{heading}</Text><Spacer/>{trailing}</HStack>{bars}{footer}</VStack>
 }
 export function MetricFooterValue({value,caption,valueEdge="center"}:{value:string;caption:string;valueEdge?:"leading"|"center"|"trailing"}) {
-  return <VStack alignment={valueEdge} spacing={3} frame={{minWidth:0,maxWidth:"infinity"}} fixedSize={{horizontal:false,vertical:true}}>
+  return <VStack alignment={valueEdge} spacing={3} frame={{minWidth:0,maxWidth:"infinity",alignment:valueEdge}} fixedSize={{horizontal:false,vertical:true}}>
     <Text font={12} multilineTextAlignment={valueEdge==='leading'?'leading':valueEdge==='trailing'?'trailing':'center'}>{value}</Text>
     <Text font={10} foregroundStyle="secondaryLabel">{caption}</Text>
   </VStack>

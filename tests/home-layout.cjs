@@ -42,25 +42,38 @@ function slot(n,height){
    for(const height of [96,66,76])for(const percent of [true,false])for(const samples of [[1,2],[0,0,0],Array(60).fill(100),Array.from({length:80},(_,i)=>i*1024)]){
      const c=render(home.GridPlot,{samples,tone:'blue',plotHeight:height,percent,area:height===66,running:true},true)
      assert.equal(c.type,'Chart');deep(c.props.frame,{height});assert.equal(c.props.modifiers,undefined)
-     for(const k of ['animation','chartXScale','chartYAxis.values'])assert.equal(k.includes('.')?c.props.chartYAxis.values:c.props[k],undefined,k)
+     assert.equal(c.props.chartYAxis.values,undefined);assert.ok(c.props.animation&&typeof c.props.animation.value==='number'&&Number.isFinite(c.props.animation.value)&&typeof c.props.animation.animation==='object')
      assert.equal(c.props.chartXAxis,'hidden');assert.equal(c.props.chartYAxis.valueLabel,false)
      assert.equal(c.props.chartYScale.type,'linear');const y=c.props.chartYScale.domain;assert.ok(Number.isFinite(y.from)&&Number.isFinite(y.to)&&y.from===0&&y.to>0)
      const marks=nodes(c,'LineChart')[0].props.marks;assert.equal(marks.length,Math.min(60,samples.length))
      assert.ok(marks.every(m=>typeof m.label==='string'&&Number.isFinite(m.value)));assert.equal(new Set(marks.map(m=>m.label)).size,marks.length)
      assert.equal(nodes(c,'AreaChart').length,height===66?1:0)
+     const xs=c.props.chartXScale;assert.equal(xs.length,60);assert.equal(new Set(xs).size,60);assert.ok(xs.every(x=>typeof x==='string'))
+     const n=marks.length;assert.equal(marks.at(-1).label,xs[59]);assert.equal(marks[0].label,xs[60-n]);assert.ok(marks.every((m,i)=>m.label===xs[60-n+i]))
    }unmount()
-   const source=fs.readFileSync(path.join(root,'home-ui.tsx'),'utf8');for(const banned of ['new Date','Array.from({length:8}','chartXScale','animation=','Animation'])assert.ok(!source.includes(banned),banned)
+   const source=fs.readFileSync(path.join(root,'home-ui.tsx'),'utf8');for(const banned of ['new Date','Array.from({length:8}','type:"date"','Animation.easeIn'])assert.ok(!source.includes(banned),banned)
  })
- await test('原生条图明确28/8pt占位，内部绘制不超槽，未知及窄宽保持比例',()=>{
-   for(const width of [25,43,144,336])for(const fraction of [undefined,0,0.001,0.5,1,2]){
-     for(const build of [()=>home.CapacityBars({fraction,tone:'blue'}),()=>home.LoadBars({fraction,tone:'green'}),()=>home.DiskCapacityBar({used:fraction===undefined?undefined:fraction*100,size:100})]){
-       const geometry=build(),height=geometry.props.modifiers.steps[0][1].height
-       assert.equal(geometry.type,'GeometryReader');assert.ok(height===28||height===8);slot(geometry,height)
-       const contents=geometry.props.children[0]({size:{width,height}})
-       assert.equal(contents.props.frame.height,height);assert.equal(contents.props.frame.width,width)
-       for(const shape of nodes(contents,'RoundedRectangle')){assert.ok(shape.props.frame.height<=height);assert.ok(shape.props.frame.height>=0)}
-     }
+ await test('契约(非实机): RAM/负载条不用GeometryReader，24根等宽柔性条、单一固定24pt行高、2pt间距',()=>{
+   for(const fraction of [undefined,0,0.001,0.5,1,2,NaN])for(const [name,build] of [['ram',()=>home.CapacityBars({fraction,tone:'blue'})],['load',()=>home.LoadBars({fraction,tone:'green'})]]){
+     const row=build();assert.equal(row.type,'HStack');assert.equal(row.props.spacing,2);deep(row.props.frame,{minWidth:0,maxWidth:'infinity',minHeight:24,maxHeight:24});assert.equal(row.props.children.length,24)
+     assert.equal(nodes(row,'GeometryReader').length,0)
+     for(const cell of row.props.children){const f=name==='ram'?cell.props.frame:cell.props.frame;deep(f,{minWidth:0,maxWidth:'infinity',minHeight:24,maxHeight:24})}
+     for(const shape of nodes(row,'RoundedRectangle')){const f=shape.props.frame;assert.equal(f.width,undefined);assert.equal(f.height,undefined);assert.ok(f.minHeight<=24&&f.maxHeight===f.minHeight);assert.ok(f.minHeight>=0)}
    }
+   for(const width of [25,43,144,336])for(const fraction of [undefined,0,0.001,0.5,1,2]){
+     const geometry=home.DiskCapacityBar({used:fraction===undefined?undefined:fraction*100,size:100});assert.equal(geometry.type,'GeometryReader');slot(geometry,8)
+     const contents=geometry.props.children[0]({size:{width,height:8}});assert.equal(contents.props.frame.height,8);assert.equal(contents.props.frame.width,width)
+   }
+ })
+ await test('契约(非实机): 动画仅running启用，值为简单数值，单frame无Date',()=>{
+   for(const running of [true,false]){const c=render(home.GridPlot,{samples:[1,2,3],tone:'blue',running,percent:true},true);assert.equal(c.props.animation===undefined,!running);deep(c.props.frame,{height:96})}
+   const source=fs.readFileSync(path.join(root,'home-ui.tsx'),'utf8');assert.ok(source.includes('export const CHART_ANIMATION=true')||source.includes('export const CHART_ANIMATION = true'));assert.ok(!source.includes('values.join(')) ;unmount()
+ })
+ await test('契约(非实机): CPU三项为左侧紧凑组22pt间距，无等分frame，总占用独立靠右；详情同组件',()=>{
+   const b=home.CpuBreakdown({cpu:{id:'cpu',usage:1,system:1,user:1,steal:1},running:false}),[group,spacer,total]=b.props.children
+   assert.equal(group.props.spacing,22);assert.equal(group.props.frame,undefined);assert.equal(group.props.children.length,3);assert.equal(spacer.type,'Spacer');assert.equal(total.props.alignment,'lastTextBaseline')
+   for(const col of group.props.children){assert.equal(col.props.frame,undefined);assert.equal(col.props.alignment,'leading')}
+   for(const detail of [false,true])assert.equal(nodes(home.CpuCard({w:{cpus:[{id:'cpu'}]},history:[],running:false,detail}),home.CpuBreakdown).length,1)
  })
  await test('RAM/负载完整路径:有限内容行决定等高背景；header/28pt槽/footer为顺序兄弟，不靠padding猜高度',()=>{
    for(const w of [undefined,{memTotal:16*1024**3,memFree:15*1024**3,load:[0.09,0.06,0.02],cpus:[{id:'cpu0'}]}]){
@@ -74,8 +87,9 @@ function slot(n,height){
        deep(content.props.modifiers.steps,[['frame',{minWidth:0,maxWidth:'infinity',alignment:'leading'}],['padding',16]])
        const [header,bars,footer]=content.props.children;assert.equal(header.type,'HStack');assert.equal(footer.type,'HStack')
        const readers=bars.type===home.CapacityBars?[home.CapacityBars(bars.props)]:nodes(bars,home.LoadBars).map(n=>home.LoadBars(n.props))
-       assert.ok(readers.length===1||readers.length===3);readers.forEach(n=>slot(n,28))
-       // A finite 28pt sibling plus stack spacing separates chart and footer.
+       assert.ok(readers.length===1||readers.length===3);readers.forEach(n=>{assert.equal(n.type,'HStack');deep(n.props.frame,{minWidth:0,maxWidth:'infinity',minHeight:24,maxHeight:24})})
+       assert.equal(content.props.spacing,12) // >=8pt gap below the fixed 24pt row
+       // A finite 24pt sibling plus stack spacing separates chart and footer.
        // Text remains intrinsic/unclipped; native Dynamic Type bounds need device verification.
        for(const value of nodes(footer,home.MetricFooterValue))assert.ok(nodes(home.MetricFooterValue(value.props),'Text').every(t=>t.props.lineLimit===undefined))
      }

@@ -21,7 +21,7 @@ const checks=String.raw`
    s.props.onDisappear();s=render(home.DetailCpuSummary,props);assert.equal(nodes(s,home.CpuCard)[0].props.running,false)
    s.props.onAppear();s=render(home.DetailCpuSummary,{...props,running:false});assert.equal(nodes(s,home.CpuCard)[0].props.running,false)
    const card=home.CpuCard({history:[10,20],running:true,detail:true});assert.equal(nodes(card,home.CpuBreakdown)[0].props.running,false);assert.equal(nodes(card,home.GridPlot)[0].props.running,true)
-   let c=render(home.GridPlot,{samples:[10,20],tone:'#3485eb',running:true,percent:true},true);await flush();assert.equal(c.props.animation,undefined);assert.equal(intervals.size,0)
+   let c=render(home.GridPlot,{samples:[10,20],tone:'#3485eb',running:true,percent:true},true);await flush();assert.equal(typeof c.props.animation?.value,'number');assert.equal(intervals.size,0)
    now+=1000;c=render(home.GridPlot,{samples:[10,20,30],tone:'#3485eb',running:false,percent:true});await flush();assert.equal(c.props.animation,undefined);assert.equal(intervals.size,0);unmount();assert.equal(intervals.size,0)
  })
  await test('sheet实时采样时主页Chart节点/数据冻结，下拉关闭立即接最新样本，无额外轮询',async()=>{

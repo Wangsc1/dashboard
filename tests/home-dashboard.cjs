@@ -85,10 +85,10 @@ function fixture(url,init){if(url.endsWith('/cgi-bin/cgi-download'))return {stat
      const steps=slots.props.modifiers.steps,frame=steps.find(s=>s[0]==='frame')[1]
      deep(frame,{minWidth:0,maxWidth:'infinity',alignment:'leading'});deep(steps.map(s=>s[0]),['frame','padding']);assert.equal(steps[1][1],16);assert.equal(slots.props.spacing,12);assert.equal(slots.props.background,undefined)
      for(const footer of nodes(card.props.footer,home.MetricFooterValue)){
-       const n=home.MetricFooterValue(footer.props);deep(n.props.frame,{minWidth:0,maxWidth:'infinity'});deep(n.props.fixedSize,{horizontal:false,vertical:true});assert.equal(n.props.spacing,3);deep(nodes(n,'Text').map(t=>t.props.font),[12,10]);assert.ok(nodes(n,'Text').every(t=>t.props.lineLimit===undefined))
+       const n=home.MetricFooterValue(footer.props);deep(n.props.frame,{minWidth:0,maxWidth:'infinity',alignment:footer.props.valueEdge??'center'});deep(n.props.fixedSize,{horizontal:false,vertical:true});assert.equal(n.props.spacing,3);deep(nodes(n,'Text').map(t=>t.props.font),[12,10]);assert.ok(nodes(n,'Text').every(t=>t.props.lineLimit===undefined))
      }
    }
-   assert.equal(ram.props.bars.type,home.CapacityBars);assert.equal(home.CapacityBars(ram.props.bars.props).props.modifiers.steps[0][1].height,28);assert.ok(nodes(load.props.bars,home.LoadBars).every(n=>home.LoadBars(n.props).props.modifiers.steps[0][1].height===28))
+   assert.equal(ram.props.bars.type,home.CapacityBars);assert.equal(home.CapacityBars(ram.props.bars.props).props.frame.maxHeight,24);assert.ok(nodes(load.props.bars,home.LoadBars).every(n=>home.LoadBars(n.props).props.frame.maxHeight===24))
    // Verifies native constraints, not actual iOS bounds or Dynamic Type rendering.
  })
  await test('主页/CPU详情与其他页面同款系统白底灰卡，移除渐变和阴影',()=>{
@@ -108,7 +108,7 @@ function fixture(url,init){if(url.endsWith('/cgi-bin/cgi-download'))return {stat
    now+=500;for(const t of [...intervals.values()])t.fn();let n=render(home.MetricNumber,{...p,value:20});assert.ok(Number(text(n).split(' ')[0])>10);assert.ok(Number(text(n).split(' ')[0])<20)
    n=render(home.MetricNumber,{...p,value:20,running:false});await flush();assert.equal(intervals.size,0);n=render(home.MetricNumber,{...p,value:20,running:false});assert.ok(text(n).startsWith('20.0'))
    render(home.MetricNumber,{value:1,unit:' GB/s',running:true,digits:1});await flush();assert.equal(intervals.size,0);unmount()
-   const chart=render(home.GridPlot,{samples:[10,20,40],tone:'#3485eb',percent:true,running:true},true);await flush();assert.equal(intervals.size,0);assert.equal(chart.type,'Chart');assert.equal(chart.props.animation,undefined);unmount()
+   const chart=render(home.GridPlot,{samples:[10,20,40],tone:'#3485eb',percent:true,running:true},true);await flush();assert.equal(intervals.size,0);assert.equal(chart.type,'Chart');assert.equal(typeof chart.props.animation.value,'number');unmount()
  })
  await test('CPU sheet开关/后台/切Tab: 单轮询、详情共享样本、旧来源不覆盖',async()=>{
    responder=fixture;const props={active:device,version:0,selected:true,onSwitch(){}};render(app.OverviewPage,props,true);await flush();let view=render(app.OverviewPage,props)

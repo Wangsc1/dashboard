@@ -26,6 +26,12 @@
 
 原生 Tab API 面向 iOS 18+；外观与手势由系统及 Scripting 版本决定。仓库配置了 `remoteResource`，实际导入和更新以 Scripting 的处理结果为准。配置编辑器的 CodeMirror/Lezer/YAML 静态 bundle 已嵌入现有 `dashboard-pages.tsx`；在线更新仍只需原有运行文件，不需 CDN、额外资源下载或在手机安装 npm 包。`editor/` 为构建源码、锁定依赖及许可证，非运行依赖。
 
+## 1.5.165 更新
+
+- RAM/负载容量条不再使用 `GeometryReader`：24 根圆角条为等宽弹性单元，固定 2pt 间距、单一 24pt 行高，卡片 12pt 垂直间距保证下方数值不被覆盖；RAM 按段数、负载按高度填色不变。
+- RAM 的已用/总计分别严格靠条左右边缘，负载三列数值各自居中；CPU 的 SYS/USER/STEAL 改为左侧紧凑一组（列间距 22pt），右侧保留大号 CPU 占用，详情页共用同一组件。
+- 曲线改用文档支持的 `chartXScale` 字符串数组固定 60 个类别，已有样本占最后 n 个位置：最新点始终在最右、历史不足时向右生长且左侧留空，不补零（LineChart/AreaChart 的 label 文档仅支持 string/Date，无数值 x；仍无 Date 域和手工刻度）。原生 `animation={{animation,value}}`（linear 0.9s，value 为样本和这一简单数值）已恢复，仅 running 时启用，集中于 `CHART_ANIMATION` 单一开关；**若恢复动画后再次崩溃，首先将其改为 false**。磁盘条与数据读取不变。本地仅为模拟契约检查，未做真机布局验证。
+
 ## 1.5.164 更新
 
 - 简化主页与 CPU 详情共用的原生图表配置：改为字符串类别 X、单次 `frame` 高度（CPU 96pt、流量 66pt、每核 76pt）、`chartYScale` 固定 0–100（CPU）或 0–流量上限，并移除固定 Date 域、手工 Date/数值轴刻度、`animation` 与重复 `frame` 修饰链。
