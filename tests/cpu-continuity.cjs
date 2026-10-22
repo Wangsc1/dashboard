@@ -41,7 +41,7 @@ const near=(a,b,msg)=>assert.ok(Math.abs(a-b)<0.00001,msg+': '+a+' vs '+b)
    for(let cycle=0;cycle<8;cycle++){
     history=[...history,30+cycle*3].slice(-60);input={...input,histories:{cpu:{cpu0:history}}};tree=await page.draw(input);p=coreProps();await plot.draw(p)
     assert.equal(active,1)
-    if(previousEnd){const begin=points.slice(0,-1),end=previousEnd.filter(x=>x.x>=0);assert.equal(begin.length,end.length)
+    if(previousEnd){const begin=points.filter(x=>x.x>=0),end=previousEnd.filter(x=>x.x>=0);assert.equal(begin.length,end.length)
      for(let i=0;i<begin.length;i++){near(begin[i].x,end[i].x,'boundary x');near(begin[i].value,end[i].value,'boundary value');maxBoundaryDelta=Math.max(maxBoundaryDelta,Math.abs(begin[i].value-end[i].value))}}
     const origin=points.map(x=>({...x})),tip=origin.at(-1).value,startX=origin[0].x,target=history.at(-1),started=starts,stopped=stops
     for(let frame=1;frame<=20;frame++){

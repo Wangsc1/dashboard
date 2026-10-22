@@ -1,7 +1,7 @@
 import { HStack, VStack, Text, Image, RoundedRectangle, Spacer, ScrollView, LazyVStack, SVG, ZStack, Device, NavigationStack, modifiers, useState, useEffect, useMemo, GeometryReader, useColorScheme } from "scripting"
 import { Overview, WrtInfo, fmtBytes, fmtSpeed, fmtUptime } from "./api"
 import { CpuUsage, OverviewHistory } from "./openwrt-metrics"
-import { CHART_HISTORY, animateChart, scrollPoints, smoothPath } from "./chart"
+import { CHART_HISTORY, PlotPoint, animateChart, scrollPoints, smoothPath } from "./chart"
 export const HOME_BG = "systemBackground"
 const INK="label",PANEL="secondarySystemBackground"
 export function HomeCard({children,onOpen}:{children?:any;onOpen?:()=>void}) {
@@ -31,13 +31,30 @@ export function GridPlot({samples,tone,plotHeight=96,area=false,running=true,per
   const sampleKey=useMemo(()=>stableSamples?samples.slice(-CHART_HISTORY).join(","):samples,[samples,stableSamples])
   const values=useMemo(()=>samples.slice(-CHART_HISTORY).filter(Number.isFinite),[sampleKey])
   const enabled=running&&visible
-  const [track]=useState({previous:values,current:values,enabled,at:Date.now(),duration:1000,animating:false})
+  const W=plotWidth!==undefined&&Number.isFinite(plotWidth)&&plotWidth>0?plotWidth:336,H=plotHeight
+  const [track]=useState({previous:values,current:values,enabled,at:Date.now(),duration:1000,animating:false,
+    shown:null as null|{points:PlotPoint[];scale:number;done:boolean;svg:string;tone:string;area:boolean;W:number;H:number},
+    motion:null as null|{origin:PlotPoint[];from:PlotPoint[];to:PlotPoint[];scaleFrom:number;scaleTo:number}})
   const [tick,setTick]=useState(Date.now())
   // Prepare endpoints BEFORE rendering the new sample, so its first frame is progress=0,
   // never an intermediate target-frame jump before an effect runs. No state setter here.
   if(track.current!==values||track.enabled!==enabled){
     const now=Date.now(),changed=track.current!==values
-    const reset=!enabled||!track.enabled||!values.length||values.length<track.current.length
+    const reset=!enabled||!track.enabled||!values.length||values.length<track.current.length||(stableSamples&&!track.current.length)
+    track.motion=null
+    if(stableSamples&&changed&&!reset&&values.length>=2&&track.shown){
+      // Retarget from the last SVG actually produced, NOT the unfinished old target.
+      // At a completed window remove only the off-window outgoing knot; the visible
+      // geometry is the canonical current history. During interruption keep every knot.
+      const origin=track.shown.done?scrollPoints(track.current,track.current,0,W):track.shown.points
+      const target=scrollPoints(values,values,0,W)
+      const to=track.current.length===CHART_HISTORY&&values.length===CHART_HISTORY?[{x:-W/(CHART_HISTORY-1),value:track.current[0]},...target]:target
+      const count=Math.max(origin.length,to.length)
+      // At most 61 geometry knots. Repeating the right endpoint is a zero-length
+      // segment, not an invented sample; this preserves shape while history grows.
+      const pad=(ps:PlotPoint[])=>Array.from({length:count},(_,i)=>ps[Math.min(i,ps.length-1)])
+      track.motion={origin,from:pad(origin),to:pad(to),scaleFrom:track.shown.scale,scaleTo:percent?100:Math.max(1024,...values)}
+    }
     track.previous=reset?values:track.current
     track.current=values;track.enabled=enabled
     // Detail samples arrive on the existing 1s poll. Content dedupe can skip many
@@ -46,11 +63,12 @@ export function GridPlot({samples,tone,plotHeight=96,area=false,running=true,per
     track.at=now;track.animating=changed&&!reset&&values.length>=2
   }
   useEffect(()=>{
-    setTick(Date.now())
+    // Detail p0 already renders synchronously; a same-time tick only caused an
+    // extra setter/render with identical geometry. Homepage timing is unchanged.
+    if(!stableSamples)setTick(Date.now())
     if(!track.animating)return
     return animateChart(at=>{setTick(at);return at<track.at+track.duration})
   },[values,enabled])
-  const W=plotWidth!==undefined&&Number.isFinite(plotWidth)&&plotWidth>0?plotWidth:336,H=plotHeight
   const staticSvg=useMemo(()=>{
     const grid=[...Array.from({length:8},(_,i)=>`<path d="M ${i*W/7},0 V ${H}"/>`),...Array.from({length:5},(_,i)=>`<path d="M 0,${i*H/4} H ${W}"/>`)].join("")
     return {head:`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"><g stroke="#9295a3" stroke-opacity="0.22" stroke-width="0.6" stroke-dasharray="3 3" fill="none">${grid}</g>`,tail:"</svg>"}
@@ -60,11 +78,18 @@ export function GridPlot({samples,tone,plotHeight=96,area=false,running=true,per
   // previous retains the outgoing sample even when source history has already trimmed to 60.
   const code=useMemo(()=>{
     const current=track.current===values?track.current:values,previous=track.current===values?track.previous:values
-    const points=scrollPoints(previous,current,p,W),scale=scales.from+(scales.to-scales.from)*p
+    const motion=stableSamples?track.motion:null
+    // An interrupted retarget p0 is exactly the already-produced frame. Reuse
+    // its SVG, rather than rebuilding the exact same path string again.
+    if(motion&&p===0&&track.shown?.points===motion.origin&&track.shown.tone===tone&&track.shown.area===area&&track.shown.W===W&&track.shown.H===H)return track.shown.svg
+    const points=motion?(p===0?motion.origin:motion.from.map((a,i)=>({x:a.x+(motion.to[i].x-a.x)*p,value:a.value+(motion.to[i].value-a.value)*p}))):scrollPoints(previous,current,p,W)
+    const scale=motion?motion.scaleFrom+(motion.scaleTo-motion.scaleFrom)*p:scales.from+(scales.to-scales.from)*p
     const line=values.length<2?"":smoothPath(points,H,scale,2),first=points[0],last=points[points.length-1]
     const fill=area&&line&&first&&last?`<path d="${line} L ${last.x},${H} L ${first.x},${H} Z" fill="${tone}" fill-opacity="0.10"/>`:""
     const stroke=line?`<path d="${line}" fill="none" stroke="${tone}" stroke-width="${PLOT_STROKE}" stroke-linecap="round"/>`:""
-    return staticSvg.head+fill+stroke+staticSvg.tail
+    const svg=staticSvg.head+fill+stroke+staticSvg.tail
+    if(stableSamples)track.shown={points,scale,done:p===1||!track.animating,svg,tone,area,W,H}
+    return svg
   },[values,track.previous,track.current,p,staticSvg,tone,area,scales])
   return <SVG code={code} resizable frame={plotWidth!==undefined?{width:W,height:H}:{height:H}} onAppear={()=>setVisible(true)} onDisappear={()=>setVisible(false)}/>
 }
