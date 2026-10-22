@@ -151,10 +151,10 @@ export function ProxyModeControl({c,enabled,version,onMode}:{c:Controller;enable
 export function ProxyTestSettings() {
   const p = usePreferences(["testTimeout"])
   return <>
-    <HStack><Text font={20} fontWeight="bold" padding={{top:6}}>延迟阈值</Text><Spacer/></HStack>
-    <Card><ThresholdRange /></Card>
     <HStack><Text font={20} fontWeight="bold" padding={{top:6}}>测速设置</Text><Spacer/></HStack>
     <Card><VStack alignment="leading" spacing={0} padding={{vertical:6}} frame={{maxWidth:"infinity",alignment:"leading"}}><TestURLField /></VStack><Divider /><Range title="超时时间" min={1000} max={10000} step={100} value={p.testTimeout} suffix=" ms" onChanged={n => updatePreference({ testTimeout: n })} /></Card>
+    <HStack><Text font={20} fontWeight="bold" padding={{top:6}}>延迟阈值</Text><Spacer/></HStack>
+    <Card><ThresholdRange /></Card>
   </>
 }
 const proxyCache=new Map<string,{groups:Group[];providers:Provider[]}>()
