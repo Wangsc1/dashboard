@@ -350,7 +350,7 @@ export function prefetchMoreVersions(active:Controller|null){
  const rememberRuntime=(runtime:NikkiRuntime)=>{moreSnapshots.set(key,{...moreSnapshots.get(key),runtime,running:runtime.running})}
  void Promise.all([
    loadRuntimeVersions(active,remember).then(remember).catch(()=>{}),
-   active.kind==="openwrt"&&active.plugin==="nikki"?loadNikkiRuntime(active,rememberRuntime).then(rememberRuntime).catch(()=>{}):Promise.resolve()
+   active.kind==="openwrt"&&active.plugin==="nikki"?loadNikkiRuntime(active).then(rememberRuntime).catch(()=>{}):Promise.resolve()
  ]).finally(()=>morePrefetch.delete(key))
 }
 export function MorePage({active,onChanged,onClose,selected=true}:{active:Controller|null;onChanged:()=>void;onClose?:()=>void;selected?:boolean}) {
@@ -371,7 +371,7 @@ export function MorePage({active,onChanged,onClose,selected=true}:{active:Contro
     loadConfig(active).then(x=>{if(alive)setMode(x.mode??"未提供")}).catch(()=>{if(alive&&!lastControllerMode(active))setMode("读取失败")})
     if(active.kind==="openwrt"&&active.plugin==="nikki"){
       const update=(x:NikkiRuntime)=>{if(alive){setRuntime(x);setRunning(x.running??null);remember({runtime:x,running:x.running})}}
-      const readRuntime=async()=>{if(inFlight)return;inFlight=true;try{update(await loadNikkiRuntime(active,update))}catch{if(alive)setErr("运行时间读取失败，请检查连接与读取权限。")}finally{inFlight=false}}
+      const readRuntime=async()=>{if(inFlight)return;inFlight=true;try{update(await loadNikkiRuntime(active))}catch{if(alive)setErr("运行时间读取失败，请检查连接与读取权限。")}finally{inFlight=false}}
       void readRuntime();runtimeTimer=setInterval(readRuntime,30000)
     }
     return()=>{alive=false;if(runtimeTimer)clearInterval(runtimeTimer)}

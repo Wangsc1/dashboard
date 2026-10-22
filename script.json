@@ -2,7 +2,7 @@
   "name": "dashboard",
   "icon": "server.rack",
   "color": "rgba(113, 143, 253,1)",
-  "version": "1.5.211",
+  "version": "1.5.212",
   "entry": "index.tsx",
   "runInApp": false,
   "description": "Scripting OpenWrt 与 Clash/Mihomo 管理面板：实时流量、系统状态、节点切换测速、规则与连接管理；支持 Nikki 配置文件编辑选用、订阅及附加规则管理。功能取决于插件版本与设备权限。",
