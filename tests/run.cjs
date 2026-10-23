@@ -785,6 +785,17 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     assert.equal(tree.props.navigationDestination, undefined)
     const src = fs.readFileSync(path.join(root, 'index.tsx'), 'utf8'); assert.ok(src.includes('function WrtInterfacesPage')); assert.ok(src.includes('function WrtLeasesPage')); assert.ok(src.includes('sheet='))
   })
+  await test('CPU温度加粗，保留精度、占位和详情页行为', () => {
+    for (const temperature of [48.26, undefined]) {
+      const tree=render(home.CpuCard,{w:{temperature},history:[],running:false},true)
+      const label=nodes(tree,'Text').find(n=>text(n).includes('°C'))
+      assert.ok(label);assert.equal(label.props.fontWeight,'bold');assert.equal(label.props.font,11)
+      assert.equal(text(label),temperature===undefined?'-- °C':'48.3 °C')
+      unmount()
+    }
+    const detail=render(home.CpuCard,{w:{temperature:48.26},history:[],running:false,detail:true},true)
+    assert.ok(!text(detail).includes('°C'));unmount()
+  })
   await test('默认界面选择tab；主题与外观项接入、概览数据布局不变', () => {
     pref.savePreferences({ defaultPage: 'rules', theme: 'dark', showWrt: false })
     let tree = render(app.OverviewPage, { active: c, version: 0, onSwitch() {} }, true); assert.equal(tree.props.navigationDestination, undefined)
@@ -860,7 +871,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) { const lazy = ['proxies','rules','connections'].includes(ids[i]) && ids[i] !== id; assert.equal(nodes(tree, types[i]).length, lazy ? 0 : 1); if (!lazy) assert.equal(nodes(tree, types[i])[0].props.selected, ids[i] === id) }
     }
-    assert.equal(api.VERSION, '1.37'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.38'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('独立导航栈保留业务owner和身份，只有选中页提供可见工具栏', () => {
     pref.savePreferences({ defaultPage: 'overview' })
@@ -2013,7 +2024,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       const diagnostic = logs.filter(x => x.startsWith('[preferences-icon]'))
       for (const stage of ['change','accepted','proxies-render','group-render']) assert.ok(diagnostic.some(x => x.includes('stage=' + stage) && x.includes('enabled=false')))
       assert.ok(diagnostic.every(x => !x.includes('private.invalid') && !x.includes('private-group-name') && !x.includes('secret-')))
-      assert.ok(diagnostic.every(x => x.includes('build=1.37') && /instance=[a-z0-9]+/.test(x)))
+      assert.ok(diagnostic.every(x => x.includes('build=1.38') && /instance=[a-z0-9]+/.test(x)))
       assert.equal(new Set(diagnostic.map(x => x.match(/instance=([^ ]+)/)[1])).size, 1)
     } finally { context.console = originalConsole; unmount(); pref.savePreferences({ customIcons: true, testURL: 'https://www.gstatic.com/generate_204' }) }
   })
