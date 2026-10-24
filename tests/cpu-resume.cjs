@@ -51,11 +51,13 @@ async function scenario(kind,negative){
   assert.equal(cpuValue(tree),60);equal(frame(tree).histories.cpu.cpu,[20,40,60])
   canvas.render(hostProps(tree));await settle();const host=hosts.at(-1);host.handlers.plotReady();await settle()
   const before=frame(tree),history=before.histories.cpu.cpu,cpus=before.overview.wrt.cpus,priorReads=batches
+  const sentBeforePause=host.messages.length
   if(kind==='background')emitScene('background')
   if(kind==='tab')props={...props,selected:false}
   if(kind==='settings')tree.props.onDisappear()
   await draw();assert.equal(poll().length,0);assert.equal(frame(tree).running,false);equal(frame(tree).histories.cpu.cpu,history);assert.equal(cpuValue(tree),60)
-  assert.equal(host.messages.at(-1).running,false)
+  if(kind==='background')assert.equal(host.messages.length,sentBeforePause,'background queues latest props without evaluating the suspended document')
+  else assert.equal(host.messages.at(-1).running,false)
   // A long gap and changed counters must not become a fabricated live point.
   uptime+=120;user+=9000;idle+=1000;now+=120000
   await settle();assert.equal(batches,priorReads,'no hidden/background RPC polling')

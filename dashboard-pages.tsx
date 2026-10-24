@@ -100,7 +100,7 @@ const modePrefetch=new Set<string>()
 function prefetchProxyMode(c:Controller){const key=sourceKey(c);cachedProxyMode(c);if(modePrefetch.has(key))return;modePrefetch.add(key);void loadConfig(c).then(cfg=>{if(PROXY_MODE_OPTIONS.some(([v])=>v===cfg.mode))rememberProxyMode(c,cfg.mode!)}).catch(()=>{}).finally(()=>modePrefetch.delete(key))}
 
 export const proxyModeCacheForTest=(c:Controller)=>proxyModeCache.get(sourceKey(c))
-export function ProxyModeControl({c,enabled,version,onMode}:{c:Controller;enabled:boolean;version:number;onMode?:(mode:string|null)=>void}) {
+export function ProxyModeControl({c,enabled,version,resume=0,onMode}:{c:Controller;enabled:boolean;version:number;resume?:number;onMode?:(mode:string|null)=>void}) {
   type Session = {source:string;cacheKey:string;controller:Controller;alive:boolean;visible:boolean;mode:string|null;pending:string|null;loading:boolean;busy:boolean;error:string;read:number}
   const [holder]=useState<{current:Session|null}>({current:null}),[,redraw]=useState(0)
   const source=JSON.stringify(c)
@@ -127,7 +127,7 @@ export function ProxyModeControl({c,enabled,version,onMode}:{c:Controller;enable
   // Report only read-back confirmed modes; unknown/loading/failed states report null.
   useEffect(()=>{if(current())onMode?.(session.mode)},[session,session.mode,enabled])
   useEffect(()=>()=>{session.alive=false;session.read++},[session])
-  useEffect(()=>{if(enabled&&!session.busy)void readMode("",false,"silent")},[session,enabled,version])
+  useEffect(()=>{if(enabled&&!session.busy)void readMode("",false,"silent")},[session,enabled,version,resume])
   async function change(value:string) {
     if(!current()||session.busy||session.loading||!session.mode||value===session.mode||!PROXY_MODE_OPTIONS.some(([mode])=>mode===value))return
     // Lock synchronously; stale callbacks cannot queue a second PATCH or use a new source.
@@ -179,16 +179,25 @@ export function prefetchProxies(active:Controller|null){
     const old=proxyCache.get(key);if(groups||providers){proxyPrefetched.add(key);setProxyCache(key,{groups:groups??old?.groups??[],providers:providers??old?.providers??[]})}
   }).finally(()=>{proxyPrefetch.delete(key)})
 }
+// Read owners need a monotonic invalidation even when background/active events
+// arrive before one render. Epoch checks also reject results before effect cleanup.
+function usePageScene(){
+  const [scene]=useState({active:true,epoch:0}),[revision,setRevision]=useState(0)
+  useEffect(()=>{const changed=(phase:"active"|"inactive"|"background")=>{const active=phase==="active";if(scene.active===active)return;scene.active=active;scene.epoch++;setRevision(n=>n+1)};AppEvents.scenePhase.addListener(changed);return()=>AppEvents.scenePhase.removeListener(changed)},[])
+  return {scene,revision}
+}
 export function ProxiesPage({active,version,onClose,selected=true}:{active:Controller|null;version:number;onClose?:()=>void;selected?:boolean}) {
   const p=usePreferences(),cacheKey=active?sourceKey(active):"",cached=hydrateProxyCache(cacheKey),[groups,setGroups]=useState<Group[]>(cached?.groups??[]),[providers,setProviders]=useState<Provider[]>(cached?.providers??[]),[loaded,setLoaded]=useState(!!cached),[err,setErr]=useState(""),[tick,setTick]=useState(0),[expanded,setExpanded]=useState(false),[showProviders,setShowProviders]=useState(true),[limit,setLimit]=useState(40),[visible,setVisible]=useState(selected),[confirmedMode,setConfirmedMode]=useState<{key:string;mode:string|null}>(()=>({key:cacheKey,mode:proxyModeCache.get(cacheKey)??null})),globalMode=confirmedMode.key===cacheKey&&confirmedMode.mode==="global"
+  const {scene,revision}=usePageScene()
+  useEffect(()=>setVisible(selected),[selected])
   traceIconPreference("proxies-render", p.customIcons)
   useEffect(()=>{const c=hydrateProxyCache(cacheKey);setGroups(c?.groups??[]);setProviders(c?.providers??[]);setLoaded(!!c)},[cacheKey])
-  useEffect(()=>{if(!active||!visible)return;let alive=true;setErr("");loadGroups(active,{includeGlobal:globalMode}).then(x=>{if(alive){setGroups(x);setLoaded(true);setErr("");setProxyCache(cacheKey,{groups:x,providers:proxyCache.get(cacheKey)?.providers??[]})}}).catch(()=>{if(alive)setErr(safeError())});return()=>{alive=false}},[active&&sourceKey(active),version,tick,p.showHidden,p.showGlobal,globalMode,p.nestedDelay,visible])
-  useEffect(()=>{if(!active||!showProviders||!visible)return;let alive=true;loadProviders(active,"proxies").then(x=>{if(alive){setProviders(x);setProxyCache(cacheKey,{groups:proxyCache.get(cacheKey)?.groups??[],providers:x})}}).catch(()=>{if(alive)setErr("代理来源读取不可用：当前内核不支持或权限不足；显示的0是已加载数量，不代表远端总数。")});return()=>{alive=false}},[active&&sourceKey(active),tick,showProviders,visible])
+  useEffect(()=>{if(!active||!selected||!visible||!scene.active)return;let alive=true;const epoch=scene.epoch,current=()=>alive&&scene.active&&scene.epoch===epoch;setErr("");loadGroups(active,{includeGlobal:globalMode}).then(x=>{if(current()){setGroups(x);setLoaded(true);setErr("");setProxyCache(cacheKey,{groups:x,providers:proxyCache.get(cacheKey)?.providers??[]})}}).catch(()=>{if(current())setErr(safeError())});return()=>{alive=false}},[active&&sourceKey(active),version,tick,p.showHidden,p.showGlobal,globalMode,p.nestedDelay,selected,visible,revision])
+  useEffect(()=>{if(!active||!showProviders||!selected||!visible||!scene.active)return;let alive=true;const epoch=scene.epoch,current=()=>alive&&scene.active&&scene.epoch===epoch;loadProviders(active,"proxies").then(x=>{if(current()){setProviders(x);setProxyCache(cacheKey,{groups:proxyCache.get(cacheKey)?.groups??[],providers:x})}}).catch(()=>{if(current())setErr("代理来源读取不可用：当前内核不支持或权限不足；显示的0是已加载数量，不代表远端总数。")});return()=>{alive=false}},[active&&sourceKey(active),tick,showProviders,selected,visible,revision])
   const remote=providers.filter(x=>x.vehicleType.toLowerCase()==="http")
   const shownGroups=groups.filter(g=>g.name!=="GLOBAL"||p.showGlobal||globalMode)
   const menu=<Menu label={<Image systemName="ellipsis.circle"/>}><Picker title="节点排序" pickerStyle="menu" value={p.nodeSort} onChanged={(v:string)=>savePreferences({nodeSort:v as any})}>{NODE_SORT_OPTIONS.map(([key, label]) => <Text key={key} tag={key}>{label}</Text>)}</Picker><Toggle title="展示全部代理组" value={expanded} onChanged={setExpanded}/><Toggle title="显示代理来源" value={showProviders} onChanged={setShowProviders}/><Toggle title="显示隐藏组" value={p.showHidden} onChanged={(v:boolean)=>savePreferences({showHidden:v})}/><Toggle key="customIcons" title="显示图标" value={p.customIcons} onChanged={(v:boolean)=>updatePreference({customIcons:v})}/><Toggle key="disconnectOnSwitch" title="自动断开旧连接" value={p.disconnectOnSwitch} onChanged={(v:boolean)=>updatePreference({disconnectOnSwitch:v})}/></Menu>
-  return Shell({title:active?.name??"代理",toolbar:rootToolbar("proxies",onClose,menu),onAppear:()=>setVisible(true),onDisappear:()=>setVisible(false),children:<>{!active?<Empty/>:<><ProxyModeControl key={JSON.stringify(active)} c={active} enabled={selected&&visible} version={version} onMode={mode=>setConfirmedMode({key:cacheKey,mode})}/><HStack><Text font={20} fontWeight="bold" padding={{top:6}}>策略组</Text><Spacer/></HStack>{err?<Hint>{err}</Hint>:null}{!err&&loaded&&shownGroups.length===0?<Hint>未读取到策略组</Hint>:null}{shownGroups.slice(0,limit).map(g=><GroupSection key={g.name} c={active} g={g} expanded={expanded} onChanged={()=>setTick(t=>t+1)}/>)}<Pages hideCount limit={limit} total={shownGroups.length} more={()=>setLimit(limit+40)}/>{showProviders?<><HStack><Text font={20} fontWeight="bold" padding={{top:6}}>代理来源</Text><Spacer/></HStack>{remote.slice(0,limit).map(p=><ProviderCard key={p.name} c={active} p={p} kind="proxies" onChanged={()=>setTick(t=>t+1)}/>)}<Pages hideCount limit={limit} total={remote.length} more={()=>setLimit(limit+40)}/></>:null}</>}<ProxyTestSettings /></>})
+  return Shell({title:active?.name??"代理",toolbar:rootToolbar("proxies",onClose,menu),onAppear:()=>setVisible(true),onDisappear:()=>setVisible(false),children:<>{!active?<Empty/>:<><ProxyModeControl key={JSON.stringify(active)} c={active} enabled={selected&&visible&&scene.active} version={version} resume={revision} onMode={mode=>setConfirmedMode({key:cacheKey,mode})}/><HStack><Text font={20} fontWeight="bold" padding={{top:6}}>策略组</Text><Spacer/></HStack>{err?<Hint>{err}</Hint>:null}{!err&&loaded&&shownGroups.length===0?<Hint>未读取到策略组</Hint>:null}{shownGroups.slice(0,limit).map(g=><GroupSection key={g.name} c={active} g={g} expanded={expanded} onChanged={()=>setTick(t=>t+1)}/>)}<Pages hideCount limit={limit} total={shownGroups.length} more={()=>setLimit(limit+40)}/>{showProviders?<><HStack><Text font={20} fontWeight="bold" padding={{top:6}}>代理来源</Text><Spacer/></HStack>{remote.slice(0,limit).map(p=><ProviderCard key={p.name} c={active} p={p} kind="proxies" onChanged={()=>setTick(t=>t+1)}/>)}<Pages hideCount limit={limit} total={remote.length} more={()=>setLimit(limit+40)}/></>:null}</>}<ProxyTestSettings /></>})
 }
 function ruleColor(type:string) { return /AND|OR|NOT|MATCH/.test(type)?"systemRed":/PROCESS/i.test(type)?"systemPurple":/IP|GEOIP/i.test(type)?"systemGreen":"systemBlue" }
 // Last-seen rules / connections are kept on this device and loaded at launch, so the first frame is not empty while the live request runs.
@@ -379,6 +388,7 @@ export function prefetchMoreVersions(active:Controller|null){
 }
 export function MorePage({active,onChanged,onClose,selected=true}:{active:Controller|null;onChanged:()=>void;onClose?:()=>void;selected?:boolean}) {
   const p=usePreferences(["theme","defaultPage"])
+  const {scene,revision}=usePageScene()
   const cachedVersions=active?moreSnapshots.get(sourceKey(active)):undefined
   const [core,setCore]=useState(cachedVersions?.core??"未提供"),[app,setApp]=useState(cachedVersions?.app??"未提供"),[mode,setMode]=useState("未提供"),[err,setErr]=useState(""),[visible,setVisible]=useState(selected),[busy,setBusy]=useState(false),[running,setRunning]=useState<boolean|null>(cachedVersions?.running??null),[guard]=useState({alive:true,source:"",busy:false,view:"",epoch:0,versionEpoch:0,active:false}),[runtime,setRuntime]=useState<NikkiRuntime|null>(cachedVersions?.runtime??null),[,setClock]=useState(0),[notice,setNotice]=useState(""),[noticeKind,setNoticeKind]=useState("success")
   const [coreUpdate,setCoreUpdate]=useState<{source:string;version:string;available:boolean}|null>(null)
@@ -390,22 +400,23 @@ export function MorePage({active,onChanged,onClose,selected=true}:{active:Contro
   useEffect(()=>{setVisible(selected)},[selected])
   useEffect(()=>{
     setCoreUpdate(null)
-    if(!active||!selected||!visible)return
+    if(!active||!selected||!visible||!scene.active)return
     let alive=true,runtimeTimer:any,inFlight=false
+    const epoch=scene.epoch,current=()=>alive&&scene.active&&scene.epoch===epoch
     const key=sourceKey(active),cached=moreSnapshots.get(key)??{},versionEpoch=guard.versionEpoch
     if(moreSnapshots.size>30)moreSnapshots.clear()
-    const remember=(patch:typeof cached)=>{if(alive)moreSnapshots.set(key,{...moreSnapshots.get(key),...patch})}
+    const remember=(patch:typeof cached)=>{if(current())moreSnapshots.set(key,{...moreSnapshots.get(key),...patch})}
     setCore(cached.core??"读取中…");setApp(cached.app??"读取中…");setMode(lastControllerMode(active)??"读取中…");setRunning(cached.running??null);setRuntime(cached.runtime??null);setErr("")
-    loadRuntimeVersions(active,x=>{if(alive&&versionEpoch===guard.versionEpoch){if(x.core!=="未提供"){setCore(x.core);remember({core:x.core})}if(x.app!=="未提供"){setApp(x.app);remember({app:x.app})}}}).then(x=>{if(alive&&versionEpoch===guard.versionEpoch){void checkCoreUpdate(x.core).then(available=>{if(alive&&guard.alive&&guard.source===key&&versionEpoch===guard.versionEpoch)setCoreUpdate(available===null?null:{source:key,version:x.core,available})});if(x.failed){if(!moreSnapshots.get(key)?.core)setCore("读取失败");if(!moreSnapshots.get(key)?.app)setApp("读取失败");setErr("部分版本信息读取失败；已保留同来源上次结果。")}}}).catch(()=>{if(alive)setErr(safeError())})
-    loadConfig(active).then(x=>{if(alive)setMode(x.mode??"未提供")}).catch(()=>{if(alive&&!lastControllerMode(active))setMode("读取失败")})
+    loadRuntimeVersions(active,x=>{if(current()&&versionEpoch===guard.versionEpoch){if(x.core!=="未提供"){setCore(x.core);remember({core:x.core})}if(x.app!=="未提供"){setApp(x.app);remember({app:x.app})}}}).then(x=>{if(current()&&versionEpoch===guard.versionEpoch){void checkCoreUpdate(x.core).then(available=>{if(current()&&guard.alive&&guard.source===key&&versionEpoch===guard.versionEpoch)setCoreUpdate(available===null?null:{source:key,version:x.core,available})});if(x.failed){if(!moreSnapshots.get(key)?.core)setCore("读取失败");if(!moreSnapshots.get(key)?.app)setApp("读取失败");setErr("部分版本信息读取失败；已保留同来源上次结果。")}}}).catch(()=>{if(current())setErr(safeError())})
+    loadConfig(active).then(x=>{if(current())setMode(x.mode??"未提供")}).catch(()=>{if(current()&&!lastControllerMode(active))setMode("读取失败")})
     if(active.kind==="openwrt"&&active.plugin==="nikki"){
-      const update=(x:NikkiRuntime)=>{if(alive){setRuntime(x);setRunning(x.running??null);remember({runtime:x,running:x.running})}}
-      const readRuntime=async()=>{if(inFlight)return;inFlight=true;try{update(await loadNikkiRuntime(active))}catch{if(alive)setErr("运行时间读取失败，请检查连接与读取权限。")}finally{inFlight=false}}
+      const update=(x:NikkiRuntime)=>{if(current()){setRuntime(x);setRunning(x.running??null);remember({runtime:x,running:x.running})}}
+      const readRuntime=async()=>{if(!current()||inFlight)return;inFlight=true;try{update(await loadNikkiRuntime(active))}catch{if(current())setErr("运行时间读取失败，请检查连接与读取权限。")}finally{inFlight=false}}
       void readRuntime();runtimeTimer=setInterval(readRuntime,30000)
     }
     return()=>{alive=false;if(runtimeTimer)clearInterval(runtimeTimer)}
-  },[active&&sourceKey(active),selected,visible])
-  useEffect(()=>{if(!selected||!visible||!runtime||(runtime.coreSeconds===null&&runtime.serviceSeconds===null))return;const timer=setInterval(()=>setClock(n=>n+1),1000);return()=>clearInterval(timer)},[selected,visible,runtime])
+  },[active&&sourceKey(active),selected,visible,revision])
+  useEffect(()=>{if(!selected||!visible||!scene.active||!runtime||(runtime.coreSeconds===null&&runtime.serviceSeconds===null))return;const timer=setInterval(()=>{if(scene.active)setClock(n=>n+1)},1000);return()=>clearInterval(timer)},[selected,visible,runtime,revision])
   useEffect(()=>{setNotice("")},[active&&sourceKey(active),visible])
   useEffect(()=>{if(!notice||noticeKind==="progress")return;const timer=setTimeout(()=>setNotice(""),4500);return()=>clearTimeout(timer)},[notice,noticeKind])
   const duration=(value:number|null|undefined)=>value==null?"未提供":fmtUptime(value+Math.max(0,Math.floor((Date.now()-(runtime?.measuredAt??Date.now()))/1000)),true)

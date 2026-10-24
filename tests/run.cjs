@@ -871,7 +871,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) { const lazy = ['proxies','rules','connections'].includes(ids[i]) && ids[i] !== id; assert.equal(nodes(tree, types[i]).length, lazy ? 0 : 1); if (!lazy) assert.equal(nodes(tree, types[i])[0].props.selected, ids[i] === id) }
     }
-    assert.equal(api.VERSION, '1.39'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.40'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('独立导航栈保留业务owner和身份，只有选中页提供可见工具栏', () => {
     pref.savePreferences({ defaultPage: 'overview' })
@@ -2101,7 +2101,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       const diagnostic = logs.filter(x => x.startsWith('[preferences-icon]'))
       for (const stage of ['change','accepted','proxies-render','group-render']) assert.ok(diagnostic.some(x => x.includes('stage=' + stage) && x.includes('enabled=false')))
       assert.ok(diagnostic.every(x => !x.includes('private.invalid') && !x.includes('private-group-name') && !x.includes('secret-')))
-      assert.ok(diagnostic.every(x => x.includes('build=1.39') && /instance=[a-z0-9]+/.test(x)))
+      assert.ok(diagnostic.every(x => x.includes('build=1.40') && /instance=[a-z0-9]+/.test(x)))
       assert.equal(new Set(diagnostic.map(x => x.match(/instance=([^ ]+)/)[1])).size, 1)
     } finally { context.console = originalConsole; unmount(); pref.savePreferences({ customIcons: true, testURL: 'https://www.gstatic.com/generate_204' }) }
   })
@@ -2134,6 +2134,46 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     // Pushing a subpage while still selected still pauses background work until returning.
     tree.props.onDisappear();render(pages.MorePage,{...props,selected:true});await flush();assert.equal(intervals.size,0)
     calls.length=0;tree.props.onAppear();render(pages.MorePage,{...props,selected:true});await flush();assert.ok(calls.length>0);unmount()
+  })
+  await test('代理长后台恢复：合并事件重新读列表/来源/模式，后台旧结果不覆盖，隐藏重现保留导航',async()=>{
+    const original={groups:api.loadGroups,providers:api.loadProviders},props={active:{...c,id:'proxies-scene-resume'},version:0,selected:true}
+    let reads=0,release;api.loadGroups=async()=>{reads++;return [{name:'retained-group',all:[],type:'Selector'}]};api.loadProviders=async()=>[]
+    try{
+      let tree=render(pages.ProxiesPage,props,true);await flush();tree=render(pages.ProxiesPage,props)
+      const oldResume=nodes(tree,pages.ProxyModeControl)[0].props.resume
+      api.loadGroups=()=>new Promise(r=>release=r);render(pages.ProxiesPage,{...props,version:1});await flush()
+      emitScene('background');release([{name:'stale-group',all:[],type:'Selector'}]);await flush()
+      tree=render(pages.ProxiesPage,{...props,version:1});await flush();assert.equal(nodes(tree,pages.GroupSection)[0].props.g.name,'retained-group')
+      assert.equal(nodes(tree,pages.ProxyModeControl)[0].props.enabled,false)
+      const before=reads;now+=7200000;api.loadGroups=async()=>{reads++;return [{name:'resumed-group',all:[],type:'Selector'}]}
+      emitScene('active');emitScene('inactive');emitScene('active');render(pages.ProxiesPage,{...props,version:1});await flush()
+      tree=render(pages.ProxiesPage,{...props,version:1});assert.equal(reads,before+1);assert.equal(nodes(tree,pages.GroupSection)[0].props.g.name,'resumed-group')
+      assert.ok(nodes(tree,pages.ProxyModeControl)[0].props.resume>oldResume);assert.ok(tree.props.toolbar)
+      tree.props.onDisappear();render(pages.ProxiesPage,{...props,selected:false});await flush();emitScene('background');emitScene('active');render(pages.ProxiesPage,{...props,selected:false});await flush();const hidden=reads
+      render(pages.ProxiesPage,props);await flush();tree=render(pages.ProxiesPage,props);await flush();assert.ok(reads>hidden);assert.equal(nodes(tree,pages.GroupSection)[0].props.g.name,'resumed-group')
+    }finally{unmount();api.loadGroups=original.groups;api.loadProviders=original.providers}
+  })
+  await test('更多长后台恢复：停止运行时钟/请求，未完成旧请求不阻塞新读取，合并事件和来源隔离',async()=>{
+    const original={versions:api.loadRuntimeVersions,config:api.loadConfig,runtime:api.loadNikkiRuntime,check:api.checkCoreUpdate}
+    const props={active:{...c,id:'more-scene-resume',kind:'openwrt',plugin:'nikki'},selected:true,onChanged(){}}
+    let reads=0,release;api.loadRuntimeVersions=async(c,update)=>{update?.({core:'v-resume',app:'p-resume',failed:false});return {core:'v-resume',app:'p-resume',failed:false}};api.loadConfig=async()=>({mode:'rule'});api.checkCoreUpdate=async()=>false
+    api.loadNikkiRuntime=async()=>{reads++;return {coreSeconds:120,serviceSeconds:300,measuredAt:now,running:true}}
+    try{
+      render(pages.MorePage,props,true);await flush();render(pages.MorePage,props);await flush()
+      api.loadNikkiRuntime=()=>new Promise(r=>release=r);[...intervals.values()].find(x=>x.ms===30000).fn();await flush()
+      emitScene('background');render(pages.MorePage,props);await flush();assert.equal(intervals.size,0)
+      now+=7200000;api.loadNikkiRuntime=async()=>{reads++;return {coreSeconds:9,serviceSeconds:20,measuredAt:now,running:true}}
+      emitScene('active');emitScene('inactive');emitScene('active');render(pages.MorePage,props);await flush();let tree=render(pages.MorePage,props);await flush()
+      assert.equal(reads,2);assert.ok(text(tree).includes(api.fmtUptime(9,true)));assert.ok(text(tree).includes('v-resume'));assert.ok(tree.props.toolbar)
+      release({coreSeconds:999999,serviceSeconds:999999,measuredAt:now,running:true});await flush();tree=render(pages.MorePage,props);assert.ok(!text(tree).includes(api.fmtUptime(999999,true)))
+      assert.equal([...intervals.values()].filter(x=>x.ms===30000).length,1);assert.equal([...intervals.values()].filter(x=>x.ms===1000).length,1)
+      tree.props.onDisappear();render(pages.MorePage,{...props,selected:false});await flush();const before=reads;emitScene('background');emitScene('active');render(pages.MorePage,{...props,selected:false});await flush();assert.equal(reads,before);assert.equal(intervals.size,0)
+      render(pages.MorePage,props);await flush();render(pages.MorePage,props);await flush();assert.equal(reads,before+1)
+      api.loadRuntimeVersions=async(c,update)=>{update?.({core:'other-source-version',app:'other-source-app',failed:false});return {core:'other-source-version',app:'other-source-app',failed:false}}
+      const other={...props,active:{...props.active,id:'more-scene-other',url:'http://other-scene.invalid'}}
+      render(pages.MorePage,other);await flush();tree=render(pages.MorePage,other);assert.ok(text(tree).includes('other-source-version'));assert.ok(!text(tree).includes('v-resume'))
+    }finally{unmount();api.loadRuntimeVersions=original.versions;api.loadConfig=original.config;api.loadNikkiRuntime=original.runtime;api.checkCoreUpdate=original.check}
+    assert.equal(intervals.size,0)
   })
   await test('隐藏标签自身不请求不采样；Root独立采样不依赖子页面，更多selected透传' , async () => {
     for (const fn of [app.OverviewPage, pages.ProxiesPage, pages.RulesPage, pages.ConnectionsPage, pages.MorePage]) {

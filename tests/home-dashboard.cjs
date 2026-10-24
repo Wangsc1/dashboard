@@ -2,7 +2,9 @@
 const fs=require('node:fs'),path=require('node:path'),vm=require('node:vm')
 const harness=fs.readFileSync(path.join(__dirname,'run.cjs'),'utf8').split(';(async () => {')[0]
 const checks=String.raw`
-function owner(fn){const state={hooks:[],cleanups:new Map()};return {render(props){const savedEffects=effects,savedCleanups=cleanups,savedIndex=hookIndex;hooks=state.hooks;cleanups=state.cleanups;effects=[];hookIndex=0;const tree=fn(props),queued=effects;effects=savedEffects;cleanups=savedCleanups;hookIndex=savedIndex;queued.forEach(f=>{const previous=cleanups;cleanups=state.cleanups;f();cleanups=previous});return tree},close(){for(const f of state.cleanups.values())f();state.cleanups.clear()}}}
+// Each simulated component owns its hook slots, including asynchronous setters.
+scripting.useState=function(v){const slots=hooks,i=hookIndex++;if(!(i in slots))slots[i]=typeof v==='function'?v():v;return [slots[i],v=>{slots[i]=typeof v==='function'?v(slots[i]):v}]}
+function owner(fn){const state={hooks:[],cleanups:new Map()};return {render(props){const savedHooks=hooks,savedEffects=effects,savedCleanups=cleanups,savedIndex=hookIndex;hooks=state.hooks;cleanups=state.cleanups;effects=[];hookIndex=0;const tree=fn(props),queued=effects;hooks=savedHooks;effects=savedEffects;cleanups=savedCleanups;hookIndex=savedIndex;queued.forEach(f=>{const previous=cleanups;cleanups=state.cleanups;f();cleanups=previous});return tree},close(){for(const f of state.cleanups.values())f();state.cleanups.clear()}}}
 async function settle(){for(let i=0;i<120;i++)await Promise.resolve()}
 const deep=(a,b)=>assert.equal(JSON.stringify(a),JSON.stringify(b))
 function plotNode(tree,width=336){return tree.props.children[0]({size:{width}})}

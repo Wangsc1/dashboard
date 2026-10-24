@@ -94,6 +94,45 @@ async function mount(){const node=render(plot.MountedCanvasPlot,props,true);awai
   const summary=diag.cadenceSummary();assert.ok(summary.includes('canvas-gap'));assert.ok(summary.includes('bridge'));assert.ok(!summary.includes('private-source-canary'))
   unmount();session.close();assert.equal(intervals.size,0);assert.equal(timeouts.size,0)
  })
+ await test('长后台恢复不依赖父memo/新样本：同一文档重放完整历史且只占一个有效桥接slot',async()=>{
+  await mount();const host=hosts.at(-1);host.handlers.plotReady();await flush();host.handlers.plotPainted()
+  render(plot.MountedCanvasPlot,{...props,samples:[10,20,30]});await flush();const oldResolve=host.resolve
+  const oldSent=host.sent.length
+  emitScene('background');now+=7200000
+  // No component render between lifecycle events: parent memo can stay identical.
+  emitScene('active');await flush();assert.equal(host.loads,1);assert.equal(host.sent.length,oldSent+1)
+  assert.ok(host.sent.at(-1).includes('"resume":true'));assert.ok(host.sent.at(-1).includes('[10,20,30]'))
+  const resumedResolve=host.resolve
+  emitScene('active');await flush();assert.equal(host.sent.length,oldSent+1,'duplicate active creates no second probe')
+  oldResolve(false);await flush();assert.equal(host.loads,1,'stale failed evaluate cannot reload the healthy document')
+  render(plot.MountedCanvasPlot,{...props,samples:[10,20,30,40]});await flush();assert.equal(host.sent.length,oldSent+1,'new sample waits for current bridge')
+  resumedResolve(true);await flush();assert.equal(host.sent.length,oldSent+2);assert.ok(host.sent.at(-1).includes('[10,20,30,40]'))
+  host.resolve(true);await flush();unmount();assert.equal(sceneListeners.size,0);assert.equal(intervals.size,0);assert.equal(timeouts.size,0)
+ })
+ await test('恢复探针发现文档不可用时仅重载图表，旧ready/painted不能揭示新文档',async()=>{
+  await mount();const host=hosts.at(-1);host.handlers.plotReady();await flush();host.handlers.plotPainted()
+  emitScene('inactive');emitScene('active');await flush();host.resolve(false);await flush()
+  assert.equal(host.loads,2);assert.ok(host.html.includes('"samples":[10,20]'));assert.ok(host.html.includes('"resume":true'))
+  assert.equal(host.handlers.plotReady({generation:1}),false);assert.equal(host.handlers.plotPainted({generation:1}),false)
+  let out=render(plot.MountedCanvasPlot,props);assert.equal(nodes(out,'WebView')[0].props.opacity,0);assert.equal(nodes(out,'Canvas').length,1)
+  host.handlers.plotReady({generation:2});host.handlers.plotPainted({generation:2});await flush();out=render(plot.MountedCanvasPlot,props)
+  assert.equal(nodes(out,'WebView')[0].props.opacity,1);assert.equal(host.loads,2)
+  unmount();assert.equal(host.disposed,1);assert.equal(sceneListeners.size,0);assert.equal(timeouts.size,0)
+ })
+ await test('恢复探针本身悬挂时只重载一次当前图表文档并清理超时owner',async()=>{
+  await mount();const host=hosts.at(-1);host.handlers.plotReady();host.handlers.plotPainted();await flush()
+  emitScene('background');now+=86400000;emitScene('active');await flush();const staleResolve=host.resolve
+  assert.equal(timeouts.size,1);[...timeouts.values()][0]();await flush();assert.equal(host.loads,2);assert.equal(timeouts.size,1,'only the new document load deadline remains')
+  staleResolve(false);await flush();assert.equal(host.loads,2)
+  host.handlers.plotReady({generation:2});const timersAfterReady=timeouts.size;host.handlers.plotReady({generation:2});assert.equal(timeouts.size,timersAfterReady,'ready is idempotent');host.handlers.plotPainted({generation:2});await flush();assert.equal(timeouts.size,0)
+  unmount();assert.equal(sceneListeners.size,0);assert.equal(timeouts.size,0)
+ })
+ await test('后台合并样本不发送桥接，恢复保持显式running=false且卸载后无恢复动作',async()=>{
+  await mount();const host=hosts.at(-1);host.handlers.plotReady();await flush()
+  emitScene('background');render(plot.MountedCanvasPlot,{...props,samples:[30,40],running:false});await flush();assert.equal(host.sent.length,0)
+  now+=3600000;emitScene('active');await flush();assert.equal(host.sent.length,1);assert.ok(host.sent[0].includes('"running":false'));assert.ok(host.sent[0].includes('[30,40]'))
+  const resolve=host.resolve;unmount();emitScene('background');emitScene('active');resolve(true);await flush();assert.equal(host.sent.length,1);assert.equal(timeouts.size,0)
+ })
  await test('组件卸载销毁控制器而非等待消失事件，不启动原生逐帧timer',async()=>{
   const tree=render(plot.InlineCanvasPlot,props,true);assert.equal(nodes(tree,plot.MountedCanvasPlot).length,1)
   await mount();const host=hosts.at(-1);unmount();assert.equal(host.disposed,1);assert.equal(intervals.size,0);assert.equal(timeouts.size,0)
