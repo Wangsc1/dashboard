@@ -14,7 +14,7 @@ import {
   closeAllConnections, loadRules, DockerContainer, FrpInfo, FrpProxy, DockerSettings, loadDiskUsage, loadInstalledPkgs, loadAvailablePkgs, upgradablePkgs, filterPkgs, pkgUpdateLists, pkgInstall, pkgRemove, pkgUpgrade, Pkg, loadDockerContainers, loadContainerDetail, dockerContainerOp, DockerContainerDetail, loadDockerImages, dockerImageRemove, DockerImage, loadDockerOverview, DockerOverview, dockerAction, loadFrp, frpAction, saveFrpCommon, saveFrpProxy, deleteFrpProxy, loadDockerSettings, saveDockerSettings, loadContainerPolicy, saveContainerPolicy, fmtBytes, fmtSpeed, fmtParts, fmtUptime, fmtDuration, delayColor,
 } from "./api"
 
-import { confirmed } from "./dashboard-model"
+import { confirmed, sourceKey } from "./dashboard-model"
 import { DOCKER_PNG_BASE64 } from "./docker-icon"
 import { useSmoothPlot } from "./chart-ui"
 import { CHART_HISTORY } from "./chart"
@@ -852,7 +852,10 @@ function Root() {
     </Tab>
     <Tab key="connections" title="连接" systemImage="arrowshape.zigzag.forward" value="connections">
       <NavigationStack key="connections-stack">
-        {tab === "connections" ? <ConnectionsPage selected onClose={dismiss} key={`connections:${active?.id ?? "empty"}`} active={active} version={version} /> : null}
+        {/* Native selection can reveal this stack before Root's JS update.
+            Keep its shell/content present; selected/visibility own polling, not mounting.
+            Full source identity prevents a retained first frame from showing another endpoint. */}
+        <ConnectionsPage selected={tab === "connections"} onClose={dismiss} key={`connections:${active ? sourceKey(active) : "empty"}`} active={active} version={version} />
       </NavigationStack>
     </Tab>
     <Tab key="more" title="更多" systemImage="square.split.2x2" value="more">

@@ -869,9 +869,9 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     for (const id of [...ids, 'home', 'connections', 'home']) {
       nodes(tree,'TabView')[0].props.selection.setValue(id); tree = render(app.Root, {})
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
-      for (let i = 0; i < ids.length; i++) { const lazy = ['proxies','rules','connections'].includes(ids[i]) && ids[i] !== id; assert.equal(nodes(tree, types[i]).length, lazy ? 0 : 1); if (!lazy) assert.equal(nodes(tree, types[i])[0].props.selected, ids[i] === id) }
+      for (let i = 0; i < ids.length; i++) { const lazy = ['proxies','rules'].includes(ids[i]) && ids[i] !== id; assert.equal(nodes(tree, types[i]).length, lazy ? 0 : 1); if (!lazy) assert.equal(nodes(tree, types[i])[0].props.selected, ids[i] === id) }
     }
-    assert.equal(api.VERSION, '1.40'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.41'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('独立导航栈保留业务owner和身份，只有选中页提供可见工具栏', () => {
     pref.savePreferences({ defaultPage: 'overview' })
@@ -895,7 +895,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
         if(roots.has(id))assert.equal(identity,roots.get(id));else roots.set(id,identity)
         assert.equal(owner.props.toolbar,undefined)
         const children=owner.props.children.filter(Boolean)
-        const lazy=['proxies','rules','connections'].includes(id); if(lazy&&id!==selected){assert.equal(children.length,0);continue}
+        const lazy=['proxies','rules'].includes(id); if(lazy&&id!==selected){assert.equal(children.length,0);continue}
         assert.equal(children.length,1); assert.equal(children[0].props.selected, id === selected)
         if(id!==selected) continue
         assert.equal(children.length,1);assert.equal(children[0].type,pagesByTab[id]);assert.ok(children[0].props.key.startsWith(id+':'))
@@ -1979,21 +1979,21 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     tree=render(pages.ConnectionDetailPage,{x:{...x,closedAt:now},onDisconnect(){}},true);assert.equal(tree.props.toolbar,undefined);unmount()
     responder=()=>({status:204})
   })
-  await test('Root恢复重新读取原生selection，保持惰性标签与NavigationStack身份', async () => {
+  await test('Root恢复重新读取原生selection，连接正文预先存在且NavigationStack身份稳定', async () => {
     pref.savePreferences({defaultPage:'overview'})
     const original=scripting.useState;let invalidations=0
     scripting.useState=v=>{const [state,set]=original(v);return [state,next=>{if(typeof next==='function')invalidations++;set(next)}]}
     try {
       let tree=render(app.Root,{},true);await flush();const selection=tree.props.selection
       const stack=t=>nodes(t,'NavigationStack').find(n=>n.props.key==='connections-stack')
-      assert.equal(stack(tree).props.children.length,0)
+      assert.equal(stack(tree).props.children[0].type,pages.ConnectionsPage);assert.equal(stack(tree).props.children[0].props.selected,false)
       // Simulate native binding restoration without a subscription notification.
       selection.value='connections';invalidations=0
       emitScene('background');emitScene('active')
       assert.ok(invalidations>0,'active explicitly invalidates derived selection')
       tree=render(app.Root,{});await flush();assert.equal(stack(tree).props.children[0].type,pages.ConnectionsPage)
-      assert.equal(stack(tree).props.children[0].props.key,`connections:${api.getActive()?.id??'empty'}`)
-      selection.setValue('rules');tree=render(app.Root,{});await flush();assert.equal(stack(tree).props.children.length,0)
+      assert.equal(stack(tree).props.children[0].props.key,`connections:${api.getActive()?model.sourceKey(api.getActive()):'empty'}`)
+      selection.setValue('rules');tree=render(app.Root,{});await flush();assert.equal(stack(tree).props.children[0].type,pages.ConnectionsPage);assert.equal(stack(tree).props.children[0].props.selected,false)
       selection.setValue('connections');tree=render(app.Root,{});await flush();assert.equal(stack(tree).props.children[0].type,pages.ConnectionsPage)
     } finally {scripting.useState=original;unmount()}
   })
@@ -2101,7 +2101,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       const diagnostic = logs.filter(x => x.startsWith('[preferences-icon]'))
       for (const stage of ['change','accepted','proxies-render','group-render']) assert.ok(diagnostic.some(x => x.includes('stage=' + stage) && x.includes('enabled=false')))
       assert.ok(diagnostic.every(x => !x.includes('private.invalid') && !x.includes('private-group-name') && !x.includes('secret-')))
-      assert.ok(diagnostic.every(x => x.includes('build=1.40') && /instance=[a-z0-9]+/.test(x)))
+      assert.ok(diagnostic.every(x => x.includes('build=1.41') && /instance=[a-z0-9]+/.test(x)))
       assert.equal(new Set(diagnostic.map(x => x.match(/instance=([^ ]+)/)[1])).size, 1)
     } finally { context.console = originalConsole; unmount(); pref.savePreferences({ customIcons: true, testURL: 'https://www.gstatic.com/generate_204' }) }
   })
