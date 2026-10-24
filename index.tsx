@@ -1,4 +1,4 @@
-import { beginCadenceDiagnostics, timingToken, timing } from "./cadence-diagnostics"
+import { beginCadenceDiagnostics, timingToken, timing, connectionLifecycle } from "./cadence-diagnostics"
 import { detailReads, useDetailPage, useRouterDetail, peekDetail, prefetchRouterDetails, detailWrite, observeDetailsPhase, selectDetailsSource } from "./router-details"
 import { HOME_BG, HomeDashboard, CpuDetails, LiveCpuDetails, CpuDetailFrame } from "./home-ui"
 import { newHistory, appendHistory, OverviewHistory } from "./openwrt-metrics"
@@ -815,10 +815,15 @@ function Root() {
   const [, refreshSelection] = useState(0)
   useEffect(() => {
     const changed = () => refreshSelection(n => n + 1)
+    // Re-read the native binding on resume as well; a retained JS tree must not
+    // keep the lazy NavigationStack empty after missed/coalesced invalidations.
+    const phaseChanged = (phase: "active" | "inactive" | "background") => { if (phase === "active") changed() }
     selection.subscribe(changed)
-    return () => selection.unsubscribe(changed)
+    AppEvents.scenePhase.addListener(phaseChanged)
+    return () => { selection.unsubscribe(changed); AppEvents.scenePhase.removeListener(phaseChanged) }
   }, [selection])
   const tab = selection.value
+  connectionLifecycle(`root-${tab}`)
   const active = getActive(), bump = () => { setVersion(v => v + 1) }
   const homeSource = active ? overviewSource(active) : ""
   useEffect(()=>{selectDetailsSource(active)},[homeSource])

@@ -2,7 +2,7 @@ import { TimingToken, timingToken, timing, timingReadContext, timingSpan } from 
 import { CpuSampler, CpuUsage, CpuMeta, parseCpuInfo, thermalCelsius } from "./openwrt-metrics"
 
 import { getPreferences, customHeaders, recordEvent, controllerHealth, feedback } from "./preferences"
-export const VERSION = "1.38"
+export const VERSION = "1.39"
 
 export type Kind = "clash" | "openwrt"
 export type Plugin = "openclash" | "nikki" | "mihomo"
@@ -77,14 +77,14 @@ export function getActive(): Controller | null {
 export function setActive(id: string) { Storage.set(K_ACTIVE, id); feedback(); recordEvent("switch", true) }
 
 class ControllerHTTPError extends Error {}
-async function http(c: Controller, path: string, init: { method?: string; body?: any; timeout?: number; headers?: Record<string, string> } = {}): Promise<any> {
+async function http(c: Controller, path: string, init: { method?: string; body?: any; timeout?: number; headers?: Record<string, string>; signal?: AbortController["signal"] } = {}): Promise<any> {
   const secret = getSecret(c.id)
   const headers: Record<string, string> = init.headers ? { ...init.headers } : customHeaders()
   if (init.body !== undefined) headers["Content-Type"] = "application/json"
   if (!init.headers && secret) headers["Authorization"] = "Bearer " + secret
   const r = await apiFetch(c.url + path, {
     method: init.method ?? "GET", headers, allowInsecureRequest: true, timeout: init.timeout ?? getPreferences().requestTimeout,
-    body: init.body !== undefined ? JSON.stringify(init.body) : undefined,
+    body: init.body !== undefined ? JSON.stringify(init.body) : undefined, signal: init.signal,
   } as any, path)
   if (!r.ok) {
     if (r.status === 401 || r.status === 403) throw new ControllerHTTPError("认证失败，请检查密钥")
@@ -591,10 +591,11 @@ export async function testGroup(c0: Controller, g: Group, onProgress?: (name: st
   return res
 }
 
-export async function loadConnections(c0: Controller): Promise<Conn[]> {
+export async function loadConnections(c0: Controller, signal?: AbortController["signal"]): Promise<Conn[]> {
   const c = await cc(c0)
+  if (signal?.aborted) throw new Error("Connection read cancelled")
   if (c.kind === "clash") {
-    const j = await http(c, "/connections")
+    const j = await http(c, "/connections", { signal })
     return (j.connections ?? []).map((x: any): Conn => {
       const m = x.metadata ?? {}
       return {

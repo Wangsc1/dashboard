@@ -34,6 +34,20 @@ export function beginCadenceDiagnostics(key:string){
     heartbeat=setInterval(()=>{const now=Date.now(),late=now-expected;expected=now+250;if(late>=1000)timing(timingToken(key),'js-gap',late)},250)
   },pause:stop,close(){stop();if(owned===session)source=''}}
 }
+// Closed vocabulary only: no source key, address, metadata, credentials or errors.
+type ConnectionEvent='active'|'inactive'|'background'|'appear'|'disappear'|'poll-start'|'poll-stop'|'sample'|'expired'|'request-error'|'render'|'root-home'|'root-proxies'|'root-rules'|'root-connections'|'root-more'
+const connectionEvents:Array<{event:ConnectionEvent;at:number;n:number}>=[]
+export function connectionLifecycle(event:ConnectionEvent){
+  const last=connectionEvents[connectionEvents.length-1]
+  if(last?.event===event){last.n++;last.at=Date.now();return}
+  connectionEvents.push({event,at:Date.now(),n:1});if(connectionEvents.length>40)connectionEvents.shift()
+}
+export function connectionLifecycleSummary(){
+  const now=Date.now()
+  return ['连接生命周期（仅本次运行，最多40项，无来源/连接内容）',
+    'root-*为JS读取的标签；render为连接正文已构建，appear/disappear为视图回调；不代表原生像素已绘制。',
+    ...connectionEvents.map(e=>`-${Math.max(0,now-e.at)}ms ${e.event} ×${e.n}`)].join('\n')
+}
 export function cadenceSummary(){
   const lines=['采样/绘图计时摘要 v1（仅本次运行；无地址、认证、配置或响应正文）',`会话=${session} 前台采样=${active?'是':'否'} 异常阈值=1500ms 记录上限=32`,
     '读法：read/headers/body慢且js-gap不高→请求/服务端尾延迟线索；js-gap高→JS调度/宿主暂停线索；仅bridge高→绘图桥接线索；canvas-gap高→画布rAF长间隔。它们是耗时观察，不是单凭摘要确认根因。',
@@ -43,5 +57,5 @@ export function cadenceSummary(){
   lines.push('最近异常（相对查看时间，毫秒）：')
   const now=Date.now();for(const e of recent)lines.push(`-${Math.max(0,now-e.at)}ms 会话${e.session} ${e.stage}=${e.ms}ms${e.slowInfo!==undefined?` slowInfo=${e.slowInfo} zones=${e.zones}`:''}`)
   if(!recent.length)lines.push('未捕获异常；不代表已排除真机绘制停顿。')
-  return lines.join('\n')
+  return lines.join('\n')+'\n'+connectionLifecycleSummary()
 }

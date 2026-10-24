@@ -871,7 +871,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) { const lazy = ['proxies','rules','connections'].includes(ids[i]) && ids[i] !== id; assert.equal(nodes(tree, types[i]).length, lazy ? 0 : 1); if (!lazy) assert.equal(nodes(tree, types[i])[0].props.selected, ids[i] === id) }
     }
-    assert.equal(api.VERSION, '1.38'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.39'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('独立导航栈保留业务owner和身份，只有选中页提供可见工具栏', () => {
     pref.savePreferences({ defaultPage: 'overview' })
@@ -1979,6 +1979,83 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     tree=render(pages.ConnectionDetailPage,{x:{...x,closedAt:now},onDisconnect(){}},true);assert.equal(tree.props.toolbar,undefined);unmount()
     responder=()=>({status:204})
   })
+  await test('Root恢复重新读取原生selection，保持惰性标签与NavigationStack身份', async () => {
+    pref.savePreferences({defaultPage:'overview'})
+    const original=scripting.useState;let invalidations=0
+    scripting.useState=v=>{const [state,set]=original(v);return [state,next=>{if(typeof next==='function')invalidations++;set(next)}]}
+    try {
+      let tree=render(app.Root,{},true);await flush();const selection=tree.props.selection
+      const stack=t=>nodes(t,'NavigationStack').find(n=>n.props.key==='connections-stack')
+      assert.equal(stack(tree).props.children.length,0)
+      // Simulate native binding restoration without a subscription notification.
+      selection.value='connections';invalidations=0
+      emitScene('background');emitScene('active')
+      assert.ok(invalidations>0,'active explicitly invalidates derived selection')
+      tree=render(app.Root,{});await flush();assert.equal(stack(tree).props.children[0].type,pages.ConnectionsPage)
+      assert.equal(stack(tree).props.children[0].props.key,`connections:${api.getActive()?.id??'empty'}`)
+      selection.setValue('rules');tree=render(app.Root,{});await flush();assert.equal(stack(tree).props.children.length,0)
+      selection.setValue('connections');tree=render(app.Root,{});await flush();assert.equal(stack(tree).props.children[0].type,pages.ConnectionsPage)
+    } finally {scripting.useState=original;unmount()}
+  })
+  await test('连接恢复：后台在途成功即刻失效，新owner不等待旧请求且不覆盖新样本', async () => {
+    const owner={...c,id:'connections-pending-resume'},h=model.historyFor(owner)
+    let release,signal;const wait=new Promise(r=>release=r)
+    responder=(url,init)=>{signal=init.signal;return {wait,body:{connections:[{id:'stale',metadata:{host:'stale.invalid'},upload:999,download:999}]}}}
+    render(pages.ConnectionsPage,{active:owner,version:0},true);await flush();assert.equal(signal.aborted,false)
+    emitScene('background');assert.equal(signal.aborted,true);assert.ok(![...intervals.values()].some(x=>x.ms===1500))
+    // Do not release the suspended request: the resumed owner must proceed independently.
+    assert.equal(h.active.length,0)
+    now+=7200000;emitScene('active');responder=()=>({body:{connections:[{id:'resumed',metadata:{host:'resumed.invalid'},upload:10,download:20}]}})
+    render(pages.ConnectionsPage,{active:owner,version:0});await flush()
+    assert.equal(h.active[0].id,'resumed');release();await flush()
+    const tree=render(pages.ConnectionsPage,{active:owner,version:0});assert.ok(text(tree).includes('resumed.invalid'));assert.ok(!text(tree).includes('stale.invalid'))
+    assert.equal(h.active[0].downSpeed,0);assert.equal(h.closed.length,0);unmount()
+  })
+  await test('连接过期请求：未结束可替换，晚到结果不写历史/缓存，不虚构断开或跨暂停速率', async () => {
+    const owner={...c,id:'connections-expired-request'},h=model.historyFor(owner)
+    responder=()=>({body:{connections:[{id:'previous',metadata:{host:'previous.invalid'},upload:10,download:20}]}})
+    render(pages.ConnectionsPage,{active:owner,version:0},true);await flush()
+    let release,signal;const wait=new Promise(r=>release=r)
+    responder=(url,init)=>{signal=init.signal;return {wait,body:{connections:[{id:'expired',metadata:{host:'expired.invalid'},upload:999,download:999}]}}}
+    const poll=()=>[...intervals.values()].find(x=>x.ms===1500).fn()
+    poll();await flush();now+=pref.getPreferences().requestTimeout*1000+1
+    responder=()=>({body:{connections:[{id:'replacement',metadata:{host:'replacement.invalid'},upload:30,download:60}]}})
+    poll();await flush();assert.equal(signal.aborted,true);assert.equal(h.active[0].id,'replacement');assert.equal(h.active[0].downSpeed,0);assert.equal(h.closed.length,0)
+    release();await flush();let tree=render(pages.ConnectionsPage,{active:owner,version:0});assert.ok(text(tree).includes('replacement.invalid'));assert.ok(!text(tree).includes('expired.invalid'))
+    unmount();tree=render(pages.ConnectionsPage,{active:owner,version:0},true);assert.ok(text(tree).includes('replacement.invalid'));unmount()
+    // Expired snapshots cannot be rehydrated after a long background stay.
+    now+=600001;tree=render(pages.ConnectionsPage,{active:owner,version:0},true);assert.ok(!text(tree).includes('replacement.invalid'));assert.ok(tree.props.toolbar);unmount()
+  })
+  await test('连接过期响应先于定时器完成也不发布，下一次轮询仍可恢复', async () => {
+    const owner={...c,id:'connections-expired-settle'};let release;const wait=new Promise(r=>release=r)
+    responder=()=>({wait,body:{connections:[{id:'too-late',metadata:{host:'too-late.invalid'}}]}})
+    render(pages.ConnectionsPage,{active:owner,version:0},true);await flush();now+=pref.getPreferences().requestTimeout*1000+1
+    release();await flush();assert.equal(model.historyFor(owner).active.length,0)
+    responder=()=>({body:{connections:[]}});[...intervals.values()].find(x=>x.ms===1500).fn();await flush()
+    const tree=render(pages.ConnectionsPage,{active:owner,version:0});assert.ok(!text(tree).includes('too-late.invalid'));assert.ok(tree.props.toolbar);unmount()
+  })
+  await test('连接重现：隐藏标签可无onAppear重启，详情隐藏仍暂停，暂停监控不被active解除', async () => {
+    const props={active:{...c,id:'connections-reappear'},version:0,selected:true}
+    responder=()=>({body:{connections:[]}});let tree=render(pages.ConnectionsPage,props,true);await flush()
+    tree.props.onDisappear();render(pages.ConnectionsPage,{...props,selected:false});await flush();assert.equal(intervals.size,0)
+    render(pages.ConnectionsPage,props);await flush();tree=render(pages.ConnectionsPage,props);await flush();assert.ok([...intervals.values()].some(x=>x.ms===1500))
+    tree.props.onDisappear();emitScene('inactive');emitScene('active');render(pages.ConnectionsPage,props);await flush();assert.equal(intervals.size,0)
+    tree.props.onAppear();render(pages.ConnectionsPage,props);await flush();assert.ok([...intervals.values()].some(x=>x.ms===1500))
+    tree=render(pages.ConnectionsPage,props);button(trailing(tree.props.toolbar),'暂停监控').props.action();render(pages.ConnectionsPage,props);await flush()
+    emitScene('background');now+=3600000;emitScene('active');render(pages.ConnectionsPage,props);await flush();assert.equal(intervals.size,0);unmount()
+    const diag=load('cadence-diagnostics').connectionLifecycleSummary();assert.ok(diag.includes('poll-stop'));assert.ok(!diag.includes(props.active.id));assert.ok(!diag.includes(c.url));assert.ok(diag.split('\n').length<=42)
+  })
+  await test('连接恢复：后台长暂停与active合并渲染仍建立新轮询owner', async () => {
+    const owner={...c,id:'connections-batched-resume'}
+    const mk=id=>({body:{connections:[{id,metadata:{host:id+'.invalid'},upload:20,download:40}]}})
+    responder=()=>mk('before-resume');render(pages.ConnectionsPage,{active:owner,version:0},true);await flush()
+    emitScene('background');now+=3600000;emitScene('active')
+    responder=()=>mk('after-resume');render(pages.ConnectionsPage,{active:owner,version:0});await flush()
+    let tree=render(pages.ConnectionsPage,{active:owner,version:0});assert.ok(text(tree).includes('after-resume.invalid'))
+    assert.ok(!text(tree).includes('before-resume.invalid'));assert.equal(tree.props.navigationTitle,owner.name);assert.ok(tree.props.toolbar)
+    emitScene('active');responder=()=>mk('duplicate-active');render(pages.ConnectionsPage,{active:owner,version:0});await flush()
+    tree=render(pages.ConnectionsPage,{active:owner,version:0});assert.ok(text(tree).includes('duplicate-active.invalid'));unmount()
+  })
   await test('连接页后台停止轮询并忽略旧请求失败，前台重新读取', async () => {
     let release;responder=()=>({wait:new Promise((r,reject)=>{release=()=>reject(Error('interrupted'))}),status:200})
     render(pages.ConnectionsPage,{active:c,version:0},true);await flush()
@@ -2024,7 +2101,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       const diagnostic = logs.filter(x => x.startsWith('[preferences-icon]'))
       for (const stage of ['change','accepted','proxies-render','group-render']) assert.ok(diagnostic.some(x => x.includes('stage=' + stage) && x.includes('enabled=false')))
       assert.ok(diagnostic.every(x => !x.includes('private.invalid') && !x.includes('private-group-name') && !x.includes('secret-')))
-      assert.ok(diagnostic.every(x => x.includes('build=1.38') && /instance=[a-z0-9]+/.test(x)))
+      assert.ok(diagnostic.every(x => x.includes('build=1.39') && /instance=[a-z0-9]+/.test(x)))
       assert.equal(new Set(diagnostic.map(x => x.match(/instance=([^ ]+)/)[1])).size, 1)
     } finally { context.console = originalConsole; unmount(); pref.savePreferences({ customIcons: true, testURL: 'https://www.gstatic.com/generate_204' }) }
   })
