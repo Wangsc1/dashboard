@@ -3,9 +3,9 @@ const fs=require('node:fs'),vm=require('node:vm')
 const harness=fs.readFileSync(__dirname+'/run.cjs','utf8').split(';(async () => {')[0]
 const checks=String.raw`
 scripting.useState=function(v){const slots=hooks,i=hookIndex++;if(!(i in slots))slots[i]=typeof v==='function'?v():v;return [slots[i],v=>{slots[i]=typeof v==='function'?v(slots[i]):v}]}
-function instance(fn){const state={hooks:[],cleanups:new Map()};return {state,async draw(props){
+function instance(fn){const state={hooks:[],cleanups:new Map()};return {state,async draw(props,beforeEffects){
  const saved={hooks,cleanups,effects,hookIndex};hooks=state.hooks;cleanups=state.cleanups;effects=[];hookIndex=0
- let out=fn(props);await flush();hookIndex=0;effects=[];out=fn(props);await flush()
+ let out=fn(props);if(beforeEffects)beforeEffects(out);await flush();hookIndex=0;effects=[];out=fn(props);await flush()
  hooks=saved.hooks;cleanups=saved.cleanups;effects=saved.effects;hookIndex=saved.hookIndex;return out
 },close(){for(const c of state.cleanups.values())c();state.cleanups.clear()}}}
 ;(async()=>{
@@ -79,7 +79,7 @@ function instance(fn){const state={hooks:[],cleanups:new Map()};return {state,as
   const instances=new Map(),listeners=new Set(),trace=load('cadence-diagnostics').createSheetTrace()
   const frame=(n,running=true,count=16)=>{
    const cpus=Array.from({length:count},(_,i)=>({id:'cpu'+i,usage:n+i}));cpus.unshift({id:'cpu',usage:n})
-   return {overview:{wrt:{cpus,uptime:n,release:'test',cpuModel:'test',cpuMeta:n?{cpu0:{mhz:1000,cacheKB:12}}:undefined}},histories:{cpu:Object.fromEntries(cpus.map(c=>[c.id,[10,n]])),up:[],down:[]},running}
+   return {overview:{wrt:{cpus,uptime:n,release:'test',cpuModel:'test',cpuMeta:n?{cpu0:{mhz:1000,cacheKB:12}}:undefined}},histories:{cpu:Object.fromEntries(cpus.map(c=>[c.id,Array.from({length:8+n},(_,i)=>10+i+c.usage)])),up:[],down:[]},running}
   }
   const feed=home.createCpuDetailFeed(frame(0,false)),sub=feed.subscribe,unsub=feed.unsubscribe;feed.subscribe=f=>{listeners.add(f);sub(f)};feed.unsubscribe=f=>{listeners.delete(f);unsub(f)}
   const publish=f=>feed.setValue(f)
@@ -91,10 +91,10 @@ function instance(fn){const state={hooks:[],cleanups:new Map()};return {state,as
     const name=typeof n.type==='function'?n.type.name:n.type,where=path+'/'+name+(n.props?.key!==undefined?'#'+n.props.key:'')
     if(typeof n.type==='function'){
      let own=instances.get(where);if(!own){own=instance(n.type);instances.set(where,own)}
-     return walk(await own.draw(n.props),where)
+     return walk(await own.draw(n.props,n.type.name==='MountedCanvasPlot'?(node=>nativeBeforeEffects(node,where)):undefined),where)
     }
     skeleton.push([where,n.props.frame??null])
-    assert.notEqual(n.type,'WebView');if(n.type==='TimelineCanvas'){const parent=[...instances.entries()].find(([key])=>where.startsWith(key+'/TimelineCanvas'));plots.push({path:where,model:parent[1].state.hooks[0].current.model});assert.equal(n.props.schedule.minimumInterval,1/30)}
+    assert.notEqual(n.type,'WebView');if(n.type==='TimelineCanvas'){const parent=[...instances.entries()].find(([key])=>where.startsWith(key+'/TimelineCanvas'));plots.push({path:where,host:parent[1].state.hooks[0].current,tree:n,model:parent[1].state.hooks[0].current.model});assert.equal(n.props.schedule.minimumInterval,1/30)}
     // Assert key uniqueness at the actual sibling scope, not globally across distinct parents.
     const kids=(n.props?.children??[]).filter(x=>x&&typeof x==='object'),keys=kids.map(x=>x.props?.key).filter(x=>x!==undefined)
     assert.equal(new Set(keys).size,keys.length,'duplicate sibling key '+where)
@@ -103,12 +103,27 @@ function instance(fn){const state={hooks:[],cleanups:new Map()};return {state,as
    await walk({type:home.LiveCpuDetails,props:{feed,trace}},'sheet')
    return {plots,skeleton}
   }
+  // Native render may call appear/draw BEFORE passive effects; old tests always
+  // flushed all effects before pretending a native frame happened.
+  const appeared=new Set(),ctx=new Proxy({}, {get:()=>()=>{},set:()=>true})
+  function nativeBeforeEffects(n,path){if(n.type!=='TimelineCanvas')return;if(!appeared.has(path)){appeared.add(path);n.props.onAppear();n.props.onAppear()}n.props.draw(ctx,{width:145,height:76},now/1000)}
+  function finish(){const fs=[...timers.values()];timers.clear();fs.forEach(f=>f())}
+  function drawPlots(snapshot){for(const p of snapshot.plots)p.tree.props.draw(ctx,{width:145,height:76},now/1000)}
   let baseline=await tree();assert.equal(baseline.plots.length,17);assert.equal(new Set(baseline.plots.map(p=>p.model)).size,17);assert.equal(listeners.size,1)
   const signature=x=>JSON.stringify(x.plots.map(p=>p.path))
+  drawPlots(baseline);finish()
   await flush()
+  const sampleBase=now
   for(const n of [1,2,3,4,5]){
+   now=sampleBase+n*1000
    publish(frame(n));const next=await tree();assert.equal(signature(next),signature(baseline));assert.equal(JSON.stringify(next.skeleton),JSON.stringify(baseline.skeleton),'all native paths/frames remain stable')
-   next.plots.forEach((p,i)=>assert.equal(p.model,baseline.plots[i].model));assert.equal(next.plots.length,17)
+   next.plots.forEach((p,i)=>{assert.equal(p.model,baseline.plots[i].model);assert.equal(p.host.running,true);assert.equal(p.model.history.length,8+n);assert.ok(p.host.drawTrack.state.counts.updates>=n+1);assert.ok(p.host.drawTrack.state.counts.newRefs>=n+1)});assert.equal(next.plots.length,17)
+   if(n>1){
+    next.plots.forEach(p=>{assert.equal(p.model.animating,true,'growing real feed history must enter animation');assert.equal(p.tree.props.paused,false);assert.equal(p.host.ticking,true)})
+    const starts=next.plots.map(p=>JSON.stringify(p.model.shown));now+=500;drawPlots(next)
+    next.plots.forEach((p,i)=>{assert.equal(p.host.drawTrack.continuous,true);assert.ok(p.host.drawTrack.state.counts.rawAnimating>0);assert.ok(p.host.drawTrack.state.counts.animStarts>0);assert.notEqual(JSON.stringify(p.model.shown),starts[i],'actual middle draw advances geometry');assert.notDeepEqual(JSON.parse(JSON.stringify(p.model.shown)),JSON.parse(JSON.stringify(p.model.to)),'middle draw is not final target')})
+    now+=500;drawPlots(next);finish()
+   }else{drawPlots(next);finish()}
   }
   publish(frame(6,false));await tree();publish(frame(7,true));assert.equal(signature(await tree()),signature(baseline),'retained second sheet uses same tree')
   // Empty-data prompt -> populated cores only inserts rows after the existing summary; summary path stays fixed.

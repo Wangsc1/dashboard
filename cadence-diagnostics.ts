@@ -108,23 +108,78 @@ export function plotLifecycleSummary(){
 function drawMetric(){return {n:0,total:0,max:0,buckets:[0,0,0,0],ring:new Array<number>(128).fill(0),cursor:0}}
 function drawTotals(){return {frames:0,restarts:0,backsteps:0,maxProgressStep:0,maxGeometryStep:0,stationary:0,native:drawMetric(),js:drawMetric(),cost:drawMetric()}}
 const drawRoles={home:drawTotals(),detail:drawTotals()}
-export interface NativeDrawTrack {role:PlotRole;continuous:boolean;native:number;js:number;start:number;progress:number;points:number[];length:number}
+// v2 records entry and exclusion conditions BEFORE v1 filtering. No sample values.
+const stateKeys=['updates','newRefs','runningTrue','runningFalse','animStarts','updateNotAnimating','updateStopped','raw','rawAnimating','timeMissing','timeInvalid','notAnimating','notRunning','notTicking','notForeground','notVisible','zeroSize','wake','park','setPausedTrue','setPausedFalse','restoreScene','restoreDisappear','restoreReturnAppear','restoreKick','restoreRunningFalse','startsWithoutDraw'] as const
+type StateKey=typeof stateKeys[number]
+function stateCounts(){const out={} as Record<StateKey,number>;for(const k of stateKeys)out[k]=0;return out}
+const stateRoles={home:stateCounts(),detail:stateCounts()}
+const rawJsRoles={home:drawMetric(),detail:drawMetric()}
+interface PlotStateTrack {id:number;role:PlotRole;live:boolean;counts:ReturnType<typeof stateCounts>;updateAt:number;drawAt:number;flags:number;history:number;expectedPause:boolean;renderedPause:boolean;pendingStart:boolean;rawContinuous:boolean;rawAt:number;events:string[];times:number[];cursor:number;eventCount:number}
+const stateHosts=new Map<number,PlotStateTrack>()
+function makePlotState(owner:PlotTrace):PlotStateTrack{
+  const s:PlotStateTrack={id:owner.id,role:owner.role,live:true,counts:stateCounts(),updateAt:0,drawAt:0,flags:0,history:0,expectedPause:false,renderedPause:false,pendingStart:false,rawContinuous:false,rawAt:0,events:new Array<string>(8).fill(''),times:new Array<number>(8).fill(0),cursor:0,eventCount:0}
+  stateHosts.set(owner.id,s);if(stateHosts.size>64)stateHosts.delete(stateHosts.keys().next().value!)
+  return s
+}
+function countState(s:PlotStateTrack,key:StateKey){s.counts[key]++;stateRoles[s.role][key]++}
+function stateBoundary(s:PlotStateTrack,event:string){s.events[s.cursor]=event;s.times[s.cursor]=Date.now();s.cursor=(s.cursor+1)%8;s.eventCount=Math.min(8,s.eventCount+1)}
+export function nativePlotStateEvent(t:NativeDrawTrack,event:'wake'|'park'|'setPausedTrue'|'setPausedFalse'|'restoreScene'|'restoreDisappear'|'restoreReturnAppear'|'restoreKick'|'restoreRunningFalse'){
+  const s=t.state;countState(s,event)
+  if(event==='setPausedTrue'||event==='setPausedFalse')s.expectedPause=event==='setPausedTrue'
+  if(event==='park'||event.startsWith('restore'))stateBoundary(s,event)
+}
+export function nativePlotRenderedPause(t:NativeDrawTrack,paused:boolean){t.state.renderedPause=paused}
+export function nativePlotUpdate(t:NativeDrawTrack,newRef:boolean,running:boolean,wasAnimating:boolean,oldStart:number,animating:boolean,start:number,length:number){
+  const s=t.state;countState(s,'updates');if(newRef)countState(s,'newRefs');countState(s,running?'runningTrue':'runningFalse');s.updateAt=Date.now();s.history=length
+  if(!animating)countState(s,'updateNotAnimating')
+  if(wasAnimating&&!animating)countState(s,'updateStopped')
+  if(animating&&(!wasAnimating||oldStart!==start)){
+    if(s.pendingStart)countState(s,'startsWithoutDraw')
+    countState(s,'animStarts');s.pendingStart=true;stateBoundary(s,'sample-start')
+  }
+}
+// flags: model.animating=1 running=2 ticking=4 foreground=8 visible=16 positive-size=32.
+export function nativePlotRawDraw(t:NativeDrawTrack,time:number,at:number,flags:number){
+  const s=t.state;countState(s,'raw');s.drawAt=at;s.flags=flags
+  if(time===undefined||time===null)countState(s,'timeMissing')
+  else if(!Number.isFinite(time))countState(s,'timeInvalid')
+  if(flags&1){countState(s,'rawAnimating');s.pendingStart=false}else countState(s,'notAnimating')
+  if(!(flags&2))countState(s,'notRunning');if(!(flags&4))countState(s,'notTicking');if(!(flags&8))countState(s,'notForeground');if(!(flags&16))countState(s,'notVisible');if(!(flags&32))countState(s,'zeroSize')
+  // JS-only continuous animation gap survives missing native time, not lifecycle/static gaps.
+  if(flags===63){if(s.rawContinuous&&at>=s.rawAt)addDrawMetric(rawJsRoles[s.role],at-s.rawAt);s.rawContinuous=true;s.rawAt=at}else s.rawContinuous=false
+}
+export function nativePlotStateSummary(){
+  const now=Date.now(),format=(c:ReturnType<typeof stateCounts>)=>stateKeys.map(k=>`${k}=${c[k]}`).join(' ')
+  const lines=['原生绘制状态 v2（进程累计；raw为alive draw入口，无time/动画过滤；拒绝条件非互斥）',
+    'A: newRefs不增长→宿主未收到新samples引用；B: newRefs增长但animStarts不增长→未启动，updateStopped/restore*辅助定位；C: animStarts增长但raw/rawAnimating不增长→动画已启但缺draw；D: raw存在，对照not*/zeroSize/timeMissing/timeInvalid与v1。不同阶段可并存，不凭累计值自动定根因。',
+    'updates=宿主数据/style effect次数；newRefs=其中samples引用变化次数（含首帧）；runningTrue/False为effect传入值；updateNotAnimating/Stopped为更新后未动画/从动画变停止；wake/park为调用次数，setPaused*才是setter次数。',
+    'flags位: animating=1 running=2 ticking=4 foreground=8 visible=16 positive-size=32；63才通过v1门控，还需有效time。expectedPause=最近setter期望，renderedPause=最近JS props，不代表原生已应用。',
+    'restoreRunningFalse为running=false更新触发的归位路径标记，非额外restore调用；animStarts按更新前后animating/start比较。startsWithoutDraw为前次启动未见animating draw又启动的次数，pendingStart表示最近启动尚未见animating draw。']
+  for(const role of ['home','detail'] as const){lines.push(`${role}.state: ${format(stateRoles[role])}`);const m=rawJsRoles[role];lines.push(`${role}.raw-js-active-gap: n=${m.n} total=${m.total.toFixed(1)}ms max=${m.max.toFixed(1)}ms buckets=${m.buckets.join('/')}（不依赖time，仍只计连续动画门控通过帧）`)}
+  lines.push('逐宿主最近状态/8个边界（最多64宿主，含已卸载；无样本值）：')
+  for(const s of stateHosts.values()){
+    lines.push(`id=${s.id} role=${s.role} live=${+s.live} ${format(s.counts)} updateAge=${s.updateAt?Math.max(0,now-s.updateAt):'none'} drawAge=${s.drawAt?Math.max(0,now-s.drawAt):'none'} historyLength=${s.history} flags=${s.flags} expectedPause=${+s.expectedPause} renderedPause=${+s.renderedPause} pendingStart=${+s.pendingStart}`)
+    const events=[];for(let j=0;j<s.eventCount;j++){const i=(s.cursor-s.eventCount+j+8)%8;events.push(`-${Math.max(0,now-s.times[i])}ms:${s.events[i]}`)}lines.push(events.join(' '))
+  }
+  return lines.join('\n')
+}
+export interface NativeDrawTrack {state:PlotStateTrack;role:PlotRole;continuous:boolean;native:number;js:number;start:number;progress:number;points:number[];length:number}
 const drawTracks=new Map<number,NativeDrawTrack>()
 const slowDraws=new Array<number>(12*6).fill(0)
 let slowDrawCount=0,slowDrawCursor=0
 export function createNativeDrawTrack(owner:PlotTrace):NativeDrawTrack{
-  const t:NativeDrawTrack={role:owner.role,continuous:false,native:0,js:0,start:0,progress:0,points:new Array<number>(122).fill(0),length:0}
+  const t:NativeDrawTrack={state:makePlotState(owner),role:owner.role,continuous:false,native:0,js:0,start:0,progress:0,points:new Array<number>(122).fill(0),length:0}
   drawTracks.set(owner.id,t);if(drawTracks.size>64)drawTracks.delete(drawTracks.keys().next().value!)
   return t
 }
-export function resetNativeDrawTrack(t:NativeDrawTrack){t.continuous=false}
-export function disposeNativeDrawTrack(owner:PlotTrace,t:NativeDrawTrack){resetNativeDrawTrack(t);drawTracks.delete(owner.id)}
+export function resetNativeDrawTrack(t:NativeDrawTrack){t.continuous=false;t.state.rawContinuous=false}
+export function disposeNativeDrawTrack(owner:PlotTrace,t:NativeDrawTrack){resetNativeDrawTrack(t);t.state.live=false;drawTracks.delete(owner.id)}
 function addDrawMetric(s:ReturnType<typeof drawMetric>,v:number){
   s.n++;s.total+=v;s.max=Math.max(s.max,v);s.buckets[v<=40?0:v<=80?1:v<=150?2:3]++
   s.ring[s.cursor]=v;s.cursor=(s.cursor+1)%128
 }
 export function recordNativeDraw(t:NativeDrawTrack,nativeSeconds:number,entered:number,ended:number,animated:boolean,start:number,progress:number,shown?:ReadonlyArray<{x:number;y:number}>,scale=1){
-  if(!animated||!Number.isFinite(nativeSeconds)||!Number.isFinite(entered)||ended<entered){resetNativeDrawTrack(t);return}
+  if(!animated||!Number.isFinite(nativeSeconds)||!Number.isFinite(entered)||ended<entered){t.continuous=false;return}
   const s=drawRoles[t.role],cost=ended-entered
   s.frames++;addDrawMetric(s.cost,cost)
   let nd=0,jd=0
@@ -178,5 +233,5 @@ export function cadenceSummary(){
   lines.push('最近异常（相对查看时间，毫秒）：')
   const now=Date.now();for(const e of recent)lines.push(`-${Math.max(0,now-e.at)}ms 会话${e.session} ${e.stage}=${e.ms}ms${e.slowInfo!==undefined?` slowInfo=${e.slowInfo} zones=${e.zones}`:''}`)
   if(!recent.length)lines.push('未捕获异常；不代表已排除真机绘制停顿。')
-  return lines.join('\n')+'\n'+connectionLifecycleSummary()+'\n'+plotLifecycleSummary()+'\n'+nativeDrawSummary()
+  return lines.join('\n')+'\n'+connectionLifecycleSummary()+'\n'+plotLifecycleSummary()+'\n'+nativeDrawSummary()+'\n'+nativePlotStateSummary()
 }

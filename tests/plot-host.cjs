@@ -100,6 +100,7 @@ function native(tree){assert.equal(tree.type,'TimelineCanvas');assert.equal(tree
  await test('real host forwards continuous native time and model geometry; sample boundary does not clear track, pause and scene do',async()=>{
   const o=instance({samples:[10,20],tone:'#3485eb',running:true,percent:true});let t=o.render();draw(t);drain()
   now+=1000;o.props.samples=[20,30];t=o.render();draw(t);const track=o.host().drawTrack
+  const rawBefore=track.state.counts.raw,missingBefore=track.state.counts.timeMissing;const rawCtx=new Proxy({}, {get:()=>()=>{},set:()=>true});t.props.draw(rawCtx,{width:145,height:76},undefined);assert.equal(track.state.counts.raw,rawBefore+1);assert.equal(track.state.counts.timeMissing,missingBefore+1,'actual TSX draw with missing native time remains counted');draw(t)
   assert.equal(track.continuous,true);assert.equal(track.native,now/1000);assert.equal(track.js,now)
   now+=30;draw(t);const before=writes;assert.equal(timers.size,0)
   now+=30;o.props.samples=[30,40];t=o.render();assert.equal(track.continuous,true,'sample update does not erase a draw gap');draw(t)

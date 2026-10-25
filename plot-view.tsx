@@ -1,5 +1,5 @@
 import { AppEvents, TimelineCanvas, VStack, useRef, useState, useEffect, useColorScheme } from 'scripting'
-import { plotLifecycle, createPlotTrace, PlotRole, createNativeDrawTrack, resetNativeDrawTrack, disposeNativeDrawTrack, recordNativeDraw } from './cadence-diagnostics'
+import { plotLifecycle, createPlotTrace, PlotRole, createNativeDrawTrack, resetNativeDrawTrack, disposeNativeDrawTrack, recordNativeDraw, nativePlotStateEvent, nativePlotUpdate, nativePlotRawDraw, nativePlotRenderedPause } from './cadence-diagnostics'
 import { createNativePlot, updateNativePlot, advanceNativePlot, restoreNativePlot, drawNativePlot } from './native-plot'
 export interface CanvasPlotProps {samples:number[];tone:string;plotHeight?:number;area?:boolean;running?:boolean;percent?:boolean;plotWidth?:number;elevated?:boolean;role?:PlotRole;sheetTrace?:number}
 export function InlineCanvasPlot(props:CanvasPlotProps) {
@@ -29,14 +29,14 @@ export function MountedCanvasPlot({samples,tone,plotHeight=96,plotWidth,area=fal
   const host=ref.current
   const [paused,setPaused]=useState(false)
   const record=(event:Parameters<typeof plotLifecycle>[0],size?:{w:number;h:number})=>plotLifecycle(event,0,size,host.trace)
-  const park=()=>{resetNativeDrawTrack(host.drawTrack);cancelCompletion(host);const ticking=host.ticking;host.ticking=false;if(host.alive&&ticking)setPaused(true)}
-  const wake=()=>{cancelCompletion(host);host.revision++;if(host.alive&&host.foreground&&host.visible&&!host.ticking){host.ticking=true;setPaused(false)}}
+  const park=()=>{nativePlotStateEvent(host.drawTrack,'park');resetNativeDrawTrack(host.drawTrack);cancelCompletion(host);const ticking=host.ticking;host.ticking=false;if(host.alive&&ticking){nativePlotStateEvent(host.drawTrack,'setPausedTrue');setPaused(true)}}
+  const wake=()=>{nativePlotStateEvent(host.drawTrack,'wake');cancelCompletion(host);host.revision++;if(host.alive&&host.foreground&&host.visible&&!host.ticking){host.ticking=true;nativePlotStateEvent(host.drawTrack,'setPausedFalse');setPaused(false)}}
   useEffect(()=>{
     host.alive=true;record('mount')
     const changed=(phase:'active'|'inactive'|'background')=>{
       if(!host.alive||(phase==='active'&&host.foreground))return
       record(phase==='active'?'scene-active':phase==='inactive'?'scene-inactive':'scene-background')
-      resetNativeDrawTrack(host.drawTrack);host.foreground=phase==='active';restoreNativePlot(host.model);host.model.active=host.running&&host.foreground&&host.visible
+      nativePlotStateEvent(host.drawTrack,'restoreScene');resetNativeDrawTrack(host.drawTrack);host.foreground=phase==='active';restoreNativePlot(host.model);host.model.active=host.running&&host.foreground&&host.visible
       if(host.foreground&&host.running){wake()}else{park()}
     }
     const kick=(reason:'selected'|'appear')=>{if(!host.alive||!host.foreground||!host.visible||!host.running||host.ticking)return;record(reason==='selected'?'kick-selected':'kick-appear');wake()}
@@ -44,28 +44,33 @@ export function MountedCanvasPlot({samples,tone,plotHeight=96,plotWidth,area=fal
     return()=>{disposeNativeDrawTrack(host.trace,host.drawTrack);host.alive=false;host.ticking=false;cancelCompletion(host);AppEvents.scenePhase.removeListener(changed);kickListeners.delete(kick);record('dispose')}
   },[host])
   useEffect(()=>{
+    const newRef=host.lastSamples!==samples,wasAnimating=host.model.animating,oldStart=host.model.start
     if(host.lastSamples!==samples){host.lastSamples=samples;host.sampleAt=Date.now()}
-    if(!running)resetNativeDrawTrack(host.drawTrack)
+    if(!running){nativePlotStateEvent(host.drawTrack,'restoreRunningFalse');resetNativeDrawTrack(host.drawTrack)}
     host.running=running;host.background=plotBackground(theme,elevated)
     updateNativePlot(host.model,{samples,tone,area,percent,running:running&&host.foreground&&host.visible,sampleAt:host.sampleAt},Date.now())
+    nativePlotUpdate(host.drawTrack,newRef,running,wasAnimating,oldStart,host.model.animating,host.model.start,host.model.history.length)
     // Includes paused data/style changes: one native draw, then park after its final commands.
     wake()
   },[samples,tone,area,percent,running,theme,elevated,host])
   // A layout change is not a sample: redraw retained geometry without a synthetic x-shift.
   useEffect(()=>{wake()},[plotHeight,plotWidth,host])
+  nativePlotRenderedPause(host.drawTrack,paused)
   return <TimelineCanvas schedule={PLOT_SCHEDULE} paused={paused} opaque={false}
     frame={{minHeight:plotHeight,maxHeight:plotHeight,minWidth:0,maxWidth:'infinity'}}
-    onAppear={()=>{if(!host.alive)return;const returning=!host.visible;host.visible=true;record('host-appear');if(returning){resetNativeDrawTrack(host.drawTrack);restoreNativePlot(host.model);host.model.active=host.running&&host.foreground;wake()}}
-    onDisappear={()=>{if(!host.alive)return;host.visible=false;record('host-disappear');restoreNativePlot(host.model);host.model.active=false;park()}}
+    onAppear={()=>{if(!host.alive)return;const returning=!host.visible;host.visible=true;record('host-appear');if(returning){nativePlotStateEvent(host.drawTrack,'restoreReturnAppear');resetNativeDrawTrack(host.drawTrack);restoreNativePlot(host.model);host.model.active=host.running&&host.foreground;wake()}}
+    onDisappear={()=>{if(!host.alive)return;host.visible=false;record('host-disappear');nativePlotStateEvent(host.drawTrack,'restoreDisappear');restoreNativePlot(host.model);host.model.active=false;park()}}
     draw={(ctx,size,time)=>{
       if(!host.alive)return
-      const entered=Date.now(),animated=host.model.animating&&host.foreground&&host.visible&&host.running&&host.ticking&&size.width>0&&size.height>0
+      const entered=Date.now()
+      nativePlotRawDraw(host.drawTrack,time,entered,(host.model.animating?1:0)|(host.running?2:0)|(host.ticking?4:0)|(host.foreground?8:0)|(host.visible?16:0)|(size.width>0&&size.height>0?32:0))
+      const animated=host.model.animating&&host.foreground&&host.visible&&host.running&&host.ticking&&size.width>0&&size.height>0
       advanceNativePlot(host.model,Date.now())
       drawNativePlot(ctx,size,host.model,host.background)
       if(size.width>0&&size.height>0&&host.paintRevision!==host.revision){host.paintRevision=host.revision;record('native-draw',{w:size.width,h:size.height})}
       if(!host.model.animating&&host.ticking&&((size.width>0&&size.height>0)||!host.model.history.length)){
         const revision=host.revision
-        afterFinalDraw(host,()=>{if(host.alive&&host.revision===revision&&!host.model.animating){resetNativeDrawTrack(host.drawTrack);host.ticking=false;setPaused(true)}})
+        afterFinalDraw(host,()=>{if(host.alive&&host.revision===revision&&!host.model.animating){nativePlotStateEvent(host.drawTrack,'park');resetNativeDrawTrack(host.drawTrack);host.ticking=false;nativePlotStateEvent(host.drawTrack,'setPausedTrue');setPaused(true)}})
       }
       const model=host.model,progress=Math.max(0,Math.min(1,(entered-model.start)/model.duration))
       recordNativeDraw(host.drawTrack,time,entered,Date.now(),animated,model.start,progress,model.shown,model.scale)
