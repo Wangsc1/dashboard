@@ -871,7 +871,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) { const lazy = ['proxies','rules'].includes(ids[i]) && ids[i] !== id; assert.equal(nodes(tree, types[i]).length, lazy ? 0 : 1); if (!lazy) assert.equal(nodes(tree, types[i])[0].props.selected, ids[i] === id) }
     }
-    assert.equal(api.VERSION, '1.41'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.42'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('独立导航栈保留业务owner和身份，只有选中页提供可见工具栏', () => {
     pref.savePreferences({ defaultPage: 'overview' })
@@ -2011,6 +2011,20 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     const tree=render(pages.ConnectionsPage,{active:owner,version:0});assert.ok(text(tree).includes('resumed.invalid'));assert.ok(!text(tree).includes('stale.invalid'))
     assert.equal(h.active[0].downSpeed,0);assert.equal(h.closed.length,0);unmount()
   })
+  await test('锁屏返回：200但空/非JSON/缺connections不是真实空样本，保留上次数据并显示错误后自动恢复',async()=>{
+    const owner={...c,id:'connections-lock-invalid'},good=[{id:'before-lock',metadata:{host:'before-lock.invalid'},upload:10,download:20}]
+    for(const bad of [{text:''},{text:'<html>captive</html>'},{body:{}},{body:{message:'wake'}},{body:{connections:{}}}]){
+      model.historyFor(owner).clear();responder=()=>({body:{connections:good}})
+      let tree=render(pages.ConnectionsPage,{active:owner,version:0},true);await flush();tree=render(pages.ConnectionsPage,{active:owner,version:0});assert.ok(text(tree).includes('before-lock.invalid'))
+      emitScene('inactive');emitScene('background');now+=7200000;responder=()=>bad;emitScene('active');render(pages.ConnectionsPage,{active:owner,version:0});await flush()
+      tree=render(pages.ConnectionsPage,{active:owner,version:0});assert.ok(text(tree).includes('before-lock.invalid'),'last visible/cached rows are not replaced by a fake empty sample')
+      assert.ok(!text(tree).includes('活动中0'));assert.ok(text(tree).includes('请求未完成'))
+      assert.equal(model.historyFor(owner).closed.length,0,'invalid reads cannot fabricate closures')
+      responder=()=>({body:{connections:good}});now+=1500;[...intervals.values()].find(x=>x.ms===1500).fn();await flush();tree=render(pages.ConnectionsPage,{active:owner,version:0})
+      assert.ok(text(tree).includes('before-lock.invalid'));assert.ok(!text(tree).includes('请求未完成'));unmount()
+    }
+    responder=()=>({body:{connections:null}});const empty=render(pages.ConnectionsPage,{active:{...owner,id:'connections-real-null'},version:0},true);await flush();assert.ok(text(render(pages.ConnectionsPage,{active:{...owner,id:'connections-real-null'},version:0})).includes('活动中'));unmount()
+  })
   await test('连接过期请求：未结束可替换，晚到结果不写历史/缓存，不虚构断开或跨暂停速率', async () => {
     const owner={...c,id:'connections-expired-request'},h=model.historyFor(owner)
     responder=()=>({body:{connections:[{id:'previous',metadata:{host:'previous.invalid'},upload:10,download:20}]}})
@@ -2039,7 +2053,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     responder=()=>({body:{connections:[]}});let tree=render(pages.ConnectionsPage,props,true);await flush()
     tree.props.onDisappear();render(pages.ConnectionsPage,{...props,selected:false});await flush();assert.equal(intervals.size,0)
     render(pages.ConnectionsPage,props);await flush();tree=render(pages.ConnectionsPage,props);await flush();assert.ok([...intervals.values()].some(x=>x.ms===1500))
-    tree.props.onDisappear();emitScene('inactive');emitScene('active');render(pages.ConnectionsPage,props);await flush();assert.equal(intervals.size,0)
+    tree.props.onDisappear();now+=1000;emitScene('inactive');emitScene('active');render(pages.ConnectionsPage,props);await flush();assert.equal(intervals.size,0,'a push-style hide long before inactive stays hidden')
     tree.props.onAppear();render(pages.ConnectionsPage,props);await flush();assert.ok([...intervals.values()].some(x=>x.ms===1500))
     tree=render(pages.ConnectionsPage,props);button(trailing(tree.props.toolbar),'暂停监控').props.action();render(pages.ConnectionsPage,props);await flush()
     emitScene('background');now+=3600000;emitScene('active');render(pages.ConnectionsPage,props);await flush();assert.equal(intervals.size,0);unmount()
@@ -2101,7 +2115,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       const diagnostic = logs.filter(x => x.startsWith('[preferences-icon]'))
       for (const stage of ['change','accepted','proxies-render','group-render']) assert.ok(diagnostic.some(x => x.includes('stage=' + stage) && x.includes('enabled=false')))
       assert.ok(diagnostic.every(x => !x.includes('private.invalid') && !x.includes('private-group-name') && !x.includes('secret-')))
-      assert.ok(diagnostic.every(x => x.includes('build=1.41') && /instance=[a-z0-9]+/.test(x)))
+      assert.ok(diagnostic.every(x => x.includes('build=1.42') && /instance=[a-z0-9]+/.test(x)))
       assert.equal(new Set(diagnostic.map(x => x.match(/instance=([^ ]+)/)[1])).size, 1)
     } finally { context.console = originalConsole; unmount(); pref.savePreferences({ customIcons: true, testURL: 'https://www.gstatic.com/generate_204' }) }
   })

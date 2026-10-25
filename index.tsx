@@ -14,7 +14,7 @@ import {
   closeAllConnections, loadRules, DockerContainer, FrpInfo, FrpProxy, DockerSettings, loadDiskUsage, loadInstalledPkgs, loadAvailablePkgs, upgradablePkgs, filterPkgs, pkgUpdateLists, pkgInstall, pkgRemove, pkgUpgrade, Pkg, loadDockerContainers, loadContainerDetail, dockerContainerOp, DockerContainerDetail, loadDockerImages, dockerImageRemove, DockerImage, loadDockerOverview, DockerOverview, dockerAction, loadFrp, frpAction, saveFrpCommon, saveFrpProxy, deleteFrpProxy, loadDockerSettings, saveDockerSettings, loadContainerPolicy, saveContainerPolicy, fmtBytes, fmtSpeed, fmtParts, fmtUptime, fmtDuration, delayColor,
 } from "./api"
 
-import { confirmed, sourceKey } from "./dashboard-model"
+import { confirmed, sourceKey, SceneVisibility } from "./dashboard-model"
 import { DOCKER_PNG_BASE64 } from "./docker-icon"
 import { useSmoothPlot } from "./chart-ui"
 import { CHART_HISTORY } from "./chart"
@@ -271,6 +271,17 @@ function OverviewPage({ active, version, onSwitch, onClose, selected = true }: {
   const all = listControllers()
   // Retain the navigation owner while pausing work behind pushed settings pages.
   const [visible, setVisible] = useState(true)
+  const [sceneVisibility] = useState(() => ({ model: new SceneVisibility(), selected }))
+  sceneVisibility.selected = selected
+  useEffect(() => {
+    // Lock/background can deliver onDisappear without a return onAppear. Restore
+    // only such scene-caused hides; pushed pages/tab changes keep their gates.
+    const changed = (phase: "active" | "inactive" | "background") => { if (sceneVisibility.model.scene(phase === "active", Date.now()) && sceneVisibility.selected) setVisible(true) }
+    AppEvents.scenePhase.addListener(changed)
+    return () => AppEvents.scenePhase.removeListener(changed)
+  }, [])
+  const hideHome = () => { if (sceneVisibility.model.disappear(Date.now())) setVisible(false) }
+  const showHome = () => { sceneVisibility.model.appear(); setVisible(true) }
   const foreground = useForeground()
   const showCharts = foreground && selected && (visible || cpuOpen)
   useEffect(() => { const frame=overviewPrime.get(source);setHistories(frame?.histories??newHistory());setOv(frame?.overview??null);setSampleSource(source);setCpuOpen(false) }, [source])
@@ -321,9 +332,9 @@ function OverviewPage({ active, version, onSwitch, onClose, selected = true }: {
     principal: <Text font={17} fontWeight="semibold" overlay={{alignment:"bottom",content:
       <HStack spacing={4} offset={{x:0,y:14}}><Circle fill={statusColor} frame={{ width: 5, height: 5 }} /><Text font={11} foregroundStyle={statusColor}>{statusText}</Text></HStack>
     }}>{active?.name||"OpenWrt 状态"}</Text> }), [active, onSwitch, onClose, statusText, statusColor])
-  if (!active) return <Form navigationTitle="dashboard" navigationBarTitleDisplayMode="inline" toolbar={toolbar} onAppear={() => setVisible(true)} onDisappear={() => setVisible(false)}><NoController /></Form>
+  if (!active) return <Form navigationTitle="dashboard" navigationBarTitleDisplayMode="inline" toolbar={toolbar} onAppear={showHome} onDisappear={hideHome}><NoController /></Form>
   const closeCpu=(value:boolean)=>{setCpuOpen(value);if(!value)setVisible(true)}
-  return <VStack spacing={0} navigationTitle={active.name} navigationBarTitleDisplayMode="inline" toolbar={toolbar} onAppear={() => setVisible(true)} onDisappear={() => setVisible(false)}
+  return <VStack spacing={0} navigationTitle={active.name} navigationBarTitleDisplayMode="inline" toolbar={toolbar} onAppear={showHome} onDisappear={hideHome}
     sheet={{isPresented:cpuOpen,onChanged:closeCpu,content:detailContent}}>
     <ScrollView background={HOME_BG}>
       <VStack spacing={16} padding={{horizontal:16,top:12,bottom:24}}>

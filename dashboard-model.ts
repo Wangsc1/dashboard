@@ -35,6 +35,28 @@ export class ConnectionHistory {
   resume() { this.active = []; this.at = 0 }
   clear() { this.closed = [] }
 }
+// Native views can report onDisappear for app lock/background without a matching
+// onAppear on return. Distinguish that from navigation pushes by scene ordering,
+// so a retained selected page does not stay logically hidden until a tab change.
+export class SceneVisibility {
+  static readonly ORDER_WINDOW = 500
+  private sceneActive = true; private leftAt = -Infinity; private hiddenAt = -Infinity; private sceneHidden = false
+  /** Returns whether the page should become hidden. */
+  disappear(at: number): boolean {
+    if (!this.sceneActive || at - this.leftAt <= SceneVisibility.ORDER_WINDOW) { this.sceneHidden = true; return false }
+    this.hiddenAt = at; return true
+  }
+  appear() { this.sceneHidden = false; this.hiddenAt = -Infinity }
+  /** Returns true when a scene-caused logical hide must be restored. */
+  scene(active: boolean, at: number): boolean {
+    if (!active) {
+      if (this.sceneActive) { this.leftAt = at; if (at - this.hiddenAt <= SceneVisibility.ORDER_WINDOW) this.sceneHidden = true }
+      this.sceneActive = false; return false
+    }
+    this.sceneActive = true
+    const restore = this.sceneHidden; this.sceneHidden = false; this.hiddenAt = -Infinity; return restore
+  }
+}
 const histories = new Map<string, ConnectionHistory>()
 export function historyFor(c: Controller) {
   const k = sourceKey(c); let h = histories.get(k)

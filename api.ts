@@ -2,7 +2,7 @@ import { TimingToken, timingToken, timing, timingReadContext, timingSpan } from 
 import { CpuSampler, CpuUsage, CpuMeta, parseCpuInfo, thermalCelsius } from "./openwrt-metrics"
 
 import { getPreferences, customHeaders, recordEvent, controllerHealth, feedback } from "./preferences"
-export const VERSION = "1.41"
+export const VERSION = "1.42"
 
 export type Kind = "clash" | "openwrt"
 export type Plugin = "openclash" | "nikki" | "mihomo"
@@ -596,6 +596,9 @@ export async function loadConnections(c0: Controller, signal?: AbortController["
   if (signal?.aborted) throw new Error("Connection read cancelled")
   if (c.kind === "clash") {
     const j = await http(c, "/connections", { signal })
+    // A wake-up/captive/proxy 200 can be empty or non-JSON; http() normalizes that
+    // to {}. Only an actual connections array (or Mihomo's null) is a real sample.
+    if (!j || typeof j !== "object" || !("connections" in j) || (j.connections !== null && !Array.isArray(j.connections))) throw new ControllerHTTPError("连接响应无效")
     return (j.connections ?? []).map((x: any): Conn => {
       const m = x.metadata ?? {}
       return {
