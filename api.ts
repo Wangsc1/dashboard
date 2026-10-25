@@ -1,7 +1,7 @@
 import { CpuSampler, CpuUsage, CpuMeta, parseCpuInfo, thermalCelsius } from "./openwrt-metrics"
 
 import { getPreferences, customHeaders, recordEvent, controllerHealth, feedback } from "./preferences"
-export const VERSION = "1.92"
+export const VERSION = "1.93"
 
 export type Kind = "clash" | "openwrt"
 export type Plugin = "openclash" | "nikki" | "mihomo"
@@ -571,6 +571,33 @@ async function probeNodes(c: Controller, names: string[], url: string, timeout: 
     try { onProgress?.(n, d) } catch {}
   }))
   return res
+}
+// Explicit single-node actions retain failures instead of turning them into 0ms.
+export interface ProxyNodeDetail {
+  type?: string; udp?: boolean; xudp?: boolean; tfo?: boolean; mptcp?: boolean; alive?: boolean
+  history: { time?: string; delay: number }[]
+}
+export function proxyNodeError(error: unknown): string {
+  return error instanceof ControllerHTTPError ? error.message : "请求失败：请检查网络、认证及内核支持"
+}
+export async function loadProxyNode(c0: Controller, name: string): Promise<ProxyNodeDetail> {
+  const c = await cc(c0), j = await http(c, "/proxies/" + enc(name))
+  if (!j || typeof j !== "object" || Array.isArray(j)) throw new ControllerHTTPError("代理详情响应无效")
+  const detail: ProxyNodeDetail = { history: [] }
+  if (typeof j.type === "string") detail.type = j.type
+  for (const key of ["udp", "xudp", "tfo", "mptcp", "alive"] as const) if (typeof j[key] === "boolean") detail[key] = j[key]
+  if (Array.isArray(j.history)) for (const h of j.history.slice(-10)) {
+    if (!h || typeof h.delay !== "number" || !Number.isFinite(h.delay) || h.delay < 0) continue
+    const time = typeof h.time === "string" ? Date.parse(h.time) : NaN
+    detail.history.push({ delay: h.delay, ...(Number.isFinite(time) ? { time: new Date(time).toISOString() } : {}) })
+  }
+  return detail
+}
+export async function testProxyNode(c0: Controller, name: string): Promise<number> {
+  const c = await cc(c0), prefs = getPreferences(), timeout = Math.min(2000, prefs.testTimeout)
+  const j = await delayRequest(c, `/proxies/${enc(name)}/delay?url=${enc(prefs.testURL)}&timeout=${timeout}`, timeout)
+  if (typeof j?.delay !== "number" || !Number.isFinite(j.delay) || j.delay <= 0) throw new ControllerHTTPError("延迟测试失败：内核未返回有效延迟")
+  return j.delay
 }
 export async function testNodes(c0: Controller, names: string[]): Promise<Record<string, number>> {
   const c = await cc(c0), prefs = getPreferences()
