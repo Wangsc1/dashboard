@@ -58,7 +58,8 @@ const context = {
     return {body:{getReader:()=>({read:async()=>{if(r.wait)await r.wait;if(delivered)return {done:true};delivered=true;return {done:false,value:new Uint8Array(encoded)}},cancel:async()=>{},releaseLock(){}})}, ok: status >= 200 && status < 300, status, headers: { get: name => name.toLowerCase()==='content-length'?(r.contentLength??null):(r.contentType ?? 'application/json') }, text: async () => { if(r.wait) await r.wait; return r.text !== undefined ? r.text : JSON.stringify(r.body ?? {}) }, data: async () => { if (r.imageWait) await r.imageWait; return r.data ?? 'fake-image-data' } }
   },
 }
-context.WebViewController = require('./webview-mock.cjs').MockWebViewController
+context.EditorController = require('./editor-mock.cjs').MockEditorController
+context.WebViewController = class { constructor(){throw Error('production must not construct a WebView')} }
 function load(name) {
   name = name.replace(/^\.\//, '')
   if (cache.has(name)) return cache.get(name)
@@ -872,7 +873,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) { const lazy = ['proxies','rules'].includes(ids[i]) && ids[i] !== id; assert.equal(nodes(tree, types[i]).length, lazy ? 0 : 1); if (!lazy) assert.equal(nodes(tree, types[i])[0].props.selected, ids[i] === id) }
     }
-    assert.equal(api.VERSION, '1.80'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.81'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('独立导航栈保留业务owner和身份，只有选中页提供可见工具栏', () => {
     pref.savePreferences({ defaultPage: 'overview' })

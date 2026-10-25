@@ -54,7 +54,7 @@
 }
 ```
 
-实际导入、更新及原生导航表现以 Scripting 的处理结果为准；原生 Tab API 面向 iOS 18+。配置编辑器的 CodeMirror/Lezer/YAML 静态 bundle 已嵌入 `dashboard-pages.tsx`，手机运行无需 CDN、安装 npm 包或另行下载编辑器资源。`editor/` 为构建源码、锁定依赖与许可证，不是手机运行依赖。
+实际导入、更新及原生导航表现以 Scripting 的处理结果为准；原生 Tab API 面向 iOS 18+。配置编辑器使用 Scripting 官方 `Editor` 与 `EditorController`，不再加载自建 HTML 或编辑器 bundle。
 
 ## Nikki 管理与编辑
 
@@ -62,9 +62,9 @@
 
 列表区分本地和订阅文件，显示大小、更新时间及 UCI 当前选用标记。点击卡片确认选用；勾选只表示选用配置，不证明内核已经成功加载。
 
-正文编辑沿用原生导航，隐藏底部标签栏，提供 YAML 高亮、行号、缩进线、层级折叠、撤销/重做和查找/替换；长行横向滚动，适配深浅主题。编辑器保持原始 UTF-8 内容、换行形式与尾部空行，不自动格式化或序列化 YAML。
+正文编辑沿用原生导航，隐藏底部标签栏，提供官方键盘辅助栏、撤销/重做和查找/替换。官方未列出 YAML 扩展名支持，因此使用 `txt` 模式，不承诺 YAML 高亮、折叠或缩进线；不自动格式化或序列化 YAML，完整正文和换行保真仍需目标 App 验收。
 
-**右上保存按钮显式保存，返回不自动写入远端。** 保存读取完整文档快照并确认覆盖，写后完整回读核对；成功后留在编辑页，可继续编辑，不自动应用或重载。初始化未完成、读取不完整、来源已变或快照超时时拒绝保存。未保存草稿按来源和文件保留在本次进程内存中，退出脚本后不会持久保存。
+**右上保存按钮显式保存，返回不自动写入远端。** 保存直接读取官方控制器的当前完整正文并确认覆盖，写后完整回读核对；成功后留在编辑页，可继续编辑，不自动应用或重载。读取未完成、不完整或来源已变时拒绝保存。保存按钮在读取成功后可用，以免约100毫秒的变更通知延迟漏掉立即保存；正文未变时不确认、不写入。未保存草稿按来源和文件保留在本次进程内存中，退出脚本后不会持久保存。
 
 ### 订阅与附加规则
 
@@ -94,7 +94,7 @@
 
 ## 开发与验证
 
-使用 Scripting 官方组件与全局 API，不依赖 Scriptable。主测试及专项使用模拟网络、存储和 UI；浏览器测试验证本地编辑器/曲线，不代替 iPhone 的 WKWebView、导航手势、键盘、安全区、实际权限与性能验收。
+使用 Scripting 官方组件与全局 API，不依赖 Scriptable。主测试及专项使用模拟网络、存储和 UI；编辑器专项模拟官方控制器契约及延迟通知，不代替 iPhone 的实际编辑器、导航手势、键盘、安全区、实际权限与性能验收。
 
 ```sh
 node tests/run.cjs
@@ -115,7 +115,7 @@ git diff --check
 
 其他专项见 `tests/*.cjs`。测试默认使用 `/tmp/chk/node_modules/typescript`，可通过 `TYPESCRIPT_PATH` 指定已有 TypeScript 包；业务类型检查使用 `tests/business-stub.d.ts`，它不是目标 App 的完整官方类型声明。
 
-编辑器构建：`cd editor && npm ci && npm run build`，只更新 `dashboard-pages.tsx` 生成标记内的静态 bundle。依赖版本与许可见 `editor/package-lock.json`、`editor/THIRD_PARTY_NOTICES.txt`。部分专项需要 jsdom、Playwright 和可用浏览器，可用 `JSDOM_PATH` / `PLAYWRIGHT_PATH` / `CHROMIUM_PATH` 指定已有安装。
+配置编辑器无需单独构建；官方控制器行为由 `tests/editor-mock.cjs` 按文档建模，不代表 SDK 内部实现。
 
 接口参考：
 

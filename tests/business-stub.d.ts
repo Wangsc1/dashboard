@@ -5,7 +5,7 @@ declare module "scripting" {
   export const Chart:any, LineChart:any, AreaChart:any;
   export const Device: {screen:{width:number;height:number;scale:number};colorScheme:"light"|"dark"};
   export const GeometryReader: any, gradient: any, Divider:any;
-  export function WebView(props: {controller:WebViewController;onAppear?:()=>void;opacity?:number;disabled?:boolean;frame?:{maxWidth?:string|number;maxHeight?:string|number;minHeight?:number;minWidth?:number}}): any;
+  export function Editor(props:{controller:EditorController;scriptName?:string;showAccessoryView?:boolean;disabled?:boolean;frame?:{maxWidth?:string|number;maxHeight?:string|number}}):any;
   export const AppEvents: { scenePhase: { addListener(fn: (phase: "active" | "inactive" | "background") => void): void; removeListener(fn: (phase: "active" | "inactive" | "background") => void): void } }, Safari: any, LazyVStack: any, TabView: any, Tab: any, Slider: any, Transition: any, Circle: any, Animation: any, withAnimation: any, ProgressView: any, RoundedRectangle: any, ScrollView: any, SVG: any, ZStack: any, modifiers: any, Image: any, Menu: any, Button: any, ForEach: any, Form: any, HStack: any, Label: any, Navigation: any, NavigationLink: any, NavigationStack: any, NavigationDestination: any, Picker: any, Script: any, Section: any, SecureField: any, Spacer: any, Text: any, TextField: any, Toggle: any, VStack: any
   export function useObservable<T>(v: T | (() => T)): { value: T; setValue(v: T): void; subscribe(fn: (v: T, old: T) => void): void; unsubscribe(fn: (v: T, old: T) => void): void }
   export function useColorScheme(): "light"|"dark";
@@ -29,13 +29,17 @@ declare var Pasteboard: { setString(s: string): Promise<void> };
 declare var UIImage: { fromData(d: any): any; fromBase64String(s: string): any };
 declare var FileManager: { isiCloudEnabled: boolean; iCloudDocumentsDirectory: string; downloadFileFromiCloud(p: string): Promise<boolean>; readAsString(p: string): Promise<string>; writeAsString(p: string, text: string): Promise<void> };
 
-// Official: docs/Scripting Documentation/webview_controller/zh.md and views/webview/index.tsx.
-declare class WebViewController {
-  constructor(options?:{ephemeral?:boolean});
-  shouldAllowRequest?: (request:{url:string;method:string;headers:Record<string,string>;timeoutInterval:number;navigationType:string})=>Promise<boolean>;
-  addScriptMessageHandler<P=any,R=any>(name:string,handler:(params?:P)=>R):Promise<void>;
-  loadHTML(html:string,baseURL?:string):Promise<boolean>;
-  evaluateJavaScript<T=any>(javascript:string):Promise<T>;
-  dispose():void;
-}
 declare var console: { log(...args: any[]): void }
+
+// Official views/editor/{zh,en}.md and index.tsx (no undocumented flush/ready API).
+interface EditorTextRange {start:number;end:number;line:number}
+declare class EditorController {
+  constructor(options?:{content?:string;ext?:"tsx"|"ts"|"js"|"jsx"|"txt"|"md"|"css"|"html"|"json";readOnly?:boolean});
+  readonly ext:string;
+  content:string;
+  onContentChanged?:()=>void;
+  searchText(query:string,options?:{caseSensitive?:boolean;regexp?:boolean;wholeWord?:boolean}):Promise<EditorTextRange[]>;
+  setSelection(start:number,end:number):void;
+  replaceSelection(text:string):void;
+  undo():void;redo():void;dispose():void;
+}
