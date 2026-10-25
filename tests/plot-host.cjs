@@ -52,6 +52,32 @@ async function mount(){const node=render(plot.MountedCanvasPlot,props,true);awai
    assert.equal(nodes(node,'WebView')[0].props.opacity,1);assert.equal(nodes(node,'Canvas').length,0);unmount()
   }
  })
+ await test('已painted显示后不得被隐藏：loadHTML迟到false/reject、普通桥接单次失败、过期update、首载期间inactive→active均不重载不撤下',async()=>{
+  const shownNow=()=>{const o=render(plot.MountedCanvasPlot,props);return nodes(o,'WebView')[0]?.props.opacity===1&&nodes(o,'Canvas').length===0&&!text(o).includes('失败')}
+  for(const how of ['loadFalse','loadReject','bridgeReject','staleFalse','sceneDuringLoad']){
+   timeouts.clear();const holdLoad=how.startsWith('load');let finish
+   const orig=context.WebViewController.prototype.loadHTML
+   if(holdLoad)context.WebViewController.prototype.loadHTML=function(h){this.loads++;this.html=h;return new Promise((res,rej)=>{finish=()=>how==='loadFalse'?res(false):rej(Error('x'))})}
+   render(plot.MountedCanvasPlot,props,true);await flush();const host=hosts.at(-1)
+   if(how==='sceneDuringLoad'){emitScene('inactive');emitScene('active');await flush();assert.equal(host.loads,1,'in-flight first load is not restarted by scene churn')}
+   host.handlers.plotReady({generation:1});host.handlers.plotPainted({generation:1,w:329,h:96});await flush()
+   if(holdLoad){finish();await flush()}
+   if(how==='bridgeReject'||how==='staleFalse'){render(plot.MountedCanvasPlot,{...props,samples:[1,2,3]});await flush();how==='bridgeReject'?host.reject(Error('transient')):host.resolve(false);await flush()}
+   assert.equal(host.loads,1,how+': no reload');assert.ok(shownNow(),how+': painted chart stays visible');
+   if(holdLoad)context.WebViewController.prototype.loadHTML=orig
+   unmount()
+  }
+  // Unpainted/failed first load is bounded: one retry, then a visible error (never an endless reload loop).
+  timeouts.clear();render(plot.MountedCanvasPlot,props,true);await flush();const h2=hosts.at(-1)
+  for(let i=0;i<4;i++){const fns=[...timeouts.values()];timeouts.clear();fns.forEach(f=>f());await flush()}
+  assert.ok(h2.loads<=2,'at most one automatic reload');unmount()
+ })
+ await test('图表生命周期诊断：挂载计数/代次/尺寸/显示进入“复制停顿诊断”，且不含来源或样本',async()=>{
+  const diag=load('cadence-diagnostics');render(plot.MountedCanvasPlot,{...props,samples:[11,22,33]},true);await flush();const host=hosts.at(-1)
+  host.handlers.plotReady({generation:1});host.handlers.plotPainted({generation:1,w:329,h:96});await flush()
+  const t=diag.cadenceSummary();for(const k of ['mount gen=0','load gen=1','ready gen=1','painted gen=1','329x96','shown gen=1','累计挂载=','当前存活='])assert.ok(t.includes(k),k)
+  assert.ok(!t.includes('11,22,33')&&!t.includes('http'));unmount();assert.ok(diag.cadenceSummary().includes('dispose gen=1'))
+ })
  await test('完全不发送原生出现事件：首屏仍创建并加载且只加载一次，首帧携带样本',async()=>{
   const slot=render(plot.InlineCanvasPlot,props,true)
   assert.equal(nodes(slot,plot.MountedCanvasPlot).length,1)
@@ -102,12 +128,12 @@ async function mount(){const node=render(plot.MountedCanvasPlot,props,true);awai
   await mount();const host=hosts.at(-1);host.handlers.plotReady();await flush()
   render(plot.MountedCanvasPlot,{...props,samples:[10,20,30]});await flush();const old=diag.timingToken()
   assert.ok(host.sent[0].includes('"timingEpoch":'+old.epoch))
-  session.pause();session.resume();const before=diag.cadenceSummary()
+  session.pause();session.resume();const cut=t=>t.split('图表文档生命周期')[0],before=cut(diag.cadenceSummary())
   host.handlers.plotLag({ms:3000,epoch:old.epoch});now+=3000;host.resolve(true);await flush()
-  assert.equal(diag.cadenceSummary(),before,'old span and old rAF message are dropped')
+  assert.equal(cut(diag.cadenceSummary()),before,'old span and old rAF message are dropped')
   render(plot.MountedCanvasPlot,{...props,samples:[10,20,30,40]});await flush()
   host.handlers.plotLag({ms:2100,epoch:diag.timingToken().epoch});now+=2200;host.resolve(true);await flush()
-  const summary=diag.cadenceSummary();assert.ok(summary.includes('canvas-gap'));assert.ok(summary.includes('bridge'));assert.ok(!summary.includes('private-source-canary'))
+  const summary=diag.cadenceSummary();assert.ok(summary.includes('图表文档生命周期'));assert.ok(summary.includes('canvas-gap'));assert.ok(summary.includes('bridge'));assert.ok(!summary.includes('private-source-canary'))
   unmount();session.close();assert.equal(intervals.size,0);assert.equal(timeouts.size,0)
  })
  await test('长后台恢复不依赖父memo/新样本：同一文档重放完整历史且只占一个有效桥接slot',async()=>{
@@ -127,7 +153,7 @@ async function mount(){const node=render(plot.MountedCanvasPlot,props,true);awai
  })
  await test('恢复探针发现文档不可用时仅重载图表，旧ready/painted不能揭示新文档',async()=>{
   await mount();const host=hosts.at(-1);host.handlers.plotReady();await flush();host.handlers.plotPainted()
-  emitScene('inactive');emitScene('active');await flush();host.resolve(false);await flush()
+  emitScene('inactive');emitScene('active');await flush();host.resolve('missing');await flush()
   assert.equal(host.loads,2);assert.ok(host.html.includes('"samples":[10,20]'));assert.ok(host.html.includes('"resume":true'))
   assert.equal(host.handlers.plotReady({generation:1}),false);assert.equal(host.handlers.plotPainted({generation:1}),false)
   let out=render(plot.MountedCanvasPlot,props);assert.equal(nodes(out,'WebView')[0].props.opacity,0);assert.equal(nodes(out,'Canvas').length,1)

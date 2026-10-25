@@ -48,6 +48,22 @@ export function connectionLifecycleSummary(){
     'root-*为JS读取的标签；render为连接正文已构建，appear/disappear为视图回调；不代表原生像素已绘制。',
     ...connectionEvents.map(e=>`-${Math.max(0,now-e.at)}ms ${e.event} ×${e.n}`)].join('\n')
 }
+// Chart document lifecycle: closed vocabulary plus small integers only (no source, samples, URLs or errors).
+type PlotEvent='mount'|'dispose'|'load'|'ready'|'painted'|'shown'|'reveal-check'|'reload-scene-unready'|'reload-probe-failed'|'reload-probe-timeout'|'reload-load-timeout'|'reload-bridge-failures'|'fail-load-timeout'|'fail-bridge'|'ignored-load-result'|'ignored-bridge-error'|'ignored-stale-update'|'scene-active'|'scene-inactive'|'scene-background'
+const plotEvents:Array<{event:PlotEvent;at:number;gen:number;n:number;w?:number;h?:number}>=[]
+let plotMounts=0,plotLive=0
+export function plotLifecycle(event:PlotEvent,gen=0,size?:{w:number;h:number}){
+  if(event==='mount'){plotMounts++;plotLive++}else if(event==='dispose')plotLive=Math.max(0,plotLive-1)
+  const last=plotEvents[plotEvents.length-1]
+  if(last&&last.event===event&&last.gen===gen&&!size){last.n++;last.at=Date.now();return}
+  plotEvents.push({event,at:Date.now(),gen,n:1,w:size?.w,h:size?.h});if(plotEvents.length>40)plotEvents.shift()
+}
+export function plotLifecycleSummary(){
+  const now=Date.now()
+  return ['图表文档生命周期（仅本次运行，最多40项；gen=文档代次，w/h=页面报告的绘制尺寸；无来源/样本/错误文本）',
+    `累计挂载=${plotMounts} 当前存活=${plotLive}`,
+    ...plotEvents.map(e=>`-${Math.max(0,now-e.at)}ms ${e.event} gen=${e.gen} ×${e.n}${e.w!==undefined?` ${e.w}x${e.h}`:''}`)].join('\n')
+}
 export function cadenceSummary(){
   const lines=['采样/绘图计时摘要 v1（仅本次运行；无地址、认证、配置或响应正文）',`会话=${session} 前台采样=${active?'是':'否'} 异常阈值=1500ms 记录上限=32`,
     '读法：read/headers/body慢且js-gap不高→请求/服务端尾延迟线索；js-gap高→JS调度/宿主暂停线索；仅bridge高→绘图桥接线索；canvas-gap高→画布rAF长间隔。它们是耗时观察，不是单凭摘要确认根因。',
@@ -57,5 +73,5 @@ export function cadenceSummary(){
   lines.push('最近异常（相对查看时间，毫秒）：')
   const now=Date.now();for(const e of recent)lines.push(`-${Math.max(0,now-e.at)}ms 会话${e.session} ${e.stage}=${e.ms}ms${e.slowInfo!==undefined?` slowInfo=${e.slowInfo} zones=${e.zones}`:''}`)
   if(!recent.length)lines.push('未捕获异常；不代表已排除真机绘制停顿。')
-  return lines.join('\n')+'\n'+connectionLifecycleSummary()
+  return lines.join('\n')+'\n'+connectionLifecycleSummary()+'\n'+plotLifecycleSummary()
 }

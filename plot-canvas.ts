@@ -21,7 +21,7 @@ function paint(){
  const cw=Math.round(w*d),ch=Math.round(h*d);if(canvas.width!==cw||canvas.height!==ch){canvas.width=cw;canvas.height=ch}
  ctx.setTransform(d,0,0,d,0,0);ctx.clearRect(0,0,w,h);ctx.strokeStyle='rgba(146,149,163,.22)';ctx.lineWidth=.6;ctx.setLineDash([3,3]);ctx.beginPath();
  for(let i=0;i<8;i++){ctx.moveTo(i*w/7,0);ctx.lineTo(i*w/7,h)}for(let i=0;i<5;i++){ctx.moveTo(0,i*h/4);ctx.lineTo(w,i*h/4)}ctx.stroke();ctx.setLineDash([]);grids++;paintedOnce=true;
- if(!paintedQueued&&hasPaintedBridge){paintedQueued=true;setTimeout(()=>{try{Promise.resolve(window.webkit.messageHandlers.plotPainted.postMessage({generation:${generation}})).catch(()=>{})}catch(_){}},90)}
+ if(!paintedQueued&&hasPaintedBridge){paintedQueued=true;setTimeout(()=>{try{Promise.resolve(window.webkit.messageHandlers.plotPainted.postMessage({generation:${generation},w:Math.round(w),h:Math.round(h)})).catch(()=>{})}catch(_){}},90)}
  if(history.length<2||shown.length<2)return;
  const y=v=>h-2-v/scale*(h-4);ctx.beginPath();ctx.moveTo(shown[0].x*w,y(shown[0].y));
  for(let i=1;i<shown.length;i++){const a=shown[i-1],b=shown[i],m=(a.x+b.x)*w/2;ctx.bezierCurveTo(m,y(a.y),m,y(b.y),b.x*w,y(b.y))}
