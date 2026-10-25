@@ -1,7 +1,7 @@
 import { CpuSampler, CpuUsage, CpuMeta, parseCpuInfo, thermalCelsius } from "./openwrt-metrics"
 
 import { getPreferences, customHeaders, recordEvent, controllerHealth, feedback } from "./preferences"
-export const VERSION = "1.89"
+export const VERSION = "1.90"
 
 export type Kind = "clash" | "openwrt"
 export type Plugin = "openclash" | "nikki" | "mihomo"
@@ -1304,9 +1304,14 @@ export function upgradablePkgs(installed: Pkg[], available: Pkg[]): Pkg[] {
   return installed.filter(p => { const v = av.get(p.name); return !!v && v !== p.version }).map(p => ({ ...p, upgradeTo: av.get(p.name) }))
 }
 export function filterPkgs(list: Pkg[], q: string, limit = 100, offset = 0): { items: Pkg[]; total: number } {
-  const k = q.trim().toLowerCase()
-  const hit = k ? list.filter(p => p.name.toLowerCase().includes(k) || p.desc.toLowerCase().includes(k)) : list
-  return { items: hit.slice(offset, offset + limit), total: hit.length }
+  const k = q.trim().toLowerCase(), items: Pkg[] = []
+  let total = 0
+  for (const p of list) {
+    if (k && !p.name.toLowerCase().includes(k) && !p.desc.toLowerCase().includes(k)) continue
+    if (total >= offset && items.length < limit) items.push(p)
+    total++
+  }
+  return { items, total }
 }
 export interface PkgResult { code: number; out: string }
 async function pkgOp(c: Controller, args: string[]): Promise<PkgResult> {

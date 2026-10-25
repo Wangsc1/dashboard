@@ -2,7 +2,7 @@
   "name": "dashboard",
   "icon": "server.rack",
   "color": "rgba(113, 143, 253,1)",
-  "version": "1.89",
+  "version": "1.90",
   "entry": "index.tsx",
   "runInApp": false,
   "description": "Scripting OpenWrt（Nikki/OpenClash/Mihomo）与独立 Clash/Mihomo 面板：前台系统采样与 CPU 详情、代理模式与节点测速、规则及连接；Nikki 配置/订阅/附加规则编辑、服务与核心操作，含路由器详情预取、主题与安全日志。功能取决于插件版本与设备权限。",

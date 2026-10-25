@@ -392,7 +392,11 @@ export function ConnectionsPage({active,version,onClose,selected=true}:{active:C
     return()=>{stop();if(scene.stop===stop)scene.stop=undefined}
   },[active&&sourceKey(active),version,selected,visible,tick,foreground,resume,prefs.requestTimeout])
   const sortFns:Record<string,(a:Conn,b:Conn)=>number>={new:(a,b)=>(b.start||0)-(a.start||0),old:(a,b)=>(a.start||0)-(b.start||0),down:(a,b)=>(b.downSpeed??0)-(a.downSpeed??0),up:(a,b)=>(b.upSpeed??0)-(a.upSpeed??0),traffic:(a,b)=>(b.up+b.down)-(a.up+a.down)}
-  const shown=[...filterConnections((tab==="active"?conns:closed).filter(x=>!fresh[(tab==="active"?"a:":"c:")+x.id]),q,client,labels)].sort(sortFns[sort]),clients=Array.from(new Set([...conns,...closed].map(x=>x.sourceIP??"").filter(Boolean)))
+  const shown=useMemo(()=>{
+    const source=(tab==="active"?conns:closed).filter(x=>!fresh[(tab==="active"?"a:":"c:")+x.id])
+    return [...filterConnections(source,q,client,labels)].sort(sortFns[sort])
+  },[conns,closed,tab,fresh,q,client,labels,sort])
+  const clients=useMemo(()=>Array.from(new Set([...conns,...closed].map(x=>x.sourceIP??"").filter(Boolean))),[conns,closed])
   async function close(x?:Conn){if(!active)return;await attempt(async()=>{if(await confirmed(active.name,x?`断开到 ${x.host} 的连接（${x.src}）。应用可能重新建立连接。`:`断开此Mihomo内核的全部活动连接（当前观察 ${conns.length} 条）。应用可能重新建立连接。`,()=>x?closeConnection(active,x.id):closeAllConnections(active)))setTick(t=>t+1)})}
   // Pull-to-refresh joins the poll owner's read (no duplicate request or publish). Hidden/background: nothing to refresh.
   const pullConnections=():Promise<void>=>{
