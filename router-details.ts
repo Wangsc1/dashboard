@@ -14,7 +14,6 @@ export type DetailKey = keyof typeof detailReads | `container:${string}`
 type Entry = { value?: any; pending?: Promise<any>; epoch:number; readers?: Set<()=>boolean>; requestPhase?:number }
 const snapshots = new Map<string, Map<string,Entry>>()
 const invalidations=new Set<(source:string,key:string)=>void>()
-let mountedPages=0,visiblePages=0
 let foreground = true, selectedSource = '', phaseEpoch = 0, working = 0, owners = 0
 const queue: Array<{run:()=>Promise<void>;cancel:()=>void;valid:()=>boolean}> = []
 function entry(c:Controller,key:string):Entry {
@@ -106,22 +105,15 @@ export function prefetchRouterDetails(c:Controller){
 export function useDetailPage(){
   const [page]=useState(()=>{
     const listeners=new Set<(visible:boolean)=>void>()
-    const state={visible:true,alive:true,counted:false,listeners,onAppear:()=>{},onDisappear:()=>{}}
-    const change=(visible:boolean)=>{if(!state.alive||state.visible===visible)return;state.visible=visible;if(state.counted)visiblePages+=visible?1:-1;for(const fn of listeners)fn(visible)}
+    const state={visible:true,alive:true,listeners,onAppear:()=>{},onDisappear:()=>{}}
+    const change=(visible:boolean)=>{if(!state.alive||state.visible===visible)return;state.visible=visible;for(const fn of listeners)fn(visible)}
     state.onAppear=()=>change(true);state.onDisappear=()=>change(false)
     return state
   })
   useEffect(()=>{
-    mountedPages++;page.counted=true;if(page.visible)visiblePages++
-    return()=>{page.onDisappear();page.alive=false;page.listeners.clear();page.counted=false;mountedPages--}
+    return()=>{page.onDisappear();page.alive=false;page.listeners.clear()}
   },[page])
   return page
-}
-// Explicitly copied with the existing safe timing summary; counters only, no
-// resource keys/identities or per-navigation persistent logging.
-export function routerDetailsStatus(){
-  let readers=0;for(const resources of snapshots.values())for(const resource of resources.values())readers+=resource.readers?.size??0
-  return `路由器详情生命周期（查看时）：已挂载页=${mountedPages} 可见页=${visiblePages} 前台=${foreground?1:0} 读取槽=${working}/2 排队=${queue.length} 读者=${readers} 数据订阅=${invalidations.size}`
 }
 type DetailPage=ReturnType<typeof useDetailPage>
 // Cached first frame is immediate. Hidden pages retain that frame but detach

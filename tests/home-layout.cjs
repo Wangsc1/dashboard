@@ -44,7 +44,7 @@ function slot(n,height){
    offA();assert.equal(intervals.size,1);offB();assert.equal(intervals.size,0)
    chart.animateChart(()=>false);for(const t of [...intervals.values()])t.fn();assert.equal(intervals.size,0)
  })
- // Continuous geometry and native bridge lifecycle are exercised by plot-canvas-browser.cjs and plot-host.cjs.
+ // Continuous geometry and native bridge lifecycle are exercised by native-plot.cjs and plot-host.cjs.
  await test('契约(非实机): 负载条 GeometryReader 外有单次固定24pt容器，空值保留灰底条',()=>{
    for(const f of [undefined,NaN,-1,0,0.001,1,2]){
      const c=home.LoadBars({fraction:f,tone:'#17965b'});assert.equal(c.type,'ZStack');deep(c.props.frame,{height:24});assert.equal(c.props.modifiers,undefined)

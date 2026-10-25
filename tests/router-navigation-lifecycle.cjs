@@ -68,7 +68,7 @@ function appear(tree){assert.equal(typeof tree.props.onAppear,'function');tree.p
   held.resolve([{name:'shared-warm',up:true}]);await settle();assert.equal(reads,1);assert.equal(details.peekDetail(c,'interfaces')[0].name,'shared-warm')
   for(const key of Object.keys(details.detailReads))assert.notEqual(details.peekDetail(c,key),undefined,key+' still prefetched')
   settings.close();api.loadWrtInterfaces=original;await settle();assert.equal(sceneListeners.size,0)
-  const logs=owner(ui.LogsPage),view=logs.render({});await nodes(view.props.toolbar.topBarTrailing,'Button').find(n=>n.props.title==='复制停顿诊断').props.action();assert.ok(clipboard.includes('路由器详情生命周期'));assert.ok(clipboard.includes('数据订阅=0'));assert.ok(!clipboard.includes(c.url));disappear(view);logs.close()
+  const logs=owner(ui.LogsPage),view=logs.render({});assert.ok(!nodes(view.props.toolbar.topBarTrailing,'Button').some(n=>n.props.title==='复制停顿诊断'));disappear(view);logs.close()
  })
  await test('late failed reads, queued timer callbacks and native appear callbacks after pop/unmount perform zero state writes',async()=>{
   const c=device(),settings=owner(app.SettingsPage);settings.render({active:c,onChanged(){}});await settle();settings.close()

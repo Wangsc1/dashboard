@@ -19,18 +19,6 @@ export const DEFAULTS: Preferences = {
 }
 const KEY = "dashboard_preferences_v140"
 const listeners = new Set<() => void>()
-let preferenceRevision = 0
-const preferenceInstance = Math.random().toString(36).slice(2, 10)
-export function traceIconPreference(stage: "change" | "accepted" | "global-render" | "proxies-render" | "group-render" | "icon-render", enabled: boolean) {
-  // Diagnostic only: never expose URLs, group names, headers or other settings.
-  // A failed diagnostic must not interrupt a settings write or UI render.
-  try {
-    const raw = Storage.get<Partial<Preferences>>(KEY)
-    const stored = typeof raw?.customIcons === "boolean" ? raw.customIcons : "unavailable"
-    console.log(`[preferences-icon] build=1.72 instance=${preferenceInstance} revision=${preferenceRevision} stage=${stage} enabled=${enabled} snapshot=${getPreferences().customIcons} stored=${stored}`)
-  } catch { console.log("[preferences-icon] diagnostic-unavailable") }
-}
-export function preferenceTrace(stage: string) { console.log(`[preferences] revision=${preferenceRevision} ${stage}`) }
 export function subscribePreferences(fn: () => void) { listeners.add(fn); return () => { listeners.delete(fn) } }
 // Storage persists asynchronously. Keep an accepted write visible to this instance
 // instead of rereading an older persisted value during navigation/subscriber updates.
@@ -63,15 +51,12 @@ export function savePreferences(patch: Partial<Preferences>) {
   const p = normalizePreferences({ ...getPreferences(), ...patch })
   if (!Storage.set(KEY, p)) throw new Error("本地设置保存失败")
   preferenceSnapshot = p
-  preferenceRevision++
-  preferenceTrace("saved")
-  if (typeof patch.customIcons === "boolean") traceIconPreference("accepted", p.customIcons)
   // The write has succeeded. Maintenance or one failed UI listener must not
   // block the other pages or turn an accepted write into a save-failed alert.
-  try { trimLogs(p.logLimit) } catch { preferenceTrace("log-trim-failed") }
+  try { trimLogs(p.logLimit) } catch {}
   for (const fn of [...listeners]) {
     if (!listeners.has(fn)) continue
-    try { fn() } catch { preferenceTrace("listener-failed") }
+    try { fn() } catch {}
   }
 }
 export function feedback() { if (getPreferences().haptics) { try { HapticFeedback.selection() } catch {} } }

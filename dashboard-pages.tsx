@@ -1,10 +1,9 @@
 import { NikkiManagement, NikkiSubscription, NikkiRule, NikkiFile, NikkiManagementError, NIKKI_RULE_TYPES, loadNikkiManagement, saveNikkiSubscription, deleteNikkiSubscription, updateNikkiSubscription, saveNikkiRule, deleteNikkiRule, setNikkiRulesEnabled, reorderNikkiRules, selectNikkiProfile, readNikkiFile, saveNikkiFile } from "./api"
 import { rootToolbar } from "./root-toolbar"
-import { connectionLifecycle } from "./cadence-diagnostics"
 import { AppEvents, Button, Divider, HStack, VStack, Text, Image, Circle, RoundedRectangle, Spacer, ScrollView, LazyVStack, NavigationLink, Menu, Picker, TextField, Toggle, Form, Section, ProgressView, WebView, ZStack, modifiers, Safari, useState, useEffect, useMemo } from "scripting"
 import { Controller, Group, Conn, Rule, Provider, setRuleDisabled, closeRuleConnections, ruleToggleSupported, loadGroups, testGroup, selectProxy, loadProviders, updateProvider, loadRules, loadConnections, closeConnection, closeAllConnections, fmtBytes, fmtSpeed, fmtUptime, delayColor, loadRuntimeVersions, checkCoreUpdate, loadNikkiRuntime, NikkiRuntime, verifyCoreRestart, upgradeCoreAndVerify, lastControllerMode, loadConfig, setMode as setControllerMode, nikkiService, nikkiServiceStatus, coreAction, CoreAction, queryDNS, webpage } from "./api"
 import { usePreferences, KernelConfigPage, updatePreference, Choice, ThresholdRange, Range, TestURLField } from "./settings-ui"
-import { NODE_SORT_OPTIONS, savePreferences, getPreferences, cachedIcon, readCachedIcon, traceIconPreference, feedback } from "./preferences"
+import { NODE_SORT_OPTIONS, savePreferences, getPreferences, cachedIcon, readCachedIcon, feedback } from "./preferences"
 import { selectable, sortedNodes, historyFor, SceneVisibility, filterConnections, clientLabels, saveClientLabel, sourceKey, confirmed } from "./dashboard-model"
 // BEGIN GENERATED NIKKI EDITOR
 // CodeMirror/Lezer/YAML licenses: editor/THIRD_PARTY_NOTICES.txt; source SHA256 e86883dc2f3903f6e26b2b673919b7d6e80421f7cfd8a6addeaaa87c2c07bc07
@@ -25,7 +24,6 @@ export function GroupIcon({g}:{g:Group}) {
   // Read the current source on every render, never a previous URL's async state.
   const url=p.customIcons&&!symbol?g.icon:undefined, image=url?readCachedIcon(url):null
   useEffect(()=>{ let alive=true;if(url&&!readCachedIcon(url)) cachedIcon(url).then(()=>{if(alive)setIconRevision(n=>n+1)}).catch(()=>{});return()=>{alive=false} },[url])
-  traceIconPreference("icon-render", p.customIcons)
   if (!p.customIcons) return null
   return image ? <Image image={image} resizable scaleToFit frame={{width:28,height:28}}/> : <Image systemName={symbol || "point.3.connected.trianglepath.dotted"} foregroundStyle="systemBlue" frame={{width:26,height:26}}/>
 }
@@ -64,7 +62,6 @@ export function GroupChevron({expanded}:{expanded:boolean}) {
 export function GroupSection({c,g,onChanged,expanded=false}:{c:Controller;g:Group;onChanged:()=>void;expanded?:boolean}) {
   const prefs=usePreferences(),[busy,setBusy]=useState(false),storeKey=`${sourceKey(c)}|${g.name}`,merged=()=>{const o:Record<string,number>={...g.delays};for(const n of g.all){const v=testedNodes.get(`${sourceKey(c)}|${n}`);if(v!==undefined&&o[n]===undefined)o[n]=v}return{...o,...(testedDelays.get(storeKey)??{})}},[delays,setDelays]=useState(merged),[open,setOpen]=useState(false),[nodeLimit,setNodeLimit]=useState(40),[now,setNow]=useState(g.now),[failed,setFailed]=useState<Set<string>>(new Set()),[guard]=useState({alive:true});useEffect(()=>()=>{guard.alive=false},[])
   useEffect(()=>setDelays(merged()),[g.delays,storeKey]);useEffect(()=>setNow(g.now),[g.now]);const d=delays[now]
-  traceIconPreference("group-render", prefs.customIcons)
   const isOpen=expanded||open
   useEffect(()=>{
     if(!isOpen)return
@@ -191,7 +188,6 @@ export function ProxiesPage({active,version,onClose,selected=true}:{active:Contr
   const {scene,revision}=usePageScene()
   scene.restore=()=>{if(selected)setVisible(true)}
   useEffect(()=>setVisible(selected),[selected])
-  traceIconPreference("proxies-render", p.customIcons)
   useEffect(()=>{const c=hydrateProxyCache(cacheKey);setGroups(c?.groups??[]);setProviders(c?.providers??[]);setLoaded(!!c)},[cacheKey])
   useEffect(()=>{if(!active||!selected||!visible||!scene.active)return;let alive=true;const epoch=scene.epoch,current=()=>alive&&scene.active&&scene.epoch===epoch;setErr("");loadGroups(active,{includeGlobal:globalMode}).then(x=>{if(current()){setGroups(x);setLoaded(true);setErr("");setProxyCache(cacheKey,{groups:x,providers:proxyCache.get(cacheKey)?.providers??[]})}}).catch(()=>{if(current())setErr(safeError())});return()=>{alive=false}},[active&&sourceKey(active),version,tick,p.showHidden,p.showGlobal,globalMode,p.nestedDelay,selected,visible,revision])
   useEffect(()=>{if(!active||!showProviders||!selected||!visible||!scene.active)return;let alive=true;const epoch=scene.epoch,current=()=>alive&&scene.active&&scene.epoch===epoch;loadProviders(active,"proxies").then(x=>{if(current()){setProviders(x);setProxyCache(cacheKey,{groups:proxyCache.get(cacheKey)?.groups??[],providers:x})}}).catch(()=>{if(current())setErr("代理来源读取不可用：当前内核不支持或权限不足；显示的0是已加载数量，不代表远端总数。")});return()=>{alive=false}},[active&&sourceKey(active),tick,showProviders,selected,visible,revision])
@@ -337,7 +333,7 @@ export function ConnectionsPage({active,version,onClose,selected=true}:{active:C
   const prefs=usePreferences(),[conns,setConns]=useState<Conn[]>(()=>active?hydrateConns(sourceKey(active))??[]:[]),[closed,setClosed]=useState<Conn[]>([]),[visible,setVisible]=useState(selected),[tab,setTab]=useState("active"),[err,setErr]=useState(""),[q,setQ]=useState(""),[search,setSearch]=useState(false),[client,setClient]=useState(""),[labelsOpen,setLabelsOpen]=useState(false),[labels,setLabels]=useState<Record<string,string>>({}),[labelIP,setLabelIP]=useState(""),[label,setLabel]=useState(""),[limit,setLimit]=useState(60),[tick,setTick]=useState(0),[fresh,setFresh]=useState<Record<string,number>>({}),[sort,setSort]=useState("new"),[seenBox]=useState({seen:new Set<string>(),init:false}),[foreground,setForeground]=useState(true),[resume,setResume]=useState(0),[scene]=useState({active:true,epoch:0,stop:undefined as undefined|(()=>void),vis:new SceneVisibility(),selected:selected,pull:undefined as undefined|(()=>Promise<void>)})
   // A boolean alone misses background -> active batched into one render (or a
   // repeated active). Every resume needs a new owner after epoch invalidation.
-  useEffect(()=>{const changed=(phase:"active"|"inactive"|"background")=>{if(scene.vis.scene(phase==="active",Date.now())&&scene.selected)setVisible(true);scene.active=phase==="active";scene.epoch++;scene.stop?.();setForeground(scene.active);connectionLifecycle(phase);if(scene.active){setResume(n=>n+1);setErr("");setFresh({})}};AppEvents.scenePhase.addListener(changed);return()=>{scene.stop?.();AppEvents.scenePhase.removeListener(changed)}},[])
+  useEffect(()=>{const changed=(phase:"active"|"inactive"|"background")=>{if(scene.vis.scene(phase==="active",Date.now())&&scene.selected)setVisible(true);scene.active=phase==="active";scene.epoch++;scene.stop?.();setForeground(scene.active);if(scene.active){setResume(n=>n+1);setErr("");setFresh({})}};AppEvents.scenePhase.addListener(changed);return()=>{scene.stop?.();AppEvents.scenePhase.removeListener(changed)}},[])
   scene.selected=selected
   useEffect(()=>{setVisible(selected)},[selected])
   useEffect(()=>{if(!active)return;seenBox.seen.clear();seenBox.init=false;setFresh({});setLabels(clientLabels(active));setConns(hydrateConns(sourceKey(active))??[]);setClosed(historyFor(active).closed);setClient("")},[active&&sourceKey(active)])
@@ -353,20 +349,19 @@ export function ConnectionsPage({active,version,onClose,selected=true}:{active:C
     // Native timeout/abort may settle only after JS resumes. Bound publication
     // by wall-clock age too, and reuse the normal poll to replace expired reads.
     const maxAge=Math.max(1500,prefs.requestTimeout*1000)
-    setErr("");const h=historyFor(active);connectionLifecycle("poll-start")
+    setErr("");const h=historyFor(active)
     let flight:Promise<void>|undefined
     async function run(){
       if(!current())return
       if(request){
         if(Date.now()-request.at<maxAge)return
-        request.abort.abort();request=undefined;h.resume();connectionLifecycle("expired")
+        request.abort.abort();request=undefined;h.resume()
       }
       const owned={abort:new AbortController(),at:Date.now()};request=owned
       const publishable=()=>current()&&request===owned&&Date.now()-owned.at<maxAge
       try{
         const xs=await loadConnections(active!,owned.abort.signal)
         if(publishable()){
-          connectionLifecycle("sample");
           h.sample(xs,Date.now());setConns([...h.active]);setConnCache(sourceKey(active!),h.active);setClosed([...h.closed]);setErr("")
           const ids=[...h.active.map(x=>"a:"+x.id),...h.closed.map(x=>"c:"+x.id)]
           if(seenBox.init){
@@ -386,7 +381,7 @@ export function ConnectionsPage({active,version,onClose,selected=true}:{active:C
           // Closed history is already bounded; do not retain every ID ever seen.
           seenBox.seen=new Set(ids);seenBox.init=true
         }
-      }catch{if(publishable()){connectionLifecycle("request-error");setErr(safeError())}}finally{if(request===owned){if(current()&&Date.now()-owned.at>=maxAge){h.resume();connectionLifecycle("expired")}request=undefined}}
+      }catch{if(publishable()){setErr(safeError())}}finally{if(request===owned){if(current()&&Date.now()-owned.at>=maxAge){h.resume()}request=undefined}}
     }
     // One owner for poll and pull: a pull joins the unexpired in-flight read instead of duplicating it.
     function refresh():Promise<void>{
@@ -395,7 +390,7 @@ export function ConnectionsPage({active,version,onClose,selected=true}:{active:C
     }
     void refresh();const t=setInterval(refresh,1500)
     scene.pull=refresh
-    const stop=()=>{if(!alive)return;alive=false;if(scene.pull===refresh)scene.pull=undefined;request?.abort.abort();request=undefined;clearInterval(t);for(const timer of timers)clearTimeout(timer);timers.clear();connectionLifecycle("poll-stop")}
+    const stop=()=>{if(!alive)return;alive=false;if(scene.pull===refresh)scene.pull=undefined;request?.abort.abort();request=undefined;clearInterval(t);for(const timer of timers)clearTimeout(timer);timers.clear()}
     scene.stop=stop
     return()=>{stop();if(scene.stop===stop)scene.stop=undefined}
   },[active&&sourceKey(active),version,selected,visible,tick,foreground,resume,prefs.requestTimeout])
@@ -407,8 +402,7 @@ export function ConnectionsPage({active,version,onClose,selected=true}:{active:C
     if(!active||!selected||!visible||!foreground||!scene.active)return Promise.resolve()
     return scene.pull?scene.pull():Promise.resolve()
   }
-  connectionLifecycle("render")
-  return Shell({title:active?.name??"连接",refresh:pullConnections,onAppear:()=>{connectionLifecycle("appear");scene.vis.appear();setVisible(true);setResume(n=>n+1)},onDisappear:()=>{connectionLifecycle("disappear");if(scene.vis.disappear(Date.now())){scene.stop?.();setVisible(false)}}, toolbar:rootToolbar("connections",onClose,<Menu label={<Image systemName="ellipsis.circle"/>}><Button title="客户端标签" action={()=>setLabelsOpen(!labelsOpen)}/><Button title="清理已断开连接" action={async()=>{if(active&&await confirmed(`${active.name} · 本地历史`,"清理本脚本已观察到的已断开历史，不操作远端连接。",async()=>{historyFor(active).clear();setClosed([])}))feedback()}}/><Button title="打断全部连接" action={()=>close()}/></Menu>),children:<>{!active?<Empty/>:<><VStack spacing={6} padding={6} background={<RoundedRectangle cornerRadius={16} fill="secondarySystemBackground"/>}>
+  return Shell({title:active?.name??"连接",refresh:pullConnections,onAppear:()=>{scene.vis.appear();setVisible(true);setResume(n=>n+1)},onDisappear:()=>{if(scene.vis.disappear(Date.now())){scene.stop?.();setVisible(false)}}, toolbar:rootToolbar("connections",onClose,<Menu label={<Image systemName="ellipsis.circle"/>}><Button title="客户端标签" action={()=>setLabelsOpen(!labelsOpen)}/><Button title="清理已断开连接" action={async()=>{if(active&&await confirmed(`${active.name} · 本地历史`,"清理本脚本已观察到的已断开历史，不操作远端连接。",async()=>{historyFor(active).clear();setClosed([])}))feedback()}}/><Button title="打断全部连接" action={()=>close()}/></Menu>),children:<>{!active?<Empty/>:<><VStack spacing={6} padding={6} background={<RoundedRectangle cornerRadius={16} fill="secondarySystemBackground"/>}>
       <HStack spacing={6}>
         {(["active","closed"] as const).map(k=><Button key={k} buttonStyle="plain" action={()=>{setTab(k);setLimit(60)}}><HStack spacing={6} padding={{horizontal:8,vertical:6}} background={<RoundedRectangle cornerRadius={12} fill={tab===k?"systemBackground":"clear"}/>}><Circle fill={k==="active"?(tab===k?"systemGreen":"tertiaryLabel"):"tertiaryLabel"} frame={{width:6,height:6}}/><Text font={13} fontWeight={tab===k?"semibold":"regular"} foregroundStyle={tab===k?"label":"secondaryLabel"}>{k==="active"?"活动中":"已关闭"}</Text><Text font={11} foregroundStyle={tab===k?"systemGreen":"secondaryLabel"} padding={{horizontal:6,vertical:1}} background={<RoundedRectangle cornerRadius={8} fill="tertiarySystemFill"/>}>{String(k==="active"?conns.length:closed.length)}</Text></HStack></Button>)}
         <Spacer/>

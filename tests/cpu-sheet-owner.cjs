@@ -55,28 +55,22 @@ function instance(fn){const state={hooks:[],cleanups:new Map()};return {state,as
   feed.setValue(frame(9,false));out=await page.draw(props);assert.equal(out.props.running,false)
   page.close();assert.equal(listeners.size,0);assert.equal(intervals.size,0)
  })
- await test('sheet原生appear先于content effect不等于内容尚未构建；首次/再次保留内容，首次时间不被覆盖',async()=>{
-  const diag=load('cadence-diagnostics'),trace=diag.createSheetTrace(),listeners=new Set()
+ await test('sheet内容保留：running切换与关闭再显示复用同一订阅，卸载退订',async()=>{
+  const listeners=new Set()
   const feed={value:{overview:null,histories:{cpu:{cpu:[]},up:[],down:[]},running:false},subscribe(fn){listeners.add(fn)},unsubscribe(fn){listeners.delete(fn)}}
-  const props={feed,trace};let out=render(home.LiveCpuDetails,props,true)
-  // Actual order under test: JS render -> native callback -> useEffect. No synthetic delays in production.
-  now+=188;home.CpuDetails(out.props).props.onAppear();await flush();diag.sheetLifecycle('state-open',trace)
-  let summary=diag.plotLifecycleSummary(),row=summary.split('\n').find(l=>l.startsWith('sheet='+trace+' appearanceCount='))
-  assert.ok(row.includes('first.content-create=-188ms'));assert.ok(row.includes('first.appear=-0ms'));assert.ok(row.includes('first.content-mount=-0ms'))
+  const props={feed};let out=render(home.LiveCpuDetails,props,true);await flush()
   const push=running=>{const old=feed.value;feed.value={...old,running};for(const fn of listeners)fn(feed.value,old)}
   push(true);out=render(home.LiveCpuDetails,props);await flush();assert.equal(out.props.running,true)
-  home.CpuDetails(out.props).props.onDisappear();diag.sheetLifecycle('state-closed',trace);push(false);render(home.LiveCpuDetails,props);await flush()
-  now+=1000;home.CpuDetails(out.props).props.onAppear();diag.sheetLifecycle('state-open',trace);push(true);out=render(home.LiveCpuDetails,props);await flush()
+  push(false);render(home.LiveCpuDetails,props);await flush()
+  now+=1000;push(true);out=render(home.LiveCpuDetails,props);await flush()
   assert.equal(listeners.size,1);assert.equal(out.props.running,true)
-  summary=diag.plotLifecycleSummary();row=summary.split('\n').find(l=>l.startsWith('sheet='+trace+' appearanceCount='));assert.ok(row.includes('appearanceCount=2'));assert.ok(row.includes('first.appear=-1000ms'));assert.ok(row.includes('first.content-create=-1188ms'))
-  assert.equal(summary.split('\n').filter(l=>l.includes('sheet='+trace+' content-mount')).length,1)
   unmount();assert.equal(listeners.size,0)
  })
  await test('完整LiveCpuDetails展开到原生树：首帧/running/连续采样/元信息/关闭再显示保留原生模型和TimelineCanvas',async()=>{
   const timers=new Map();let nextTimer=0
   context.setTimeout=fn=>{const id=++nextTimer;timers.set(id,fn);return id};context.clearTimeout=id=>timers.delete(id)
   context.WebViewController=class{constructor(){throw Error('unexpected WebView')}}
-  const instances=new Map(),listeners=new Set(),trace=load('cadence-diagnostics').createSheetTrace()
+  const instances=new Map(),listeners=new Set()
   const frame=(n,running=true,count=16)=>{
    const cpus=Array.from({length:count},(_,i)=>({id:'cpu'+i,usage:n+i}));cpus.unshift({id:'cpu',usage:n})
    return {overview:{wrt:{cpus,uptime:n,release:'test',cpuModel:'test',cpuMeta:n?{cpu0:{mhz:1000,cacheKB:12}}:undefined}},histories:{cpu:Object.fromEntries(cpus.map(c=>[c.id,Array.from({length:8+n},(_,i)=>10+i+c.usage)])),up:[],down:[]},running}
@@ -100,13 +94,13 @@ function instance(fn){const state={hooks:[],cleanups:new Map()};return {state,as
     assert.equal(new Set(keys).size,keys.length,'duplicate sibling key '+where)
     for(let i=0;i<kids.length;i++)await walk(kids[i],where+'/'+i)
    }
-   await walk({type:home.LiveCpuDetails,props:{feed,trace}},'sheet')
+   await walk({type:home.LiveCpuDetails,props:{feed}},'sheet')
    return {plots,skeleton}
   }
   // Native render may call appear/draw BEFORE passive effects; old tests always
   // flushed all effects before pretending a native frame happened.
   const appeared=new Set(),ctx=new Proxy({}, {get:()=>()=>{},set:()=>true})
-  function nativeBeforeEffects(n,path){if(n.type!=='TimelineCanvas')return;if(!appeared.has(path)){appeared.add(path);n.props.onAppear();n.props.onAppear();n.props.onDisappear()}n.props.draw(ctx,{width:145,height:76},now/1000)}
+  function nativeBeforeEffects(n,path){if(n.type!=='TimelineCanvas')return;if(!appeared.has(path)){appeared.add(path);assert.equal(n.props.onAppear,undefined);assert.equal(n.props.onDisappear,undefined)}n.props.draw(ctx,{width:145,height:76},now/1000)}
   function finish(){const fs=[...timers.values()];timers.clear();fs.forEach(f=>f())}
   function drawPlots(snapshot){for(const p of snapshot.plots)p.tree.props.draw(ctx,{width:145,height:76},now/1000)}
   let baseline=await tree();assert.equal(baseline.plots.length,17);assert.equal(new Set(baseline.plots.map(p=>p.model)).size,17);assert.equal(listeners.size,1)
@@ -117,11 +111,11 @@ function instance(fn){const state={hooks:[],cleanups:new Map()};return {state,as
   for(const n of [1,2,3,4,5]){
    now=sampleBase+n*1000
    publish(frame(n));const next=await tree();assert.equal(signature(next),signature(baseline));assert.equal(JSON.stringify(next.skeleton),JSON.stringify(baseline.skeleton),'all native paths/frames remain stable')
-   next.plots.forEach((p,i)=>{assert.equal(p.model,baseline.plots[i].model);assert.equal(p.host.running,true);assert.equal(p.model.history.length,8+n);assert.ok(p.host.drawTrack.state.counts.updates>=n+1);assert.ok(p.host.drawTrack.state.counts.newRefs>=n+1)});assert.equal(next.plots.length,17)
+   next.plots.forEach((p,i)=>{assert.equal(p.model,baseline.plots[i].model);assert.equal(p.host.running,true);assert.equal(p.model.history.length,8+n)});assert.equal(next.plots.length,17)
    if(n>1){
     next.plots.forEach(p=>{assert.equal(p.model.animating,true,'growing real feed history must enter animation');assert.equal(p.tree.props.paused,false);assert.equal(p.host.ticking,true)})
     const starts=next.plots.map(p=>JSON.stringify(p.model.shown));now+=500;drawPlots(next)
-    next.plots.forEach((p,i)=>{assert.equal(p.host.drawTrack.continuous,true);assert.ok(p.host.drawTrack.state.counts.rawAnimating>0);assert.equal(p.host.drawTrack.state.flags,31);assert.equal(p.tree.props.paused,false);assert.ok(p.host.drawTrack.state.counts.animStarts>0);assert.notEqual(JSON.stringify(p.model.shown),starts[i],'actual middle draw advances geometry');assert.notDeepEqual(JSON.parse(JSON.stringify(p.model.shown)),JSON.parse(JSON.stringify(p.model.to)),'middle draw is not final target')})
+    next.plots.forEach((p,i)=>{assert.equal(p.tree.props.paused,false);assert.notEqual(JSON.stringify(p.model.shown),starts[i],'actual middle draw advances geometry');assert.notDeepEqual(JSON.parse(JSON.stringify(p.model.shown)),JSON.parse(JSON.stringify(p.model.to)),'middle draw is not final target')})
     now+=500;drawPlots(next);finish()
    }else{drawPlots(next);finish()}
   }
@@ -130,18 +124,16 @@ function instance(fn){const state={hooks:[],cleanups:new Map()};return {state,as
   publish(frame(8,true,0));const empty=await tree();assert.equal(empty.plots.length,1);assert.equal(empty.plots[0].path,baseline.plots[0].path)
   for(const own of instances.values())own.close();assert.equal(listeners.size,0);assert.equal(intervals.size,0);assert.equal(timers.size,0)
  })
- await test('CPU详情恢复滚动容器，保留内容/导航/关闭/原生生命周期',async()=>{
-  const trace=load('cadence-diagnostics').createSheetTrace(),histories={cpu:{cpu:[12],cpu0:[23]},up:[],down:[]},w={cpus:[{id:'cpu',usage:12},{id:'cpu0',usage:23}]}
-  const tree=home.CpuDetails({overview:{wrt:w},histories,running:true,trace})
+ await test('CPU详情恢复滚动容器，保留内容/导航/关闭',async()=>{
+  const histories={cpu:{cpu:[12],cpu0:[23]},up:[],down:[]},w={cpus:[{id:'cpu',usage:12},{id:'cpu0',usage:23}]}
+  const tree=home.CpuDetails({overview:{wrt:w},histories,running:true})
   assert.equal(tree.type,'NavigationStack');assert.equal(nodes(tree,'ScrollView').length,1)
   assert.deepEqual(Array.from(tree.props.presentationDetents),['large']);assert.equal(tree.props.presentationDragIndicator,'visible');assert.equal(tree.props.presentationContentInteraction,'scrolls')
-  assert.equal(typeof tree.props.onAppear,'function');assert.equal(typeof tree.props.onDisappear,'function')
-  const container=tree.props.children[0];assert.equal(container.type,'ScrollView');assert.equal(container.props.navigationTitle,'CPU');assert.equal(container.props.navigationBarTitleDisplayMode,'inline');assert.equal(container.props.background,home.HOME_BG)
+    const container=tree.props.children[0];assert.equal(container.type,'ScrollView');assert.equal(container.props.navigationTitle,'CPU');assert.equal(container.props.navigationBarTitleDisplayMode,'inline');assert.equal(container.props.background,home.HOME_BG)
   const close=container.props.toolbar.topBarLeading;assert.equal(close.type,'Button');assert.equal(close.props.systemImage,'xmark');assert.equal(close.props.accessibilityLabel,'关闭CPU详情');assert.equal(typeof close.props.action,'function')
   const content=container.props.children[0];assert.equal(content.type,'VStack');assert.equal(content.props.spacing,16);assert.equal(JSON.stringify(content.props.padding),JSON.stringify({horizontal:16,top:12,bottom:24}))
-  const summary=nodes(tree,home.DetailCpuSummary)[0],row=nodes(tree,home.CoreRow)[0];assert.equal(summary.props.w,w);assert.equal(summary.props.history,histories.cpu.cpu);assert.equal(summary.props.running,true);assert.equal(summary.props.sheetTrace,trace);assert.equal(summary.props.key,'summary')
-  assert.equal(row.props.histories,histories);assert.equal(row.props.cpus[0],w.cpus[1]);assert.equal(row.props.running,true);assert.equal(row.props.sheetTrace,trace);assert.equal(row.props.key,'core-cpu0')
-  tree.props.onAppear();tree.props.onDisappear();const summaryLog=load('cadence-diagnostics').plotLifecycleSummary();assert.ok(summaryLog.includes('sheet='+trace+' appear'));assert.ok(summaryLog.includes('sheet='+trace+' disappear'))
+  const summary=nodes(tree,home.DetailCpuSummary)[0],row=nodes(tree,home.CoreRow)[0];assert.equal(summary.props.w,w);assert.equal(summary.props.history,histories.cpu.cpu);assert.equal(summary.props.running,true);assert.equal(summary.props.key,'summary')
+  assert.equal(row.props.histories,histories);assert.equal(row.props.cpus[0],w.cpus[1]);assert.equal(row.props.running,true);assert.equal(row.props.key,'core-cpu0')
  })
  console.log(count+' mounted sheet data-flow groups passed; not a native remount/FPS measurement')
 })().catch(e=>{console.error(e);process.exitCode=1})

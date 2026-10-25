@@ -49,70 +49,7 @@ const differences=xs=>xs.slice(1).map((x,i)=>x-xs[i])
   finally{context.Storage.set=set;root.close();await settle()}
   assert.equal(clock.size,0);clean()
  })
- await test('actual canvas animates for one second, then waits for real data without fabricating points',()=>{
-  const html=load('plot-canvas').plotCanvasHTML(),js=/<script>([\s\S]*)<\/script>/.exec(html)[1]
-  let at=0,id=0;const raf=new Map(),ctx=new Proxy({},{get:()=>()=>{}})
-  const canvas={getContext:()=>ctx,getBoundingClientRect:()=>({width:300,height:96}),width:0,height:0,addEventListener(){}}
-  const window={devicePixelRatio:1,addEventListener(){},webkit:{messageHandlers:{plotReady:{postMessage:()=>Promise.resolve(true)}}}}
-  require('node:vm').runInNewContext(js,{window,document:{querySelector:()=>canvas,body:{style:{}},hidden:false,addEventListener(){}},performance:{now:()=>at},ResizeObserver:class{observe(){}},requestAnimationFrame:fn=>{const n=++id;raf.set(n,fn);return n},cancelAnimationFrame:n=>raf.delete(n),setTimeout(){},Promise})
-  const plot=window.plotCanvas,send=(seq,samples)=>plot.update({seq,samples,running:true,percent:true,tone:'#3485eb'})
-  const step=t=>{at=t;const callbacks=[...raf.values()];raf.clear();callbacks.forEach(fn=>fn(t))}
-  send(1,[10,20]);send(2,[10,20,80]);for(let t=20;t<=1000;t+=20)step(t)
-  const end=plot.inspect();assert.equal(end.stats.liveLoops,0);assert.equal(end.shown.at(-1).y,80)
-  for(let t=1020;t<=3000;t+=20)step(t)
-  const waiting=plot.inspect();assert.equal(waiting.stats.frames,end.stats.frames);assert.equal(waiting.history.length,3)
-  send(3,[10,20,80,40]);step(3020);assert.equal(plot.inspect().stats.liveLoops,1)
-  console.log(JSON.stringify({newDataIntervalMs:3000,animationMs:1000,stationaryMs:2000,framesWhileWaiting:waiting.stats.frames-end.stats.frames,fabricatedSamples:0}))
- })
- await test('adaptive animation uses received timestamps only; slow arrivals remain in motion longer without extrapolation',()=>{
-  const html=load('plot-canvas').plotCanvasHTML(),js=/<script>([\s\S]*)<\/script>/.exec(html)[1]
-  let at=10,id=0;const raf=new Map(),lags=[],ctx=new Proxy({},{get:()=>()=>{}})
-  const canvas={getContext:()=>ctx,getBoundingClientRect:()=>({width:300,height:96}),width:0,height:0,addEventListener(){}}
-  const window={devicePixelRatio:1,addEventListener(){},webkit:{messageHandlers:{plotReady:{postMessage:()=>Promise.resolve(true)},plotLag:{postMessage:ms=>{lags.push(ms);return Promise.resolve(true)}}}}}
-  require('node:vm').runInNewContext(js,{window,document:{querySelector:()=>canvas,body:{style:{}},hidden:false,addEventListener(){}},performance:{now:()=>at},ResizeObserver:class{observe(){}},requestAnimationFrame:fn=>{const n=++id;raf.set(n,fn);return n},cancelAnimationFrame:n=>raf.delete(n),setTimeout(){},Promise})
-  const plot=window.plotCanvas,send=(seq,samples,sampleAt)=>plot.update({seq,samples,sampleAt,running:true,percent:true,tone:'#3485eb'})
-  const step=t=>{at=t;const callbacks=[...raf.values()];raf.clear();callbacks.forEach(fn=>fn(t))}
-  send(1,[10,20],1000);send(2,[10,20,80],3500)
-  for(let t=30;t<=1510;t+=20)step(t)
-  const mid=plot.inspect();assert.equal(mid.stats.liveLoops,1);assert.ok(mid.shown.at(-1).y>20&&mid.shown.at(-1).y<80);assert.equal(JSON.stringify(mid.history),'[10,20,80]')
-  for(let t=1530;t<=2510;t+=20)step(t)
-  assert.equal(plot.inspect().shown.at(-1).y,80);assert.equal(plot.inspect().stats.liveLoops,0);assert.equal(lags.length,0)
-  send(3,[10,20,80,40],4500);step(4510);assert.equal(lags.length,1,'only abnormal rAF gap crosses bridge, not each frame')
-  assert.equal(plot.inspect().history.length,4)
- })
- await test('two-hour background and zero-size restore keep history, repaint target and own at most one animation loop',()=>{
-  const html=load('plot-canvas').plotCanvasHTML(),js=/<script>([\s\S]*)<\/script>/.exec(html)[1]
-  let at=0,id=0,width=300,height=96,resize,strokes=0;const raf=new Map(),events={document:{},window:{},canvas:{}}
-  const ctx=new Proxy({stroke(){strokes++}},{get:(o,k)=>o[k]??(()=>{})})
-  const canvas={getContext:()=>ctx,getBoundingClientRect:()=>({width,height}),width:0,height:0,addEventListener:(e,fn)=>events.canvas[e]=fn}
-  const document={querySelector:()=>canvas,body:{style:{}},hidden:false,addEventListener:(e,fn)=>events.document[e]=fn}
-  const window={devicePixelRatio:1,addEventListener:(e,fn)=>events.window[e]=fn,webkit:{messageHandlers:{plotReady:{postMessage:()=>Promise.resolve(true)}}}}
-  require('node:vm').runInNewContext(js,{window,document,performance:{now:()=>at},ResizeObserver:class{constructor(fn){resize=fn}observe(){}},requestAnimationFrame:fn=>{const n=++id;raf.set(n,fn);return n},cancelAnimationFrame:n=>raf.delete(n),setTimeout(){},Promise})
-  const plot=window.plotCanvas,send=(seq,samples,running=true)=>plot.update({seq,samples,running,percent:true,tone:'#3485eb'})
-  send(1,[10,20]);send(2,[10,20,80]);assert.equal(raf.size,1)
-  document.hidden=true;events.document.visibilitychange();assert.equal(raf.size,0)
-  at+=7200000;width=0;height=0;document.hidden=false;events.document.visibilitychange();const before=strokes
-  assert.equal(raf.size,0);assert.equal(plot.inspect().shown.at(-1).y,80);assert.equal(JSON.stringify(plot.inspect().history),'[10,20,80]')
-  width=300;height=96;resize();assert.ok(strokes>before);assert.equal(raf.size,0)
-  send(3,[10,20,80,40]);assert.equal(raf.size,1);send(4,[10,20,80,40,60]);assert.equal(raf.size,1)
-  events.window.pagehide();assert.equal(raf.size,0);at+=7200000;events.window.pageshow();assert.equal(raf.size,0);assert.equal(plot.inspect().shown.at(-1).y,60)
-  send(5,[10,20,80,40,60,90]);assert.equal(raf.size,1,'next live sample still animates');send(6,[10,20,80,40,60,90],false);assert.equal(raf.size,0)
-  const paused=strokes;events.canvas.contextrestored();assert.ok(strokes>paused);assert.equal(raf.size,0);assert.equal(plot.inspect().history.length,6)
- })
- await test('bounded memory timing distinguishes request/JS/bridge and is actually copyable from existing logs UI',async()=>{
-  const diag=load('cadence-diagnostics'),before=calls.length,set=context.Storage.set;let writes=0
-  context.Storage.set=(k,v)=>{writes++;return set(k,v)}
-  const ownerDiag=diag.beginCadenceDiagnostics('secret-address-auth-canary');ownerDiag.resume();const token=diag.timingToken('secret-address-auth-canary')
-  assert.equal(diag.timingToken('other'),undefined)
-  diag.timing(token,'headers',2200);const done=diag.timingSpan(token,'bridge');now+=3000
-  const beat=[...intervals.values()].find(x=>x.ms===250);beat.fn()
-  let summary=diag.cadenceSummary();assert.ok(summary.includes('bridge: 尚未完成'));assert.ok(summary.includes('js-gap'));assert.ok(summary.includes('headers'))
-  done();for(let i=0;i<100;i++)diag.timing(token,'bridge',2000)
-  summary=diag.cadenceSummary();assert.ok(summary.split('连接生命周期')[0].split('\n').filter(x=>/^-\d+ms/.test(x)).length<=32);assert.ok(!summary.includes('secret-address-auth-canary'));assert.equal(writes,0);assert.equal(calls.length,before)
-  ownerDiag.pause();const paused=diag.cadenceSummary();diag.timing(token,'read',999999);assert.equal(diag.cadenceSummary(),paused,'late/background spans cannot enter a new epoch');ownerDiag.close();context.Storage.set=set
-  const logs=owner(ui.LogsPage),tree=logs.render({});const copy=nodes(tree.props.toolbar.topBarTrailing,'Button').find(n=>n.props.title==='复制停顿诊断');assert.ok(copy);await copy.props.action();assert.ok(clipboard.includes('采样/绘图计时摘要'));assert.ok(!clipboard.includes('secret-address-auth-canary'));logs.close();await settle();assert.equal(clock.size,0);clean()
- })
- console.log('Cadence improvement passed: request time is subtracted; slow baselines retain 1000ms and steady completions retain >=500ms; one chain, no fabricated points.')
+ console.log('Cadence improvement passed: request time is subtracted; slow baselines retain 1000ms and steady completions retain >=500ms; one chain.')
 })().catch(e=>{console.error(e);process.exitCode=1})
 `
 vm.runInNewContext(harness+setup+checks,{require,__dirname,console,process},{filename:__filename})

@@ -1,31 +1,27 @@
-import { useDetailPage, routerDetailsStatus } from "./router-details"
-import { cadenceSummary } from "./cadence-diagnostics"
+import { useDetailPage } from "./router-details"
 import { AppEvents, Device, useColorScheme, ScrollView, Button, Circle, GeometryReader, ZStack, RoundedRectangle, gradient, Form, HStack, Image, Menu, Picker, Section, Spacer, Text, TextField, Toggle, VStack, useEffect, useState } from "scripting"
 import { Controller, ClashConfig, LOG_LEVELS, TUN_STACKS, tunStackLabel, loadConfig, cachedKernelConfig, forgetKernelConfig, patchConfig, validateConfigPatch } from "./api"
-import { Preferences, AppLog, LogLevel, getPreferences, savePreferences, subscribePreferences, preferenceTrace, traceIconPreference, feedback, getLogs, clearLogs, exportLogs, logTime, getHeaderText, saveHeaders, clearImageCache } from "./preferences"
+import { Preferences, AppLog, LogLevel, getPreferences, savePreferences, subscribePreferences, feedback, getLogs, clearLogs, exportLogs, logTime, getHeaderText, saveHeaders, clearImageCache } from "./preferences"
 
 import { makeBackup, restoreBackup, validateBackup } from "./cloud-backup"
 
-export function usePreferences(keys?: (keyof Preferences)[], enabled = true, trace = false) {
+export function usePreferences(keys?: (keyof Preferences)[], enabled = true) {
   const [p, setP] = useState(() => getPreferences())
   const [track] = useState({ value: p })
   const signature = keys?.join(",") ?? "*"
   useEffect(() => {
     if (!enabled) return
     const refresh = () => {
-      if (trace) preferenceTrace("global-listener")
       const next = getPreferences()
       const watched = keys ?? Object.keys(next) as (keyof Preferences)[]
       if (!watched.some(k => JSON.stringify(track.value[k]) !== JSON.stringify(next[k]))) return
       setP(next)
       track.value = next
-      if (trace) preferenceTrace("global-set-state")
     }
     refresh()
     const unsubscribe = subscribePreferences(refresh)
-    if (trace) preferenceTrace("global-subscribe")
-    return () => { unsubscribe(); if (trace) preferenceTrace("global-unsubscribe") }
-  }, [signature, enabled, trace])
+    return () => { unsubscribe() }
+  }, [signature, enabled])
   return p
 }
 // Native navigation destinations can retain their own hosting environment after
@@ -49,7 +45,7 @@ export function usePageColorScheme(page?: ReturnType<typeof useDetailPage>): "li
   useEffect(() => { setResume({ scheme: system }) }, [system])
   return theme === "system" ? resume.scheme : theme
 }
-function update(patch: Partial<Preferences>) { if (typeof patch.customIcons === "boolean") traceIconPreference("change", patch.customIcons); preferenceTrace("changed"); try { savePreferences(patch); feedback() } catch { void Dialog.alert({ message: "本地设置保存失败，请重试" }) } }
+function update(patch: Partial<Preferences>) { try { savePreferences(patch); feedback() } catch { void Dialog.alert({ message: "本地设置保存失败，请重试" }) } }
 export { update as updatePreference, Choice }
 function Choice({ title, value, values, onChanged, disabled = false }: { title: string; value: string; values: string[][]; onChanged: (v: string) => void; disabled?: boolean }) {
   return <Picker title={title} pickerStyle="menu" value={value} onChanged={onChanged} disabled={disabled} frame={{ height: 34 }}>{values.map(([v, l]) => <Text key={v} tag={v}>{l}</Text>)}</Picker>
@@ -436,7 +432,6 @@ export function LogsPage() {
     {LEVELS.map(([v, title]) => <Button key={v} title={`${levels.includes(v) ? "✓ " : ""}${title}`} action={() => setLevels(s => s.includes(v) ? s.filter(x => x !== v) : [...s, v])} />)}
     <Button title="刷新" systemImage="arrow.clockwise" action={() => setLogs(getLogs())} />
     <Button title="复制全部" systemImage="doc.on.doc" action={async () => { try { await Pasteboard.setString(exportLogs()); await Dialog.alert({ message: "已复制全部日志（不受筛选影响）" }) } catch { await Dialog.alert({ message: "复制失败" }) } }} />
-    <Button title="复制停顿诊断" systemImage="doc.on.doc" action={async()=>{try{await Pasteboard.setString(cadenceSummary()+"\n"+routerDetailsStatus());await Dialog.alert({message:"已复制本次运行的安全计时摘要；无需开启详细 API 日志"})}catch{await Dialog.alert({message:"复制失败"})}}} />
     <Button title="清空日志" systemImage="trash" action={clear} />
   </Menu> }}>
     <Section listRowBackground={panelRowBackground()} header={<Text>运行日志设置</Text>}><Range title="最大记录条数" min={100} max={2000} step={100} value={p.logLimit} onChanged={n => update({ logLimit: n })} /><Toggle title="记录详细 API 请求" value={p.detailedAPI} onChanged={(v: boolean) => update({ detailedAPI: v })} />

@@ -126,7 +126,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.doesNotThrow(() => pref.savePreferences({ customIcons: false })); assert.deepEqual(seen, [false])
       context.Storage.get = k => { if (k === 'dashboard_logs_v140') throw Error('secret-log-error'); return originalGet(k) }
       assert.doesNotThrow(() => pref.savePreferences({ customIcons: true })); assert.deepEqual(seen, [false, true])
-      assert.ok(messages.some(x => x.includes('listener-failed'))); assert.ok(messages.some(x => x.includes('log-trim-failed')))
+      assert.ok(messages.length === 0)
       assert.ok(!messages.join(' ').includes('secret-'))
     } finally { bad(); good(); context.console = originalConsole; context.Storage.get = originalGet }
     pref.savePreferences({ customIcons: true })
@@ -158,7 +158,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(pref.getPreferences().testTimeout, timeout)
       assert.equal(pref.getPreferences().requestTimeout, requestTimeout, 'removing request-timeout UI must not alter its stored value')
     }
-    const src = fs.readFileSync(path.join(root, 'settings-ui.tsx'), 'utf8'); assert.ok(!src.includes('traceIconPreference("global-render"'))
+    const src = fs.readFileSync(path.join(root, 'settings-ui.tsx'), 'utf8'); assert.ok(!src.includes('traceIconPreference'))
     unmount(); pref.savePreferences({ customIcons: true, haptics: false, theme: 'system', requestTimeout: 8 })
   })
   await test('阈值双滑块：固定滑轨与稳定回调、不能交叉、结束保存及失败回滚', async () => {
@@ -771,8 +771,8 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     const toggleIndex = children.findIndex(n => n.type === 'Toggle')
     assert.equal(children[toggleIndex + 1].type, 'VStack')
     assert.equal(pref.getLogs().length, 2)
-    assert.equal(nodes(menu, 'Button').length, 9)
-    assert.ok(button(menu, '复制停顿诊断'))
+    assert.equal(nodes(menu, 'Button').length, 8)
+    assert.ok(!nodes(menu, 'Button').some(n => n.props.title === '复制停顿诊断'))
     await button(menu, '复制全部').props.action(); assert.ok(clipboard.includes('路由器登录失败'))
     context.confirmResult = false; await button(menu, '清空日志').props.action(); assert.equal(pref.getLogs().length, 2)
     context.confirmResult = true; await button(menu, '清空日志').props.action(); assert.equal(pref.getLogs().length, 0)
@@ -872,7 +872,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) { const lazy = ['proxies','rules'].includes(ids[i]) && ids[i] !== id; assert.equal(nodes(tree, types[i]).length, lazy ? 0 : 1); if (!lazy) assert.equal(nodes(tree, types[i])[0].props.selected, ids[i] === id) }
     }
-    assert.equal(api.VERSION, '1.72'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.73'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('独立导航栈保留业务owner和身份，只有选中页提供可见工具栏', () => {
     pref.savePreferences({ defaultPage: 'overview' })
@@ -2058,7 +2058,6 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     tree.props.onAppear();render(pages.ConnectionsPage,props);await flush();assert.ok([...intervals.values()].some(x=>x.ms===1500))
     tree=render(pages.ConnectionsPage,props);assert.ok(!nodes(trailing(tree.props.toolbar),'Button').some(b=>/暂停监控|恢复监控/.test(b.props.title)))
     emitScene('background');assert.equal(intervals.size,0);now+=3600000;emitScene('active');render(pages.ConnectionsPage,props);await flush();assert.ok([...intervals.values()].some(x=>x.ms===1500),'always monitoring after return');unmount()
-    const diag=load('cadence-diagnostics').connectionLifecycleSummary();assert.ok(diag.includes('poll-stop'));assert.ok(!diag.includes(props.active.id));assert.ok(!diag.includes(c.url));assert.ok(diag.split('\n').length<=42)
   })
   await test('连接恢复：后台长暂停与active合并渲染仍建立新轮询owner', async () => {
     const owner={...c,id:'connections-batched-resume'}
@@ -2103,21 +2102,18 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     assert.equal(nodes(tree, pages.GroupSection).length, 1); assert.equal(nodes(tree, pages.GroupSection)[0].props.g.name, 'CacheGroup'); assert.ok(!text(tree).includes('未读取到策略组')); unmount()
     responder = () => ({ status: 204 })
   })
-  await test('图标诊断区分事件、保存、页面值及存储，不输出私人内容', async () => {
+  await test('图标开关：保存后各页面读取同一值，且不向控制台输出偏好诊断', async () => {
     const originalConsole = context.console, logs = []
-    context.console = { ...console, log: message => logs.push(message) }
+    context.console = { ...console, log: message => logs.push(String(message)) }
     try {
       pref.savePreferences({ customIcons: true, testURL: 'https://private.invalid/secret-value' })
       let tree = render(pages.ProxiesPage, { active: null, version: 0 }, true); await flush()
       nodes(trailing(tree.props.toolbar), 'Toggle').find(n => n.props.title === '显示图标').props.onChanged(false)
       tree = render(pages.ProxiesPage, { active: null, version: 0 }); await flush(); unmount()
+      assert.equal(pref.getPreferences().customIcons, false)
       render(pages.ProxiesPage, { active: null, version: 0 }, true); await flush(); unmount()
       render(pages.GroupSection, { c, g: { name: 'private-group-name', type: 'Selector', all: ['A'], now: 'A', delays: {}, icon: 'https://private.invalid/secret-image' }, onChanged() {} }, true); await flush(); unmount()
-      const diagnostic = logs.filter(x => x.startsWith('[preferences-icon]'))
-      for (const stage of ['change','accepted','proxies-render','group-render']) assert.ok(diagnostic.some(x => x.includes('stage=' + stage) && x.includes('enabled=false')))
-      assert.ok(diagnostic.every(x => !x.includes('private.invalid') && !x.includes('private-group-name') && !x.includes('secret-')))
-      assert.ok(diagnostic.every(x => x.includes('build=1.72') && /instance=[a-z0-9]+/.test(x)))
-      assert.equal(new Set(diagnostic.map(x => x.match(/instance=([^ ]+)/)[1])).size, 1)
+      assert.ok(logs.every(x => !x.startsWith('[preferences')))
     } finally { context.console = originalConsole; unmount(); pref.savePreferences({ customIcons: true, testURL: 'https://www.gstatic.com/generate_204' }) }
   })
   await test('图标显示状态改变导航标签身份，不丢失卡片展开与测速数据', async () => {

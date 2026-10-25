@@ -13,12 +13,12 @@ function drain(){const callbacks=[...timers.values()];timers.clear();callbacks.f
 function native(tree){assert.equal(tree.type,'TimelineCanvas');assert.equal(tree.props.schedule.minimumInterval,1/30);assert.equal(tree.props.opaque,false);assert.equal(nodes(tree,'WebView').length,0);assert.equal(nodes(tree,'ZStack').length,0);assert.ok(!('opacity' in tree.props));return tree}
 ;(async()=>{
  await test('20 native hosts: stable models/frames, one completion queue, final drawn geometry before pause, no per-frame React renders',async()=>{
-  const os=Array.from({length:20},(_,i)=>instance({samples:[10,20,30],tone:'#3485eb',percent:true,running:true,plotHeight:i<3?96:76,role:i<3?'home':'detail',sheetTrace:i<3?undefined:7}))
+  const os=Array.from({length:20},(_,i)=>instance({samples:[10,20,30],tone:'#3485eb',percent:true,running:true,plotHeight:i<3?96:76}))
   const first=os.map(o=>native(o.render())),models=os.map(o=>o.host().model);assert.equal(new Set(models).size,20)
   first.forEach(t=>draw(t));assert.equal(timers.size,1,'20 completions use ONE process timer');drain()
   os.forEach((o,i)=>{assert.equal(o.render().props.paused,true);assert.equal(o.host().model,models[i])})
   now+=1000;os.forEach(o=>{o.props.samples=[10,20,50]});let trees=os.map(o=>native(o.render()));assert.ok(trees.every(t=>t.props.paused===false));assert.ok(os.every(o=>o.host().model.animating))
-  const before=writes;now+=500;trees.forEach(t=>draw(t));const mid=os[0].host().model.shown.at(-1).y;trees[0].props.onAppear();assert.equal(os[0].host().model.shown.at(-1).y,mid,'duplicate appear does not snap interpolation');emitScene('active');assert.equal(os[0].host().model.shown.at(-1).y,mid,'duplicate active does not snap');assert.equal(writes,before);assert.equal(timers.size,0);assert.ok(os.every(o=>o.host().model.shown.at(-1).y===40))
+  const before=writes;now+=500;trees.forEach(t=>draw(t));const mid=os[0].host().model.shown.at(-1).y;assert.equal(os[0].host().model.shown.at(-1).y,mid,'duplicate calls do not snap interpolation');emitScene('active');assert.equal(os[0].host().model.shown.at(-1).y,mid,'duplicate active does not snap');assert.equal(writes,before);assert.equal(timers.size,0);assert.ok(os.every(o=>o.host().model.shown.at(-1).y===40))
   now+=500;trees.forEach(t=>draw(t));assert.equal(timers.size,1);assert.ok(os.every(o=>o.host().model.shown.at(-1).y===50),'target actually drawn before park');assert.ok(os.every(o=>o.render().props.paused===false))
   // A new sample invalidates that host's pending completion, without canceling siblings.
   os[0].props.samples=[10,20,70];os[0].render();drain();assert.equal(os[0].render().props.paused,false);assert.ok(os.slice(1).every(o=>o.render().props.paused===true))
@@ -37,9 +37,9 @@ function native(tree){assert.equal(tree.type,'TimelineCanvas');assert.equal(tree
   emitScene('inactive');emitScene('background');assert.equal(o.render().props.paused,true);assert.equal(timers.size,0)
   o.props.samples=[60,90];o.render();assert.equal(o.render().props.paused,true);assert.equal(model.animating,false)
   emitScene('active');t=o.render();assert.equal(t.props.paused,false);assert.equal(model.shown.at(-1).y,90);assert.equal(model.animating,false);draw(t);drain();assert.equal(o.render().props.paused,true)
-  // Native callbacks are diagnostic only; page/sheet/tab invisibility arrives as running=false.
+  // Page/sheet/tab invisibility arrives as running=false; TimelineCanvas has no appear/disappear gate.
   o.props.running=false;o.props.samples=[70,100];t=o.render();plot.requestPlotKick('selected');draw(t);drain();assert.equal(o.render().props.paused,true,'running=false draws its static final state then parks')
-  t.props.onDisappear();t.props.onAppear();o.props.running=true;t=o.render();assert.equal(model.shown.at(-1).y,100);draw(t);drain();assert.equal(o.render().props.paused,true)
+  o.props.running=true;t=o.render();assert.equal(model.shown.at(-1).y,100);draw(t);drain();assert.equal(o.render().props.paused,true)
   o.props.running=false;o.render();draw(o.render());drain();plot.requestPlotKick('appear');t=o.render();assert.equal(model.animating,false);draw(t);drain()
   assert.equal(o.host().model,model);o.close();assert.equal(timers.size,0);assert.equal(sceneListeners.size,0);plot.requestPlotKick('selected');assert.equal(timers.size,0)
  })
@@ -50,10 +50,10 @@ function native(tree){assert.equal(tree.type,'TimelineCanvas');assert.equal(tree
    now+=1000;o.props.samples=history.map(x=>x+1);t=o.render();now+=400;draw(t);now+=600;draw(t);drain()
    if(order){
     emitScene('inactive');emitScene('background');if(order!=='retained-running'){o.props.running=false;o.render()}now+=120000
-    if(order==='appear-first')t.props.onDisappear(),t.props.onAppear() // diagnostics only
+
     if(order==='props-first'){o.props.running=true;o.render()}
     emitScene('inactive');emitScene('active')
-    if(order==='active-first')t.props.onDisappear(),t.props.onAppear()
+
     o.props.running=true;t=o.render();assert.equal(o.host().model.animating,false,'retained snapshot is not a sample/shift');draw(t);drain()
    }
    const result=[],base=order?now:now-1000
@@ -80,7 +80,7 @@ function native(tree){assert.equal(tree.type,'TimelineCanvas');assert.equal(tree
   trees.slice(0,3).forEach(t=>draw(t));drain()
   now+=1000;os[0].props.samples=Array.from({length:60},(_,j)=>j+20);let t=os[0].render();now+=400;draw(t)
   const m=os[0].host().model,before=JSON.stringify({shown:m.shown,from:m.from,to:m.to,start:m.start,duration:m.duration}),n=writes
-  plot.requestPlotKick('appear');plot.requestPlotKick('selected');t.props.onAppear();emitScene('active')
+  plot.requestPlotKick('appear');plot.requestPlotKick('selected');emitScene('active')
   assert.equal(JSON.stringify({shown:m.shown,from:m.from,to:m.to,start:m.start,duration:m.duration}),before,'duplicate lifecycle cannot snap or restart current animation')
   assert.equal(writes,n+2,'only the two idle visible hosts accept a one-shot external redraw; live/hidden hosts do not toggle pause')
   assert.ok(os.slice(3).every(o=>o.render().props.paused))
@@ -98,32 +98,27 @@ function native(tree){assert.equal(tree.type,'TimelineCanvas');assert.equal(tree
   }
   os.forEach(o=>o.close());assert.equal(timers.size,0);assert.equal(sceneListeners.size,0)
  })
- await test('real host forwards continuous native time and model geometry; sample boundary does not clear track, pause and scene do',async()=>{
+ await test('real host draws with or without native time; pause and scene stop the timeline, sample boundary does not',async()=>{
   const o=instance({samples:[10,20],tone:'#3485eb',running:true,percent:true});let t=o.render();draw(t);drain()
-  now+=1000;o.props.samples=[20,30];t=o.render();draw(t);const track=o.host().drawTrack
-  const rawBefore=track.state.counts.raw,missingBefore=track.state.counts.timeMissing;const rawCtx=new Proxy({}, {get:()=>()=>{},set:()=>true});t.props.draw(rawCtx,{width:145,height:76},undefined);assert.equal(track.state.counts.raw,rawBefore+1);assert.equal(track.state.counts.timeMissing,missingBefore+1,'actual TSX draw with missing native time remains counted');draw(t)
-  assert.equal(track.continuous,true);assert.equal(track.native,now/1000);assert.equal(track.js,now)
+  now+=1000;o.props.samples=[20,30];t=o.render();const rawCtx=new Proxy({}, {get:()=>()=>{},set:()=>true});t.props.draw(rawCtx,{width:145,height:76},undefined);draw(t)
   now+=30;draw(t);const before=writes;assert.equal(timers.size,0)
-  now+=30;o.props.samples=[30,40];t=o.render();assert.equal(track.continuous,true,'sample update does not erase a draw gap');draw(t)
-  assert.equal(track.native,now/1000);assert.equal(track.length,o.host().model.shown.length);assert.equal(writes,before,'metrics never set React state')
-  emitScene('inactive');assert.equal(track.continuous,false);now+=60000;emitScene('active');t=o.render();draw(t);assert.equal(track.continuous,false,'restore/static draw not counted as animation');drain()
-  now+=1000;o.props.samples=[40,50];t=o.render();draw(t);assert.equal(track.continuous,true)
-  o.props.running=false;o.render();assert.equal(track.continuous,false);o.close();assert.equal(timers.size,0);assert.equal(sceneListeners.size,0)
-  assert.ok(load('cadence-diagnostics').cadenceSummary().includes('原生连续绘制 v1'))
+  now+=30;o.props.samples=[30,40];t=o.render();assert.equal(t.props.paused,false);draw(t);assert.equal(writes,before,'draws never set React state')
+  emitScene('inactive');assert.equal(o.render().props.paused,true);now+=60000;emitScene('active');t=o.render();assert.equal(t.props.paused,false);draw(t);assert.equal(o.host().model.animating,false,'restore is static, no catch-up');drain()
+  now+=1000;o.props.samples=[40,50];t=o.render();assert.equal(o.host().model.animating,true);draw(t)
+  o.props.running=false;o.render();o.close();assert.equal(timers.size,0);assert.equal(sceneListeners.size,0)
  })
- await test('native appear/appear/disappear is diagnostic only: later real samples still animate while running; running=false parks',async()=>{
-  const o=instance({samples:[10,20,30,40,50,60,70,80],tone:'#2dbf82',running:true,percent:true,role:'detail',sheetTrace:9});let t=o.render();t.props.onAppear();t.props.onAppear();draw(t);drain()
-  t.props.onDisappear();const host=o.host(),model=host.model,counts=host.drawTrack.state.counts
-  now+=1000;o.props.samples=[10,20,30,40,50,60,70,80,90];t=o.render();assert.equal(model.animating,true,'native disappear cannot disable animation');assert.equal(t.props.paused,false);assert.equal(host.ticking,true);assert.equal(counts.animStarts,1)
-  const before=JSON.stringify(model.shown);now+=500;draw(t);assert.notEqual(JSON.stringify(model.shown),before);assert.ok(model.animating);assert.ok(counts.rawAnimating>0);assert.equal(counts.notVisible,undefined);assert.equal(host.drawTrack.state.flags,31)
+ await test('TimelineCanvas has no appear/disappear gate (native disappear once froze detail charts): later real samples still animate while running; running=false parks',async()=>{
+  const o=instance({samples:[10,20,30,40,50,60,70,80],tone:'#2dbf82',running:true,percent:true});let t=o.render();assert.equal(t.props.onAppear,undefined);assert.equal(t.props.onDisappear,undefined);draw(t);drain()
+  const host=o.host(),model=host.model
+  now+=1000;o.props.samples=[10,20,30,40,50,60,70,80,90];t=o.render();assert.equal(model.animating,true,'native disappear cannot disable animation');assert.equal(t.props.paused,false);assert.equal(host.ticking,true)
+  const before=JSON.stringify(model.shown);now+=500;draw(t);assert.notEqual(JSON.stringify(model.shown),before);assert.ok(model.animating)
   now+=500;draw(t);assert.equal(model.shown.at(-1).y,90);drain();assert.equal(o.render().props.paused,true)
   now+=1000;o.props.samples=[10,20,30,40,50,60,70,80,95];t=o.render();assert.equal(t.props.paused,false);now+=300;draw(t)
   o.props.running=false;t=o.render();assert.equal(model.animating,false,'running=false stops interpolation');draw(t);drain();assert.equal(o.render().props.paused,true,'closed sheet/page final static draw then parks');assert.equal(host.ticking,false)
   o.close();assert.equal(timers.size,0)
  })
- await test('unmount before completion cancels queue, stale draw cannot set state; diagnostic is native, not document ready/painted',async()=>{
-  const o=instance({samples:[1,2],tone:'#3485eb',running:true});const t=o.render();t.props.onAppear();draw(t,0,0);assert.equal(timers.size,0,'data is not parked before a measurable final draw');draw(t);assert.equal(timers.size,1);o.close();const n=writes;drain();t.props.onAppear();t.props.onDisappear();draw(t);assert.equal(writes,n);assert.equal(timers.size,0)
-  const summary=load('cadence-diagnostics').plotLifecycleSummary();assert.ok(summary.includes('原生图表生命周期'));assert.ok(summary.includes('native-draw'));assert.ok(summary.includes('当前存活=0'));assert.ok(summary.includes('不代表屏幕像素合成'))
+ await test('unmount before completion cancels queue, stale draw cannot set state; native TimelineCanvas',async()=>{
+  const o=instance({samples:[1,2],tone:'#3485eb',running:true});const t=o.render();draw(t,0,0);assert.equal(timers.size,0,'data is not parked before a measurable final draw');draw(t);assert.equal(timers.size,1);o.close();const n=writes;drain();draw(t);assert.equal(writes,n);assert.equal(timers.size,0)
  })
  console.log(count+' native TimelineCanvas lifecycle groups passed; no native performance/pixel claim')
 })().catch(e=>{console.error(e);process.exitCode=1})

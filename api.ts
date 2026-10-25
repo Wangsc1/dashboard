@@ -1,8 +1,7 @@
-import { TimingToken, timingToken, timing, timingReadContext, timingSpan } from "./cadence-diagnostics"
 import { CpuSampler, CpuUsage, CpuMeta, parseCpuInfo, thermalCelsius } from "./openwrt-metrics"
 
 import { getPreferences, customHeaders, recordEvent, controllerHealth, feedback } from "./preferences"
-export const VERSION = "1.72"
+export const VERSION = "1.73"
 
 export type Kind = "clash" | "openwrt"
 export type Plugin = "openclash" | "nikki" | "mihomo"
@@ -179,19 +178,16 @@ async function ubus(c: Controller, obj: string, method: string, params: any = {}
 }
 
 type UbusCall = [string, string, any?]
-async function ubusBatchRaw(c: Controller, sid: string, calls: UbusCall[], signal?: AbortController["signal"], token?:TimingToken): Promise<any[]> {
+async function ubusBatchRaw(c: Controller, sid: string, calls: UbusCall[], signal?: AbortController["signal"]): Promise<any[]> {
   if (signal?.aborted) throw new Error("来源或采样代次已改变")
-  const requestedAt=Date.now()
   const r = await fetch(c.url + "/ubus", {
     method: "POST", headers: { ...customHeaders(), "Content-Type": "application/json" }, allowInsecureRequest: true, timeout: getPreferences().requestTimeout, signal,
     body: JSON.stringify(calls.map((x, i) => ({ jsonrpc: "2.0", id: i + 1, method: "call", params: [sid, x[0], x[1], x[2] ?? {}] }))),
   } as any)
-  timing(token,"headers",Date.now()-requestedAt)
   if (!r.ok) throw new Error(`请求失败 HTTP ${r.status}`)
   let j: any
   try {
-    const bodyAt=Date.now(),text=await r.text();timing(token,"body",Date.now()-bodyAt)
-    const parseAt=Date.now();j=JSON.parse(text);timing(token,"parse",Date.now()-parseAt)
+    j=JSON.parse(await r.text())
   } catch { throw new Error("返回内容不是 ubus 接口") }
   const arr: any[] = Array.isArray(j) ? j : [j]
   const out: any[] = calls.map(() => null)
@@ -207,12 +203,12 @@ async function ubusBatchRaw(c: Controller, sid: string, calls: UbusCall[], signa
   recordEvent("ubus", true)
   return out
 }
-async function ubusBatch(c: Controller, calls: UbusCall[], signal?: AbortController["signal"], token?:TimingToken): Promise<any[]> {
+async function ubusBatch(c: Controller, calls: UbusCall[], signal?: AbortController["signal"]): Promise<any[]> {
   let sid = sessions[c.id]?.sid
   if (!sid || sessions[c.id].auth !== overviewSource(c) || Date.now() - sessions[c.id].at > 50 * 60 * 1000) sid = await wrtLogin(c)
-  try { return await ubusBatchRaw(c, sid, calls, signal,token) } catch (e: any) {
+  try { return await ubusBatchRaw(c, sid, calls, signal) } catch (e: any) {
     if (String(e?.message) !== "ACCESS") throw e
-    return await ubusBatchRaw(c, await wrtLogin(c), calls, signal,token)
+    return await ubusBatchRaw(c, await wrtLogin(c), calls, signal)
   }
 }
 function pickWan(dump: any): { name: string; device: string } {
@@ -233,7 +229,7 @@ const overviewAbort:Record<string,AbortController|undefined>={}
 // Fixed path only; does not relax Nikki's path validation or grant any new ACL.
 const CPUINFO_MAX_BYTES=2*1024*1024
 const cpuInfoCache:Record<string,{at:number;ids:string;meta:ReturnType<typeof parseCpuInfo>;pending?:Promise<void>;abort?:AbortController}>={}
-async function readCompleteCpuInfo(c:Controller,ids:string[],abort:AbortController,token?:TimingToken):Promise<ReturnType<typeof parseCpuInfo>> {
+async function readCompleteCpuInfo(c:Controller,ids:string[],abort:AbortController):Promise<ReturnType<typeof parseCpuInfo>> {
   let sid=sessions[c.id]?.sid
   if(!sid||sessions[c.id].auth!==overviewSource(c)||Date.now()-sessions[c.id].at>50*60*1000)sid=await wrtLogin(c)
   if(abort.signal.aborted)throw new Error("CPU读取已取消")
@@ -255,7 +251,7 @@ async function readCompleteCpuInfo(c:Controller,ids:string[],abort:AbortControll
     const bytes=new Uint8Array(length);let offset=0;for(const chunk of chunks){bytes.set(chunk,offset);offset+=chunk.byteLength}
     const text=Data.fromUint8Array(bytes)?.toRawString("utf-8")
     if(!text||text.includes("\u0000")||!text.endsWith("\n"))throw new Error("CPU信息不是完整文本")
-    const parseAt=Date.now(),meta=parseCpuInfo(text);timing(token,"cpu-parse",Date.now()-parseAt)
+    const meta=parseCpuInfo(text)
     // Presence, not frequency/cache equality: legitimate missing fields remain unknown.
     if(!ids.length||ids.some(id=>!Object.prototype.hasOwnProperty.call(meta.cores,id)))throw new Error("CPU逻辑核信息不完整")
     return meta
@@ -266,9 +262,9 @@ function cpuInfoSnapshot(c:Controller,ids:string[],epoch:number):ReturnType<type
   let entry=cpuInfoCache[key]
   if(!entry||entry.ids!==identity){entry?.abort?.abort();entry={at:0,ids:identity,meta:{cores:{}}};cpuInfoCache[key]=entry}
   if(!entry.pending&&Date.now()-entry.at>=5000&&ids.length){
-    const current=entry,abort=new AbortController(),token=timingToken(key),readAt=Date.now();current.abort=abort;current.at=Date.now()
-    const pending=readCompleteCpuInfo(c,ids,abort,token).then(meta=>{
-      if(cpuInfoCache[key]===current&&!abort.signal.aborted&&(samplingEpoch[key]??0)===epoch){current.meta=meta;timing(token,"cpu-info",Date.now()-readAt)}
+    const current=entry,abort=new AbortController();current.abort=abort;current.at=Date.now()
+    const pending=readCompleteCpuInfo(c,ids,abort).then(meta=>{
+      if(cpuInfoCache[key]===current&&!abort.signal.aborted&&(samplingEpoch[key]??0)===epoch)current.meta=meta
     }).catch(()=>{if(cpuInfoCache[key]===current&&!abort.signal.aborted){current.meta={cores:{}};current.at=Date.now()+10000}}).finally(()=>{
       if(current.pending===pending){current.pending=undefined;current.abort=undefined}
     });current.pending=pending
@@ -286,16 +282,13 @@ async function wrtOverview(c: Controller, signal?: AbortController["signal"]): P
   const key=overviewSource(c), cached=slowCache[key], stale=!cached||Date.now()-cached.at>60000
   const epoch=samplingEpoch[key]??0, sampler=cpuSamplers[key]??(cpuSamplers[key]=new CpuSampler())
   if(Object.keys(cpuSamplers).length>16){const old=Object.keys(cpuSamplers).find(k=>k!==key);if(old){delete cpuSamplers[old];delete ratePrevious[old];delete slowCache[old];cpuInfoCache[old]?.abort?.abort();delete cpuInfoCache[old]}}
-  const token=timingToken(key)
   const zones=cached?.thermal??[]
-  timingReadContext(token,stale,zones.length)
   const calls:UbusCall[]=[
     ["system","info"],["network.device","status"],["file","read",{path:"/proc/stat"}],["file","read",{path:"/proc/sys/net/netfilter/nf_conntrack_count"}],
     ...zones.flatMap(z=>[["file","read",{path:`/sys/class/thermal/${z}/type`}],["file","read",{path:`/sys/class/thermal/${z}/temp`}]] as UbusCall[]),
     ...(stale?[["system","board"],["network.interface","dump"],["file","list",{path:"/sys/class/thermal"}],["file","read",{path:"/etc/openwrt_release"}],["luci","getMountPoints"]] as UbusCall[]:[]),
   ]
-  const readDone=timingSpan(token,"read")
-  let r:any[];try{r=await ubusBatch(c,calls,signal,token)}finally{readDone()}
+  const r=await ubusBatch(c,calls,signal)
   const info=r[0],devs=r[1]??{},stat=r[2]??{},ct=r[3]??{}
   if(!info)throw new Error("路由器未返回系统信息")
   // 同id改地址/认证后返回的旧响应不得进入任何新来源缓存。

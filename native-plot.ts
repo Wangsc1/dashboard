@@ -1,4 +1,4 @@
-// Pure geometry/drawing port of plot-canvas.ts. Coordinates are native points, not DPR pixels.
+// Pure geometry/drawing for the native chart. Coordinates are native points, not DPR pixels.
 export interface PlotPoint { x:number;y:number }
 export interface NativePlotInput {samples:number[];tone:string;area:boolean;percent:boolean;running:boolean;sampleAt:number;resume?:boolean}
 export interface NativePlotModel {

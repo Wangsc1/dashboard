@@ -1,4 +1,3 @@
-import { beginCadenceDiagnostics, timingToken, timing, connectionLifecycle, createSheetTrace, sheetLifecycle } from "./cadence-diagnostics"
 import { detailReads, useDetailPage, useRouterDetail, peekDetail, prefetchRouterDetails, detailWrite, observeDetailsPhase, selectDetailsSource } from "./router-details"
 import { HOME_BG, HomeDashboard, CpuDetails, LiveCpuDetails, createCpuDetailFeed } from "./home-ui"
 import { newHistory, appendHistory, OverviewHistory } from "./openwrt-metrics"
@@ -201,7 +200,6 @@ function saveOverviewFrame(source: string, o: Overview, baseline: boolean): Over
 function startOverviewSampling(active: Controller, foreground: boolean): () => void {
   const source = overviewSource(active)
   let disposed = false, running = false, busy = false, baseline = true
-  const diagnostics=beginCadenceDiagnostics(source)
   let eligibleAt = -Infinity, timer: ReturnType<typeof setInterval> | undefined
   let generation = 0
   const publish = (frame?: OverviewFrame, error?: string) => {
@@ -211,16 +209,13 @@ function startOverviewSampling(active: Controller, foreground: boolean): () => v
     if (disposed || !running || busy || Date.now() < eligibleAt || overviewSource(active) !== source) return
     busy = true
     const epoch = generation, startedAt=Date.now(), wasBaseline=baseline
-    const token=timingToken(source)
     try {
       const o = await loadOverview(active)
       if (disposed || !running || epoch !== generation || overviewSource(active) !== source) return
-      const publishAt=Date.now()
       const frame = saveOverviewFrame(source, o, baseline)
       baseline = false
       overviewErrors.delete(source)
       publish(frame, "")
-      timing(token,"publish",Date.now()-publishAt)
     } catch (e) {
       if (!disposed && running && epoch === generation && overviewSource(active) === source) {
         const error = msg(e)
@@ -241,14 +236,14 @@ function startOverviewSampling(active: Controller, foreground: boolean): () => v
     }
   }
   const pause = () => {
-    running = false; generation++; baseline = true; diagnostics.pause()
+    running = false; generation++; baseline = true;
     if (timer !== undefined) clearInterval(timer)
     timer = undefined
     resetOverviewSampling(active, source)
   }
   const resume = () => {
     if (disposed || running) return
-    running = true; eligibleAt = -Infinity; diagnostics.resume()
+    running = true; eligibleAt = -Infinity;
     void refresh()
     timer = setInterval(refresh, 1000)
   }
@@ -258,7 +253,7 @@ function startOverviewSampling(active: Controller, foreground: boolean): () => v
   AppEvents.scenePhase.addListener(phaseChanged)
   resetOverviewSampling(active, source)
   if (foreground) resume()
-  return () => { disposed = true; pause(); diagnostics.close(); AppEvents.scenePhase.removeListener(phaseChanged) }
+  return () => { disposed = true; pause(); AppEvents.scenePhase.removeListener(phaseChanged) }
 }
 function OverviewPage({ active, version, onSwitch, onClose, selected = true }: { active: Controller | null; version: number; onSwitch: () => void; onClose?: () => void; selected?: boolean }) {
   const prefs = usePreferences(["connectionBackground"])
@@ -318,9 +313,7 @@ function OverviewPage({ active, version, onSwitch, onClose, selected = true }: {
   const shownHistory=currentFrame?.histories??(sampleSource===source?histories:newHistory())
   // Keep sheet.content stable across sample updates; publish only the live frame.
   const [detailFeed]=useState(()=>createCpuDetailFeed({overview:null,histories:newHistory(),running:false}))
-  const [sheetTrace]=useState(()=>createSheetTrace())
-  useEffect(()=>{sheetLifecycle(cpuOpen?"state-open":"state-closed",sheetTrace)},[cpuOpen,sheetTrace])
-  const detailContent=useMemo(()=><LiveCpuDetails feed={detailFeed} trace={sheetTrace}/>,[detailFeed,sheetTrace])
+  const detailContent=useMemo(()=><LiveCpuDetails feed={detailFeed}/>,[detailFeed])
   useEffect(()=>{detailFeed.setValue({overview:shownOv,histories:shownHistory,running:showCharts&&cpuOpen})},[shownOv,shownHistory,showCharts,cpuOpen,detailFeed])
   // Freeze the obscured home chart subtree while the sheet consumes live samples.
   const [homeFrame]=useState(()=>({source:"",overview:null as Overview|null,histories:newHistory()}))
@@ -837,7 +830,6 @@ function Root() {
     return () => { selection.unsubscribe(changed); AppEvents.scenePhase.removeListener(phaseChanged) }
   }, [selection])
   const tab = selection.value
-  connectionLifecycle(`root-${tab}`)
   const active = getActive(), bump = () => { setVersion(v => v + 1) }
   const homeSource = active ? overviewSource(active) : ""
   useEffect(()=>{selectDetailsSource(active)},[homeSource])

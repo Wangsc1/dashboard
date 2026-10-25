@@ -15,8 +15,7 @@ chart.animateChart=cb=>{starts++;active++;let live=true;const end=()=>{if(live){
 const tick=async(plot,props,ms=50)=>{now+=ms;for(const t of [...intervals.values()])t.fn();return plot.draw(props)}
 const near=(a,b,msg)=>assert.ok(Math.abs(a-b)<0.00001,msg+': '+a+' vs '+b)
 ;(async()=>{
- // The old SVG geometry equivalence test is replaced by the real Canvas/rAF
- // test in plot-canvas-browser.cjs and shared component contract in plot-host.cjs.
+ // Geometry is covered by native-plot.cjs; the shared component contract by plot-host.cjs.
  await test('CPU/RAM等全部MetricNumber也逐采样显示，无补间timer',async()=>{
   const number=instance(home.MetricNumber)
   for(const running of [true,false])for(const [value,unit,digits] of [[0,'%',1],[87.5,'%',1],[599,' MB',0],[15.5,' GB',1],[undefined,'',0]]){
