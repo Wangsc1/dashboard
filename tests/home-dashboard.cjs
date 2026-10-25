@@ -111,14 +111,15 @@ function fixture(url,init){if(url.endsWith('/cgi-bin/cgi-download'))return {stat
  })
  await test('主页/CPU详情与其他页面同款系统白底灰卡，移除渐变和阴影',()=>{
    assert.equal(home.HOME_BG,'systemBackground');const card=home.HomeCard({children:[]}),bg=card.props.modifiers.steps.find(s=>s[0]==='background')[1];assert.equal(bg.props.fill,'secondarySystemBackground');assert.equal(card.props.foregroundStyle,'label');assert.equal(card.props.shadow,undefined)
-   const detail=home.CpuDetails({overview:null,histories:newHistory(),running:false,onDismiss(){}});assert.equal(nodes(detail,'ScrollView')[0].props.background,'systemBackground')
+   const detail=home.CpuDetails({overview:null,histories:newHistory(),running:false,onDismiss(){}});assert.equal(detail.props.children[0].props.background,'systemBackground')
    const source=fs.readFileSync(path.join(root,'home-ui.tsx'),'utf8');assert.ok(!source.includes('gradient('));assert.ok(!source.includes('shadow='));assert.ok(source.includes('#17965b'));assert.ok(source.includes('#3485eb'))
  })
- await test('sheet全部唯一逻辑核可滚动到达，左上X调用原生关闭且保留下拉关闭',()=>{
+ await test('临时非滚动sheet保留全部唯一逻辑核，左上X调用原生关闭且保留下拉关闭',()=>{
    const overview={wrt:{release:'OpenWrt',uptime:100,arch:'x86_64',kernel:'6.6.80',model:'Board',cpus:[{id:'cpu',usage:10},...Array.from({length:17},(_,i)=>({id:'cpu'+i,usage:i}))],cpuMeta:{}}}
-   let closed=0;const savedDismiss=scripting.Navigation.useDismiss;scripting.Navigation.useDismiss=()=>()=>{closed++};const sheet=home.CpuDetails({overview,histories:newHistory(),running:false});scripting.Navigation.useDismiss=savedDismiss;assert.equal(sheet.type,'NavigationStack');deep(sheet.props.presentationDetents,['large']);assert.equal(nodes(sheet,'ScrollView').length,1);const rowNodes=nodes(sheet,home.CoreRow);assert.equal(rowNodes.length,9);const ids=rowNodes.flatMap(r=>r.props.cpus.map(c=>c.id));assert.equal(ids.length,17);assert.equal(new Set(ids).size,17)
+   let closed=0;const savedDismiss=scripting.Navigation.useDismiss;scripting.Navigation.useDismiss=()=>()=>{closed++};const sheet=home.CpuDetails({overview,histories:newHistory(),running:false});scripting.Navigation.useDismiss=savedDismiss;assert.equal(sheet.type,'NavigationStack');deep(sheet.props.presentationDetents,['large']);assert.equal(nodes(sheet,'ScrollView').length,0);assert.equal(sheet.props.children[0].type,'VStack');const rowNodes=nodes(sheet,home.CoreRow);assert.equal(rowNodes.length,9);const ids=rowNodes.flatMap(r=>r.props.cpus.map(c=>c.id));assert.equal(ids.length,17);assert.equal(new Set(ids).size,17)
    for(const label of ['Uptime','Arch','Cpu','Kernel','Board']) {const n=nodes(sheet,'Text').find(n=>text(n)===label);assert.ok(n,label);assert.equal(n.props.foregroundStyle,'label')}
-   const sc=nodes(sheet,'ScrollView')[0];const close=sc.props.toolbar.topBarLeading;assert.equal(close.type,'Button');assert.equal(close.props.systemImage,'xmark');assert.equal(close.props.accessibilityLabel,'关闭CPU详情');close.props.action();assert.equal(closed,1);assert.equal(sc.props.toolbar.topBarTrailing,undefined);assert.equal(sheet.props.presentationDragIndicator,'visible')
+   // TEMP non-scrolling sheet isolation; restore ScrollView lookup after device feedback.
+   const sc=sheet.props.children[0];const close=sc.props.toolbar.topBarLeading;assert.equal(close.type,'Button');assert.equal(close.props.systemImage,'xmark');assert.equal(close.props.accessibilityLabel,'关闭CPU详情');close.props.action();assert.equal(closed,1);assert.equal(sc.props.toolbar.topBarTrailing,undefined);assert.equal(sheet.props.presentationDragIndicator,'visible')
    const core=home.CoreCard({cpu:{id:'cpu2'},history:[],running:false});assert.ok(text(core).includes('-- MHz'));assert.ok(text(core).includes('-- KB'))
  })
  await test('所有数值逐采样直接显示，无数字timer；曲线共用Canvas槽',async()=>{

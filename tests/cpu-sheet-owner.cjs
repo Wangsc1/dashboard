@@ -37,6 +37,63 @@ function instance(fn){const state={hooks:[],cleanups:new Map()};return {async dr
   assert.equal(summary.split('\n').filter(l=>l.includes('sheet='+trace+' content-mount')).length,1)
   unmount();assert.equal(listeners.size,0)
  })
+ await test('完整LiveCpuDetails展开到原生树：首帧/running/连续采样/元信息/关闭再显示不移动或复用WebView',async()=>{
+  const controllers=[],timers=new Map();let nextTimer=0
+  context.setTimeout=fn=>{const id=++nextTimer;timers.set(id,fn);return id};context.clearTimeout=id=>timers.delete(id)
+  context.WebViewController=class{constructor(){this.handlers={};this.loads=0;this.disposed=false;controllers.push(this)}async addScriptMessageHandler(n,f){this.handlers[n]=f}async loadHTML(){this.loads++;return true}async evaluateJavaScript(){return true}dispose(){this.disposed=true}}
+  const instances=new Map(),listeners=new Set(),trace=load('cadence-diagnostics').createSheetTrace()
+  const frame=(n,running=true,count=16)=>{
+   const cpus=Array.from({length:count},(_,i)=>({id:'cpu'+i,usage:n+i}));cpus.unshift({id:'cpu',usage:n})
+   return {overview:{wrt:{cpus,uptime:n,release:'test',cpuModel:'test',cpuMeta:n?{cpu0:{mhz:1000,cacheKB:12}}:undefined}},histories:{cpu:Object.fromEntries(cpus.map(c=>[c.id,[10,n]])),up:[],down:[]},running}
+  }
+  const feed={value:frame(0,false),subscribe(f){listeners.add(f)},unsubscribe(f){listeners.delete(f)}}
+  const publish=f=>{const old=feed.value;feed.value=f;for(const fn of listeners)fn(f,old)}
+  async function tree(){
+   const seen=new WeakSet(),plots=[],skeleton=[]
+   async function walk(n,path){
+    if(!n||typeof n!=='object')return
+    assert.ok(!seen.has(n),'VirtualNode reused across tree: '+path);seen.add(n)
+    const name=typeof n.type==='function'?n.type.name:n.type,where=path+'/'+name+(n.props?.key!==undefined?'#'+n.props.key:'')
+    if(typeof n.type==='function'){
+     let own=instances.get(where);if(!own){own=instance(n.type);instances.set(where,own)}
+     return walk(await own.draw(n.props),where)
+    }
+    skeleton.push([where,n.props.frame??null])
+    if(n.type==='WebView')plots.push({path:where,controller:n.props.controller,opacity:n.props.opacity})
+    // Assert key uniqueness at the actual sibling scope, not globally across distinct parents.
+    const kids=(n.props?.children??[]).filter(x=>x&&typeof x==='object'),keys=kids.map(x=>x.props?.key).filter(x=>x!==undefined)
+    assert.equal(new Set(keys).size,keys.length,'duplicate sibling key '+where)
+    for(let i=0;i<kids.length;i++)await walk(kids[i],where+'/'+i)
+   }
+   await walk({type:home.LiveCpuDetails,props:{feed,trace}},'sheet')
+   return {plots,skeleton}
+  }
+  let baseline=await tree();assert.equal(baseline.plots.length,17);assert.equal(controllers.length,17);assert.equal(listeners.size,1)
+  const signature=x=>JSON.stringify(x.plots.map(p=>[p.path,p.opacity]))
+  for(const c of controllers){assert.equal(c.loads,1);c.handlers.plotReady({generation:1});c.handlers.plotPainted({generation:1,w:145,h:76})}
+  await flush()
+  for(const n of [1,2,3,4,5]){
+   publish(frame(n));const next=await tree();assert.equal(signature(next),signature(baseline));assert.equal(JSON.stringify(next.skeleton),JSON.stringify(baseline.skeleton),'all native paths/frames remain stable')
+   next.plots.forEach((p,i)=>assert.equal(p.controller,baseline.plots[i].controller));assert.equal(controllers.length,17)
+  }
+  publish(frame(6,false));await tree();publish(frame(7,true));assert.equal(signature(await tree()),signature(baseline),'retained second sheet uses same tree')
+  // Empty-data prompt -> populated cores only inserts rows after the existing summary; summary path stays fixed.
+  publish(frame(8,true,0));const empty=await tree();assert.equal(empty.plots.length,1);assert.equal(empty.plots[0].path,baseline.plots[0].path)
+  for(const own of instances.values())own.close();assert.equal(listeners.size,0);assert.ok(controllers.every(c=>c.disposed));assert.equal(intervals.size,0);assert.equal(timers.size,0)
+ })
+ await test('临时隔离版：CPU详情只用普通VStack容器，保留内容/导航/关闭/原生生命周期，等待真机后恢复滚动',async()=>{
+  const trace=load('cadence-diagnostics').createSheetTrace(),histories={cpu:{cpu:[12],cpu0:[23]},up:[],down:[]},w={cpus:[{id:'cpu',usage:12},{id:'cpu0',usage:23}]}
+  const tree=home.CpuDetails({overview:{wrt:w},histories,running:true,trace})
+  assert.equal(tree.type,'NavigationStack');assert.equal(nodes(tree,'ScrollView').length,0)
+  assert.deepEqual(Array.from(tree.props.presentationDetents),['large']);assert.equal(tree.props.presentationDragIndicator,'visible');assert.equal(tree.props.presentationContentInteraction,'scrolls')
+  assert.equal(typeof tree.props.onAppear,'function');assert.equal(typeof tree.props.onDisappear,'function')
+  const container=tree.props.children[0];assert.equal(container.type,'VStack');assert.equal(container.props.navigationTitle,'CPU');assert.equal(container.props.navigationBarTitleDisplayMode,'inline');assert.equal(container.props.background,home.HOME_BG)
+  const close=container.props.toolbar.topBarLeading;assert.equal(close.type,'Button');assert.equal(close.props.systemImage,'xmark');assert.equal(close.props.accessibilityLabel,'关闭CPU详情');assert.equal(typeof close.props.action,'function')
+  const content=container.props.children[0];assert.equal(content.type,'VStack');assert.equal(content.props.spacing,16);assert.equal(JSON.stringify(content.props.padding),JSON.stringify({horizontal:16,top:12,bottom:24}))
+  const summary=nodes(tree,home.DetailCpuSummary)[0],row=nodes(tree,home.CoreRow)[0];assert.equal(summary.props.w,w);assert.equal(summary.props.history,histories.cpu.cpu);assert.equal(summary.props.running,true);assert.equal(summary.props.sheetTrace,trace);assert.equal(summary.props.key,'summary')
+  assert.equal(row.props.histories,histories);assert.equal(row.props.cpus[0],w.cpus[1]);assert.equal(row.props.running,true);assert.equal(row.props.sheetTrace,trace);assert.equal(row.props.key,'core-cpu0')
+  tree.props.onAppear();tree.props.onDisappear();const summaryLog=load('cadence-diagnostics').plotLifecycleSummary();assert.ok(summaryLog.includes('sheet='+trace+' appear'));assert.ok(summaryLog.includes('sheet='+trace+' disappear'))
+ })
  console.log(count+' mounted sheet data-flow groups passed; not a native remount/FPS measurement')
 })().catch(e=>{console.error(e);process.exitCode=1})
 `
