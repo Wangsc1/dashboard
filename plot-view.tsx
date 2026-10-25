@@ -193,8 +193,9 @@ export function MountedCanvasPlot({samples,tone,plotHeight=96,area=false,running
     host.latest=host.pending={timingEpoch:host.token?.epoch,sampleAt:host.sampleAt,seq:++host.seq,samples:samples.filter(Number.isFinite).slice(-60),tone,area,running,percent,background:plotBackground(theme,elevated)}
     host.flush()
   },[samples,tone,area,running,percent,theme,elevated,host])
-  // Both keyed layers remain mounted at fixed positions. WebView never crosses
-  // opacity 0 -> 1 (including reloads). Only its coloured grid cover becomes transparent;
-  // native appearance callbacks remain diagnostics, not creation/reveal gates.
-  return error?<Text font={11} foregroundStyle="secondaryLabel" frame={{height:plotHeight}}>{error}</Text>:<ZStack onAppear={()=>record("host-appear")} onDisappear={()=>record("host-disappear")} frame={{minHeight:plotHeight,maxHeight:plotHeight,minWidth:0,maxWidth:'infinity'}}><WebView key={`plot-web-${host.trace.id}`} onAppear={()=>record("web-appear")} onDisappear={()=>record("web-disappear")} controller={host.controller} disabled opacity={1} frame={{minHeight:plotHeight,maxHeight:plotHeight,minWidth:0,maxWidth:'infinity'}}/><Canvas key={`plot-grid-${host.trace.id}`} opaque={false} opacity={shown?0:1} draw={(ctx,size)=>drawPlotCover(ctx,size,plotBackground(theme,elevated))} frame={{minHeight:plotHeight,maxHeight:plotHeight,minWidth:0,maxWidth:'infinity'}}/></ZStack>
+  // Keep both native layer opacities fixed, including reloads. Canvas gets a fresh
+  // context on redraw (documented API): after painted, record no cover commands.
+  // This isolates sibling opacity/compositing from WebView presentation; it is not
+  // proof of a framework defect. Native appearance callbacks remain diagnostics.
+  return error?<Text font={11} foregroundStyle="secondaryLabel" frame={{height:plotHeight}}>{error}</Text>:<ZStack onAppear={()=>record("host-appear")} onDisappear={()=>record("host-disappear")} frame={{minHeight:plotHeight,maxHeight:plotHeight,minWidth:0,maxWidth:'infinity'}}><WebView key={`plot-web-${host.trace.id}`} onAppear={()=>record("web-appear")} onDisappear={()=>record("web-disappear")} controller={host.controller} disabled opacity={1} frame={{minHeight:plotHeight,maxHeight:plotHeight,minWidth:0,maxWidth:'infinity'}}/><Canvas key={`plot-grid-${host.trace.id}`} opaque={false} opacity={1} draw={(ctx,size)=>{if(!shown)drawPlotCover(ctx,size,plotBackground(theme,elevated))}} frame={{minHeight:plotHeight,maxHeight:plotHeight,minWidth:0,maxWidth:'infinity'}}/></ZStack>
 }

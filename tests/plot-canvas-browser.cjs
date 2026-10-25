@@ -119,6 +119,8 @@ const {chromium,webkit}=require(process.env.PLAYWRIGHT_PATH||'/tmp/neko-editor-b
    assert.equal(multi.length,32);for(const p of multi){assert.equal(p.stats.liveLoops,0);assert.equal(p.history.length,60);assert.equal(p.shown.at(-1).y,80);assert.ok(p.stats.frames>2)}
    assert.deepEqual(errors,[]);assert.deepEqual(requests,[])
    // Stable visible WebView + opaque-colour cover: no white backing or doubled grid.
+   // Retirement models documented SwiftUI Canvas fresh-context redraw with zero commands;
+   // it does NOT model native compositor behavior or prove this fixes an iPhone.
    // Both full screenshots retain their actual source markers (baseline W, cover N).
    // The simulated native cover sits above W, just like the real sibling Canvas.
    // This exercises pixel composition, not Scripting's native layer compositor.
@@ -139,8 +141,10 @@ const {chromium,webkit}=require(process.env.PLAYWRIGHT_PATH||'/tmp/neko-editor-b
     const covered=await coverPage.screenshot()
     await coverPage.evaluate(()=>{document.querySelector('canvas').style.visibility='hidden';document.body.style.background='white';document.documentElement.style.background='white'})
     assert.deepEqual(await coverPage.screenshot(),covered,'white initial backing and web grid give identical covered pixels')
-    await coverPage.evaluate(background=>{document.querySelector('canvas').style.visibility='visible';document.body.style.background=background;document.documentElement.style.background=background;document.querySelector('#native-cover').style.opacity='0'},background)
-    assert.deepEqual(await coverPage.screenshot(),baseline,'transparent cover leaves exactly the single original web grid/curve')
+    await coverPage.evaluate(background=>{document.querySelector('canvas').style.visibility='visible';document.body.style.background=background;document.documentElement.style.background=background;const c=document.querySelector('#native-cover');c.width=c.width},background)
+    assert.equal(await coverPage.evaluate(()=>{const c=document.querySelector('#native-cover'),d=c.getContext('2d').getImageData(0,0,c.width,c.height).data;return getComputedStyle(c).opacity==='1'&&d.every(v=>v===0)}),true,'fresh context with no commands is empty at unchanged layer opacity')
+    await assertWebMarker(coverPage)
+    assert.deepEqual(await coverPage.screenshot(),baseline,'empty cover leaves exactly the original W and single web grid/curve')
     await coverPage.close()
    }
    console.log(JSON.stringify({browser:name,readyHandshake:1,framesIn400ms:mid.stats.frames-base.stats.frames,visiblePixels:pixels,coreDocuments:32,networkRequests:requests.length,errors:errors.length}))
