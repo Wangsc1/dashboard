@@ -877,9 +877,10 @@ export function NikkiFileEditor({c,base,file,done,entryKey="direct",onExit}:{c:C
     {/* Native isolation outside the WebView/overlay: readiness is not proof of visible pixels. */}
     <Text accessibilityLabel="编辑器阶段" font={11} foregroundStyle={loadError?"systemRed":"secondaryLabel"} padding={{horizontal:12}} frame={{maxWidth:"infinity",minHeight:24,maxHeight:24,alignment:"leading"}}>{!appeared?"编辑器：等待页面出现":loadError?"编辑器：加载失败（详情见下方）":ready?"编辑器：本地文档已就绪":original===null?"编辑器：正在读取正文":"编辑器：正文已读取，正在初始化"}</Text>
     <ZStack frame={{maxWidth:"infinity",maxHeight:"infinity",minHeight:0}}>
-      {/* Keep the native host mounted from the first render, including before onAppear.
-          Only visibility changes after the full-body handshake, never its identity. */}
-      <WebView controller={host.controller} opacity={ready&&!loadError?1:0} disabled={!ready||!!loadError} frame={{maxWidth:"infinity",maxHeight:"infinity",minHeight:0}}/>
+      {/* Keep the native host mounted and opaque from the first render.
+          The native overlay and disabled/save guards still protect initialization;
+          avoid an opacity 0 -> 1 compositing handoff after the bridge replies. */}
+      <WebView controller={host.controller} disabled={!ready||!!loadError} frame={{maxWidth:"infinity",maxHeight:"infinity",minHeight:0}}/>
       {!ready||loadError?<VStack spacing={14} padding={16} background="secondarySystemBackground" frame={{maxWidth:"infinity",maxHeight:"infinity",minHeight:0}}>
         {loadError?<><Note error>{loadError}</Note><Button title="重试读取" action={()=>setTick(t=>t+1)}/>{original!==null?<><Note>完整正文（只读恢复显示；行号编辑器未就绪，不能保存）</Note><ScrollView frame={{maxHeight:"infinity"}}><Text font={13} fontDesign="monospaced">{text}</Text></ScrollView></>:null}</>:<><ProgressView progressViewStyle="circular" foregroundStyle="secondaryLabel"/><Note>{original===null?"正在完整读取配置正文…":"正文已完整读取，正在初始化本地行号编辑器…"}</Note></>}
       </VStack>:null}
