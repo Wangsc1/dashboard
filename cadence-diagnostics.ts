@@ -103,6 +103,72 @@ export function plotLifecycleSummary(){
     'CPU sheet生命周期（最多24项；state为JS effect，content-mount为订阅effect；appear/disappear为原生回调）',
     ...sheetEvents.map(e=>`-${Math.max(0,now-e.at)}ms sheet=${e.id} ${e.event} ×${e.n}`)].join('\n')
 }
+// Continuous animated draws only. Date.now is documented/available; no assumption of
+// a performance global. All rings are allocated once, never in the draw hot path.
+function drawMetric(){return {n:0,total:0,max:0,buckets:[0,0,0,0],ring:new Array<number>(128).fill(0),cursor:0}}
+function drawTotals(){return {frames:0,restarts:0,backsteps:0,maxProgressStep:0,maxGeometryStep:0,stationary:0,native:drawMetric(),js:drawMetric(),cost:drawMetric()}}
+const drawRoles={home:drawTotals(),detail:drawTotals()}
+export interface NativeDrawTrack {role:PlotRole;continuous:boolean;native:number;js:number;start:number;progress:number;points:number[];length:number}
+const drawTracks=new Map<number,NativeDrawTrack>()
+const slowDraws=new Array<number>(12*6).fill(0)
+let slowDrawCount=0,slowDrawCursor=0
+export function createNativeDrawTrack(owner:PlotTrace):NativeDrawTrack{
+  const t:NativeDrawTrack={role:owner.role,continuous:false,native:0,js:0,start:0,progress:0,points:new Array<number>(122).fill(0),length:0}
+  drawTracks.set(owner.id,t);if(drawTracks.size>64)drawTracks.delete(drawTracks.keys().next().value!)
+  return t
+}
+export function resetNativeDrawTrack(t:NativeDrawTrack){t.continuous=false}
+export function disposeNativeDrawTrack(owner:PlotTrace,t:NativeDrawTrack){resetNativeDrawTrack(t);drawTracks.delete(owner.id)}
+function addDrawMetric(s:ReturnType<typeof drawMetric>,v:number){
+  s.n++;s.total+=v;s.max=Math.max(s.max,v);s.buckets[v<=40?0:v<=80?1:v<=150?2:3]++
+  s.ring[s.cursor]=v;s.cursor=(s.cursor+1)%128
+}
+export function recordNativeDraw(t:NativeDrawTrack,nativeSeconds:number,entered:number,ended:number,animated:boolean,start:number,progress:number,shown?:ReadonlyArray<{x:number;y:number}>,scale=1){
+  if(!animated||!Number.isFinite(nativeSeconds)||!Number.isFinite(entered)||ended<entered){resetNativeDrawTrack(t);return}
+  const s=drawRoles[t.role],cost=ended-entered
+  s.frames++;addDrawMetric(s.cost,cost)
+  let nd=0,jd=0
+  if(t.continuous){
+    nd=(nativeSeconds-t.native)*1000;jd=entered-t.js
+    // A reset native clock or wall-clock correction starts a fresh segment.
+    if(nd>=0&&jd>=0){
+      addDrawMetric(s.native,nd);addDrawMetric(s.js,jd)
+      if(start!==t.start)s.restarts++
+      else {const step=progress-t.progress;if(step<0)s.backsteps++;s.maxProgressStep=Math.max(s.maxProgressStep,Math.abs(step))}
+    }else{nd=0;jd=0;t.continuous=false}
+  }
+  if(nd>80||jd>80||cost>40){
+    const i=slowDrawCursor*6
+    slowDraws[i]=entered;slowDraws[i+1]=t.role==='home'?0:1;slowDraws[i+2]=nd;slowDraws[i+3]=jd;slowDraws[i+4]=cost;slowDraws[i+5]=progress
+    slowDrawCursor=(slowDrawCursor+1)%12;slowDrawCount=Math.min(12,slowDrawCount+1)
+  }
+  if(shown){
+    let step=0
+    const length=Math.min(61,shown.length),comparable=t.continuous&&length===t.length&&nd>=0&&jd>=0
+    for(let i=0;i<length;i++){
+      const x=shown[i].x,y=shown[i].y/scale,j=i*2
+      if(comparable)step=Math.max(step,Math.abs(x-t.points[j]),Math.abs(y-t.points[j+1]))
+      t.points[j]=x;t.points[j+1]=y
+    }
+    if(comparable){s.maxGeometryStep=Math.max(s.maxGeometryStep,step);if(step===0)s.stationary++}
+    t.length=length
+  }
+  t.continuous=true;t.native=nativeSeconds;t.js=entered;t.start=start;t.progress=progress
+}
+export function nativeDrawSummary(){
+  const lines=['原生连续绘制 v1（本次进程累计；home/detail分开；仅实际动画draw，跨暂停/后台/离屏不计gap）',
+    'native-gap=官方time秒转毫秒；js-gap/cost=Date.now，毫秒精度、非单调时钟；cost仅JS draw函数体，不含未暴露的原生序列化/合成。不是屏幕FPS或像素成功证明。',
+    'n/total按各宿主连续段汇总，非墙钟帧率；p50/p95仅最近128次；bucket=<=40/<=80/<=150/>150ms；restart=连续段内模型start变化，progress-backstep仅同一start。',
+    `跟踪宿主=${drawTracks.size}/64 慢记录=${slowDrawCount}/12`]
+  for(const role of ['home','detail'] as const){
+    const s=drawRoles[role];lines.push(`${role}: animated-draw=${s.frames} restart=${s.restarts} progress-backstep=${s.backsteps} max-progress-step=${s.maxProgressStep.toFixed(3)} max-normalized-geometry-step=${s.maxGeometryStep.toFixed(5)} stationary-geometry-pairs=${s.stationary}`)
+    for(const key of ['native','js','cost'] as const){const m=s[key],values=m.ring.slice(0,Math.min(m.n,128)).sort((a,b)=>a-b),q=(p:number)=>values.length?values[Math.ceil(values.length*p)-1].toFixed(1):'none';lines.push(`${role}.${key}: n=${m.n} total=${m.total.toFixed(1)}ms max=${m.max.toFixed(1)}ms p50=${q(.5)} p95=${q(.95)} buckets=${m.buckets.join('/')}`)}
+  }
+  const now=Date.now()
+  for(let j=0;j<slowDrawCount;j++){const i=((slowDrawCursor-slowDrawCount+j+12)%12)*6;lines.push(`-${Math.max(0,now-slowDraws[i])}ms ${slowDraws[i+1]===0?'home':'detail'} native-gap=${slowDraws[i+2].toFixed(1)} js-gap=${slowDraws[i+3].toFixed(1)} cost=${slowDraws[i+4].toFixed(1)} progress=${slowDraws[i+5].toFixed(3)}`)}
+  lines.push('geometry-step为相邻同点数帧最大坐标差（x归一化、y除scale），不含样本值；progress正常不证明全部曲线几何或屏幕显示连续；采样restart本身不等于错误。无样本值、地址或认证信息。')
+  return lines.join('\n')
+}
 export function cadenceSummary(){
   const lines=['采样/绘图计时摘要 v1（仅本次运行；无地址、认证、配置或响应正文）',`会话=${session} 前台采样=${active?'是':'否'} 异常阈值=1500ms 记录上限=32`,
     '读法：read/headers/body慢且js-gap不高→请求/服务端尾延迟线索；js-gap高→JS调度/宿主暂停线索；仅bridge高→绘图桥接线索；canvas-gap为旧Web参考指标，原生TimelineCanvas不产生rAF/bridge计时。它们是耗时观察，不是单凭摘要确认根因。',
@@ -112,5 +178,5 @@ export function cadenceSummary(){
   lines.push('最近异常（相对查看时间，毫秒）：')
   const now=Date.now();for(const e of recent)lines.push(`-${Math.max(0,now-e.at)}ms 会话${e.session} ${e.stage}=${e.ms}ms${e.slowInfo!==undefined?` slowInfo=${e.slowInfo} zones=${e.zones}`:''}`)
   if(!recent.length)lines.push('未捕获异常；不代表已排除真机绘制停顿。')
-  return lines.join('\n')+'\n'+connectionLifecycleSummary()+'\n'+plotLifecycleSummary()
+  return lines.join('\n')+'\n'+connectionLifecycleSummary()+'\n'+plotLifecycleSummary()+'\n'+nativeDrawSummary()
 }

@@ -97,6 +97,18 @@ function native(tree){assert.equal(tree.type,'TimelineCanvas');assert.equal(tree
   }
   os.forEach(o=>o.close());assert.equal(timers.size,0);assert.equal(sceneListeners.size,0)
  })
+ await test('real host forwards continuous native time and model geometry; sample boundary does not clear track, pause and scene do',async()=>{
+  const o=instance({samples:[10,20],tone:'#3485eb',running:true,percent:true});let t=o.render();draw(t);drain()
+  now+=1000;o.props.samples=[20,30];t=o.render();draw(t);const track=o.host().drawTrack
+  assert.equal(track.continuous,true);assert.equal(track.native,now/1000);assert.equal(track.js,now)
+  now+=30;draw(t);const before=writes;assert.equal(timers.size,0)
+  now+=30;o.props.samples=[30,40];t=o.render();assert.equal(track.continuous,true,'sample update does not erase a draw gap');draw(t)
+  assert.equal(track.native,now/1000);assert.equal(track.length,o.host().model.shown.length);assert.equal(writes,before,'metrics never set React state')
+  emitScene('inactive');assert.equal(track.continuous,false);now+=60000;emitScene('active');t=o.render();draw(t);assert.equal(track.continuous,false,'restore/static draw not counted as animation');drain()
+  now+=1000;o.props.samples=[40,50];t=o.render();draw(t);assert.equal(track.continuous,true)
+  o.props.running=false;o.render();assert.equal(track.continuous,false);o.close();assert.equal(timers.size,0);assert.equal(sceneListeners.size,0)
+  assert.ok(load('cadence-diagnostics').cadenceSummary().includes('原生连续绘制 v1'))
+ })
  await test('unmount before completion cancels queue, stale draw cannot set state; diagnostic is native, not document ready/painted',async()=>{
   const o=instance({samples:[1,2],tone:'#3485eb',running:true});const t=o.render();t.props.onAppear();draw(t,0,0);assert.equal(timers.size,0,'data is not parked before a measurable final draw');draw(t);assert.equal(timers.size,1);o.close();const n=writes;drain();t.props.onAppear();t.props.onDisappear();draw(t);assert.equal(writes,n);assert.equal(timers.size,0)
   const summary=load('cadence-diagnostics').plotLifecycleSummary();assert.ok(summary.includes('原生图表生命周期'));assert.ok(summary.includes('native-draw'));assert.ok(summary.includes('当前存活=0'));assert.ok(summary.includes('不代表屏幕像素合成'))
