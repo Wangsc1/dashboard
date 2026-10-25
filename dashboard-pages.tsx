@@ -732,8 +732,8 @@ export function reconcileNikkiText(previous:string,input:string):string {
 const nikkiFileDrafts=new Map<string,{original:string;text:string}>()
 type NikkiEditorSession={controller:EditorController;original:string;key:string;entry:string;closed:boolean;cancel:()=>void;closedSignal:Promise<void>}
 export function NikkiFileEditor({c,base,file,done,entryKey="direct",onExit}:{c:Controller;base:NikkiManagement;file:NikkiFile;done:(saved?:boolean)=>void;entryKey?:string;onExit?:()=>void}) {
-  const work=useWork(c),[host]=useState({session:null as NikkiEditorSession|null,exitNotified:false,searchEpoch:0}),[appeared,setAppeared]=useState(false),[tick,setTick]=useState(0),[,paint]=useState(0),[loadError,setLoadError]=useState("")
-  const [searching,setSearching]=useState(false),[query,setQuery]=useState(""),[replacement,setReplacement]=useState(""),[matches,setMatches]=useState<EditorTextRange[]>([]),[index,setIndex]=useState(0)
+  const work=useWork(c),[host]=useState({session:null as NikkiEditorSession|null,exitNotified:false,searchEpoch:0,searchContent:null as string|null}),[appeared,setAppeared]=useState(false),[tick,setTick]=useState(0),[,paint]=useState(0),[loadError,setLoadError]=useState("")
+  const [searching,setSearching]=useState(false),[query,setQuery]=useState(""),[replacement,setReplacement]=useState(""),[matches,setMatches]=useState<EditorTextRange[]>([]),[index,setIndex]=useState(0),[searchStatus,setSearchStatus]=useState("输入关键字后点击搜索")
   const draftKey=JSON.stringify(work.owner)+":"+file.key
   const valid=(s:NikkiEditorSession)=>host.session===s&&s.key===draftKey&&s.entry===entryKey&&!s.closed&&!work.changed&&work.current()
   function retain(s:NikkiEditorSession){
@@ -763,7 +763,7 @@ export function NikkiFileEditor({c,base,file,done,entryKey="direct",onExit}:{c:C
         const s:NikkiEditorSession={controller,original:restored?.original??text,key:draftKey,entry:entryKey,closed:false,cancel,closedSignal}
         host.session=s
         // Initial content is supplied before installing the user-change callback.
-        controller.onContentChanged=()=>{if(active()&&!s.closed&&host.session===s){retain(s);host.searchEpoch++;setMatches([]);paint(n=>n+1)}}
+        controller.onContentChanged=()=>{if(active()&&!s.closed&&host.session===s){retain(s);if(s.controller.content!==host.searchContent){host.searchEpoch++;setMatches([]);setSearchStatus("正文已改变，请重新搜索")}paint(n=>n+1)}}
         if(restored)work.setNotice("已恢复此来源的未保存草稿；保存仍会核对远端原文，不会覆盖并发修改")
         paint(n=>n+1)
       }catch(e){if(active())setLoadError(errorText(e))}
@@ -791,17 +791,43 @@ export function NikkiFileEditor({c,base,file,done,entryKey="direct",onExit}:{c:C
       finally{work.guard.leaving=false}
     })
   }
-  async function search(){const s=host.session;if(!s||!valid(s))return;const epoch=++host.searchEpoch,content=s.controller.content;await work.run(async()=>{const result=await s.controller.searchText(query,{caseSensitive:false});if(valid(s)&&host.searchEpoch===epoch&&s.controller.content===content){setMatches(result);setIndex(0);if(result.length)s.controller.setSelection(result[0].start,result[0].end)}})}
-  function go(next:number){const s=host.session;if(!s||!valid(s)||!matches.length)return;const i=(next+matches.length)%matches.length;setIndex(i);s.controller.setSelection(matches[i].start,matches[i].end)}
-  async function replace(){const s=host.session;if(!s||!valid(s)||!matches.length)return;const m=matches[index],content=s.controller.content;await work.run(async()=>{const latest=await s.controller.searchText(query,{caseSensitive:false});if(!valid(s)||s.controller.content!==content)return;const current=latest.find(x=>x.start===m.start&&x.end===m.end);if(!current){setMatches([]);return}s.controller.setSelection(current.start,current.end);s.controller.replaceSelection(replacement);retain(s);setMatches([])})}
+  async function findMatches(s:NikkiEditorSession,preferred=0){
+    const epoch=++host.searchEpoch,content=s.controller.content
+    setSearchStatus("正在搜索…")
+    try{
+      const result=await s.controller.searchText(query,{caseSensitive:false})
+      if(!valid(s)||host.searchEpoch!==epoch)return
+      if(s.controller.content!==content){setMatches([]);setSearchStatus("正文已改变，请重新搜索");return}
+      const i=result.length?Math.min(preferred,result.length-1):0
+      host.searchContent=content;setMatches(result);setIndex(i);setSearchStatus(result.length?"":"无匹配")
+      if(result.length)await s.controller.setSelection(result[i].start,result[i].end)
+    }catch(e){if(valid(s)&&host.searchEpoch===epoch){setMatches([]);setSearchStatus("搜索失败，请重试")}throw e}
+  }
+  async function search(){const s=host.session;if(!s||!valid(s))return;if(!query){setMatches([]);setSearchStatus("请输入查找内容");return}await work.run(()=>findMatches(s))}
+  async function go(next:number){const s=host.session;if(!s||!valid(s)||!matches.length)return;await work.run(async()=>{if(s.controller.content!==host.searchContent){setMatches([]);setSearchStatus("正文已改变，请重新搜索");return}const i=(next+matches.length)%matches.length;await s.controller.setSelection(matches[i].start,matches[i].end);if(valid(s))setIndex(i)})}
+  async function replace(){
+    const s=host.session;if(!s||!valid(s)||!matches.length)return
+    const m=matches[index],content=s.controller.content
+    await work.run(async()=>{
+      const latest=await s.controller.searchText(query,{caseSensitive:false})
+      if(!valid(s)||s.controller.content!==content)return
+      const current=latest.find(x=>x.start===m.start&&x.end===m.end)
+      if(!current){await findMatches(s);return}
+      await s.controller.setSelection(current.start,current.end)
+      if(!valid(s)||s.controller.content!==content)return
+      await s.controller.replaceSelection(replacement)
+      if(!valid(s))return
+      retain(s);await findMatches(s,index)
+    })
+  }
   const session=host.session,enabled=!!session&&valid(session)&&!loadError
   // Keep save available before the debounced dirty callback; unchanged saves are no-ops.
   const toolbar={topBarTrailing:<Button accessibilityLabel="保存" buttonStyle="plain" disabled={!enabled||work.busy} action={save}><Image systemName="checkmark.circle"/></Button>}
   return <VStack alignment="leading" spacing={0} tabBarVisibility="hidden" background="systemBackground" frame={{maxWidth:"infinity",maxHeight:"infinity"}} navigationTitle={file.filename} navigationBarTitleDisplayMode="inline" toolbar={toolbar} onAppear={()=>{host.exitNotified=false;work.onAppear();if(appeared&&(!host.session||host.session.closed))setTick(n=>n+1);setAppeared(true)}} onDisappear={leave}>
     <Status work={work}/>{work.changed?<Note error>来源已改变，请返回后重新进入</Note>:null}
     {loadError?<><Note error>{loadError}</Note><Button title="重试读取" action={()=>setTick(n=>n+1)}/></>:!session?<Note>正在完整读取配置正文…</Note>:null}
-    {enabled?<><HStack spacing={16} padding={{horizontal:12,vertical:6}}><Button title="撤销" disabled={work.busy} action={()=>{if(session&&valid(session))session.controller.undo()}}/><Button title="重做" disabled={work.busy} action={()=>{if(session&&valid(session))session.controller.redo()}}/><Spacer/><Button title="查找 / 替换" disabled={work.busy} action={()=>setSearching(!searching)}/></HStack>
-      {searching?<VStack spacing={4} padding={{horizontal:12}}><HStack><TextField title="查找" value={query} onChanged={v=>{host.searchEpoch++;setQuery(v);setMatches([])}}/><Button title="搜索" action={search}/></HStack><HStack><TextField title="替换为" value={replacement} onChanged={setReplacement}/><Button title="替换" disabled={!matches.length||work.busy} action={replace}/></HStack><HStack><Text>{matches.length?`${index+1} / ${matches.length}`:"无匹配"}</Text><Spacer/><Button title="上一个" action={()=>go(index-1)}/><Button title="下一个" action={()=>go(index+1)}/></HStack></VStack>:null}
+    {enabled?<><HStack spacing={16} padding={{horizontal:12,vertical:6}}><Button accessibilityLabel="撤销" buttonStyle="plain" disabled={work.busy} action={()=>{if(session&&valid(session))session.controller.undo()}}><Image systemName="arrow.uturn.backward"/></Button><Button accessibilityLabel="重做" buttonStyle="plain" disabled={work.busy} action={()=>{if(session&&valid(session))session.controller.redo()}}><Image systemName="arrow.uturn.forward"/></Button><Spacer/><Button title="查找 / 替换" disabled={work.busy} action={()=>setSearching(!searching)}/></HStack>
+      {searching?<VStack spacing={4} padding={{horizontal:12}}><HStack><TextField title="查找" value={query} onChanged={v=>{host.searchEpoch++;setQuery(v);setMatches([]);setSearchStatus("输入关键字后点击搜索")}}/><Button title="搜索" disabled={work.busy} action={search}/></HStack><HStack><TextField title="替换为" value={replacement} onChanged={setReplacement}/><Button title="替换" disabled={!matches.length||work.busy} action={replace}/></HStack><HStack><Text>{matches.length?`${index+1} / ${matches.length}`:searchStatus}</Text><Spacer/><Button title="上一个" disabled={!matches.length||work.busy} action={()=>go(index-1)}/><Button title="下一个" disabled={!matches.length||work.busy} action={()=>go(index+1)}/></HStack></VStack>:null}
       <Editor controller={session!.controller} scriptName={file.filename} showAccessoryView disabled={work.busy} frame={{maxWidth:"infinity",maxHeight:"infinity"}}/></>:null}
   </VStack>
 }
