@@ -894,8 +894,7 @@ async function run() {
   prefetchRules(getActive())
   prefetchConnections(getActive())
   prefetchMoreVersions(getActive())
-  // TEMP root-presentation isolation: restore fullScreen after device comparison.
-  await Navigation.present({ element: <AppearanceRoot /> })
+  await Navigation.present({ element: <AppearanceRoot />, modalPresentationStyle: "fullScreen" })
   Script.exit()
 }
 run()
