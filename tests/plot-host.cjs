@@ -16,6 +16,23 @@ const plot=load('plot-view')
 const props={samples:[10,20],tone:'#3485eb',percent:true,running:true}
 async function mount(){const node=render(plot.MountedCanvasPlot,props,true);await flush();return node}
 ;(async()=>{
+ await test('reveal保留Canvas/WebView两兄弟身份、位置、frame和controller：首次/详情尺寸/重复painted/恢复/重载',async()=>{
+  for(const plotHeight of [66,76,96]){
+   timeouts.clear();const p={...props,plotHeight};let out=render(plot.MountedCanvasPlot,p,true);await flush();const h=hosts.at(-1)
+   const layers=t=>(t.props.children??[]).filter(Boolean)
+   const initial=layers(out);assert.deepEqual(initial.map(n=>n.type),['Canvas','WebView'])
+   const stable=()=>{out=render(plot.MountedCanvasPlot,p);const next=layers(out);assert.deepEqual(next.map(n=>[n.type,n.props.key,n.props.frame]),initial.map(n=>[n.type,n.props.key,n.props.frame]));assert.equal(next[1].props.controller,h);return next}
+   assert.equal(initial[0].props.opacity??1,1);assert.equal(initial[1].props.opacity,0)
+   h.handlers.plotReady({generation:1});h.handlers.plotPainted({generation:1,w:145,h:plotHeight});await flush()
+   let next=stable();assert.deepEqual(next.map(n=>n.props.key),['plot-grid','plot-web']);assert.equal(next[0].props.opacity,0);assert.equal(next[1].props.opacity,1);assert.equal(timeouts.size,0)
+   h.handlers.plotPainted({generation:1,w:145,h:plotHeight});await flush();stable();assert.equal(timeouts.size,0)
+   plot.requestPlotKick('selected');for(const fn of [...timeouts.values()])fn();timeouts.clear();await flush();next=stable();assert.equal(next[1].props.opacity,1,'selected repaint never nudges opacity');h.resolve(true);await flush()
+   emitScene('background');emitScene('active');await flush();stable();h.resolve('missing');await flush();assert.equal(h.loads,2)
+   next=stable();assert.equal(next[0].props.opacity,1);assert.equal(next[1].props.opacity,0)
+   h.handlers.plotReady({generation:2});h.handlers.plotPainted({generation:2,w:145,h:plotHeight});await flush();stable();unmount();assert.equal(timeouts.size,0)
+  }
+ })
+
  await test('主页和每核共用绘制组件，不存在详情专用动画实现',()=>{
   const front=nodes(home.CpuCard({history:[10,20],running:true}),home.GridPlot)[0]
   const detail=home.SampledCpuPlot({samples:[10,20],running:true})
@@ -31,7 +48,7 @@ async function mount(){const node=render(plot.MountedCanvasPlot,props,true);awai
   host.handlers.plotReady();await flush();node=render(plot.MountedCanvasPlot,props)
   assert.equal(nodes(node,'WebView')[0].props.opacity,0,'ready alone must not reveal an unpainted WebView');assert.equal(nodes(node,'Canvas').length,1)
   host.handlers.plotPainted();await flush();node=render(plot.MountedCanvasPlot,props)
-  assert.equal(nodes(node,'WebView')[0].props.opacity,1);assert.equal(nodes(node,'Canvas').length,0)
+  assert.equal(nodes(node,'WebView')[0].props.opacity,1);assert.equal(nodes(node,'Canvas').length,1);assert.equal(nodes(node,'Canvas')[0].props.opacity,0)
   node=render(plot.MountedCanvasPlot,props,true);await flush();host=hosts.at(-1);host.handlers.plotReady();await flush()
   for(const fn of [...timeouts.values()])fn();await flush();node=render(plot.MountedCanvasPlot,props)
   assert.equal(nodes(node,'WebView')[0].props.opacity,0,'timer alone never reveals; the document must confirm a painted canvas')
@@ -49,11 +66,11 @@ async function mount(){const node=render(plot.MountedCanvasPlot,props,true);awai
     assert.equal(nodes(node,'WebView')[0].props.opacity,0,label+': zero-size document stays hidden');assert.equal(nodes(node,'Canvas').length,1,label+': native grid remains')
    }
    host.handlers.plotPainted({generation:1});await flush();node=render(plot.MountedCanvasPlot,props)
-   assert.equal(nodes(node,'WebView')[0].props.opacity,1);assert.equal(nodes(node,'Canvas').length,0);unmount()
+   assert.equal(nodes(node,'WebView')[0].props.opacity,1);assert.equal(nodes(node,'Canvas').length,1);assert.equal(nodes(node,'Canvas')[0].props.opacity,0);unmount()
   }
  })
  await test('已painted显示后不得被隐藏：loadHTML迟到false/reject、普通桥接单次失败、过期update、首载期间inactive→active均不重载不撤下',async()=>{
-  const shownNow=()=>{const o=render(plot.MountedCanvasPlot,props);return nodes(o,'WebView')[0]?.props.opacity===1&&nodes(o,'Canvas').length===0&&!text(o).includes('失败')}
+  const shownNow=()=>{const o=render(plot.MountedCanvasPlot,props);return nodes(o,'WebView')[0]?.props.opacity===1&&nodes(o,'Canvas')[0]?.props.opacity===0&&!text(o).includes('失败')}
   for(const how of ['loadFalse','loadReject','bridgeReject','staleFalse','sceneDuringLoad']){
    timeouts.clear();const holdLoad=how.startsWith('load');let finish
    const orig=context.WebViewController.prototype.loadHTML
@@ -106,18 +123,16 @@ async function mount(){const node=render(plot.MountedCanvasPlot,props,true);awai
    unmount()
   }
  })
- await test('重新合成kick：首次shown后有界两次、选中/出现请求合并、重复事件不叠加计时器、卸载清理、与后台恢复协同',async()=>{
+ await test('稳定宿主：shown无额外kick；选中/出现请求合并，保持原生opacity，与后台恢复协同',async()=>{
   const diag=load('cadence-diagnostics'),fire=()=>{const fns=[...timeouts.values()];timeouts.clear();fns.forEach(f=>f())}
   const sentUpdates=h=>h.sent.filter(c=>c.includes('plotCanvas.update')).length
   timeouts.clear();render(plot.MountedCanvasPlot,props,true);await flush();const host=hosts.at(-1)
   assert.equal(sentUpdates(host),0)
   host.handlers.plotReady({generation:1});host.handlers.plotPainted({generation:1,w:329,h:96});await flush()
-  // first-shown chain: at most two kicks, each re-applies latest samples as resume (history untouched)
-  let kicks=0
-  for(let i=0;i<6;i++){fire();await flush();if(host.resolve){const r=host.resolve;host.resolve=null;r(true);await flush()}}
-  const shownKicks=host.sent.filter(c=>c.includes('"resume":true')).length;assert.equal(shownKicks,2,'bounded: exactly two shown-kicks')
-  assert.ok(host.sent.at(-1).includes('[10,20]'));assert.equal(host.loads,1)
-  let node=render(plot.MountedCanvasPlot,props);await flush();node=render(plot.MountedCanvasPlot,props);await flush();node=render(plot.MountedCanvasPlot,props);assert.equal(nodes(node,'WebView')[0].props.opacity,1,'nudge settles back to fully opaque after its one render')
+  // A painted document no longer receives ineffective delayed shown-kicks or native opacity nudges.
+  assert.equal(timeouts.size,0,'painted leaves no shown-kick timers')
+  assert.equal(sentUpdates(host),0)
+  let node=render(plot.MountedCanvasPlot,props);assert.equal(nodes(node,'WebView')[0].props.opacity,1)
   // selected/appear: duplicates coalesce into a single timer and a single update
   const before=sentUpdates(host),t0=timeouts.size
   plot.requestPlotKick('selected');plot.requestPlotKick('appear');plot.requestPlotKick('selected');assert.equal(timeouts.size,t0+1,'duplicate events do not stack timers')
@@ -125,15 +140,15 @@ async function mount(){const node=render(plot.MountedCanvasPlot,props,true);awai
   // background/resume cooperation: a kick during background is skipped; resume path still owns the repaint
   emitScene('background');plot.requestPlotKick('appear');fire();await flush();assert.equal(sentUpdates(host),before+1,'no bridge while backgrounded')
   now+=7200000;emitScene('active');await flush();assert.equal(sentUpdates(host),before+2);assert.equal(host.loads,1);host.resolve(true);await flush()
-  const t=diag.cadenceSummary();assert.ok(t.includes('kick-shown')&&t.includes('kick-selected')&&t.includes('kick-skipped'));assert.ok(!t.includes('http'))
+  const t=diag.cadenceSummary();assert.ok(t.includes('kick-selected')&&t.includes('kick-skipped'));assert.ok(!t.includes('http'))
   plot.requestPlotKick('selected');unmount();assert.equal(timeouts.size,0,'dispose clears kick timers');plot.requestPlotKick('selected');assert.equal(timeouts.size,0,'unmounted charts unsubscribe')
  })
- await test('reload后旧kick作废，新文档shown后重新获得有界kick',async()=>{
+ await test('reload后仍保持固定宿主，新文档shown无额外定时器',async()=>{
   timeouts.clear();render(plot.MountedCanvasPlot,props,true);await flush();const host=hosts.at(-1)
   host.handlers.plotReady({generation:1});host.handlers.plotPainted({generation:1,w:300,h:96});await flush()
   emitScene('inactive');emitScene('active');await flush();host.resolve('missing');await flush();assert.equal(host.loads,2)
   host.handlers.plotReady({generation:2});host.handlers.plotPainted({generation:2,w:300,h:96});await flush()
-  assert.ok(timeouts.size>=1);unmount();assert.equal(timeouts.size,0)
+  assert.equal(timeouts.size,0);unmount();assert.equal(timeouts.size,0)
  })
  await test('完全不发送原生出现事件：首屏仍创建并加载且只加载一次，首帧携带样本',async()=>{
   const slot=render(plot.InlineCanvasPlot,props,true)
@@ -221,9 +236,9 @@ async function mount(){const node=render(plot.MountedCanvasPlot,props,true);awai
  await test('恢复探针本身悬挂时只重载一次当前图表文档并清理超时owner',async()=>{
   await mount();const host=hosts.at(-1);host.handlers.plotReady();host.handlers.plotPainted();await flush()
   emitScene('background');now+=86400000;emitScene('active');await flush();const staleResolve=host.resolve
-  assert.equal(timeouts.size,2,'shown-kick chain + probe');[...timeouts.values()].at(-1)();await flush();assert.equal(host.loads,2);assert.equal(timeouts.size,2,'reload cancels old kicks; only new load deadline and ready-poll remain')
+  assert.equal(timeouts.size,1,'only resume probe');[...timeouts.values()].at(-1)();await flush();assert.equal(host.loads,2);assert.equal(timeouts.size,2,'reload cancels old kicks; only new load deadline and ready-poll remain')
   staleResolve(false);await flush();assert.equal(host.loads,2)
-  host.handlers.plotReady({generation:2});const timersAfterReady=timeouts.size;host.handlers.plotReady({generation:2});assert.equal(timeouts.size,timersAfterReady,'ready is idempotent');host.handlers.plotPainted({generation:2});await flush();assert.ok(timeouts.size<=2,'only bounded kick timers remain')
+  host.handlers.plotReady({generation:2});const timersAfterReady=timeouts.size;host.handlers.plotReady({generation:2});assert.equal(timeouts.size,timersAfterReady,'ready is idempotent');host.handlers.plotPainted({generation:2});await flush();assert.equal(timeouts.size,0,'painted cancels reveal check; no shown-kick timers')
   unmount();assert.equal(sceneListeners.size,0);assert.equal(timeouts.size,0)
  })
  await test('后台合并样本不发送桥接，恢复保持显式running=false且卸载后无恢复动作',async()=>{
