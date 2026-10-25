@@ -1,7 +1,7 @@
 import { CpuSampler, CpuUsage, CpuMeta, parseCpuInfo, thermalCelsius } from "./openwrt-metrics"
 
 import { getPreferences, customHeaders, recordEvent, controllerHealth, feedback } from "./preferences"
-export const VERSION = "1.90"
+export const VERSION = "1.91"
 
 export type Kind = "clash" | "openwrt"
 export type Plugin = "openclash" | "nikki" | "mihomo"
@@ -1304,7 +1304,14 @@ export function upgradablePkgs(installed: Pkg[], available: Pkg[]): Pkg[] {
   return installed.filter(p => { const v = av.get(p.name); return !!v && v !== p.version }).map(p => ({ ...p, upgradeTo: av.get(p.name) }))
 }
 export function filterPkgs(list: Pkg[], q: string, limit = 100, offset = 0): { items: Pkg[]; total: number } {
-  const k = q.trim().toLowerCase(), items: Pkg[] = []
+  const k = q.trim().toLowerCase()
+  if (!k) return { items: list.slice(offset, offset + limit), total: list.length }
+  // Keep Array.slice coercion/negative-index semantics outside ordinary paging.
+  if (!Number.isInteger(limit) || !Number.isInteger(offset) || limit < 0 || offset < 0) {
+    const hit = list.filter(p => p.name.toLowerCase().includes(k) || p.desc.toLowerCase().includes(k))
+    return { items: hit.slice(offset, offset + limit), total: hit.length }
+  }
+  const items: Pkg[] = []
   let total = 0
   for (const p of list) {
     if (k && !p.name.toLowerCase().includes(k) && !p.desc.toLowerCase().includes(k)) continue

@@ -647,6 +647,12 @@ function SoftwarePage({ active }: { active: Controller }) {
   const installed=installedData??[]
   const disk=diskData?`${Math.round(diskData.used/diskData.size*100)}% 已用（${mib(diskData.used)} / ${mib(diskData.size)}，剩余 ${mib(diskData.avail)}）`:""
   const updates = available ? upgradablePkgs(installed, available) : []
+  const installedNames = new Set<string>(), updatesByName = new Map<string, Pkg>()
+  if (tab === "available") {
+    for (const p of installed) installedNames.add(p.name)
+    // Array.find used the first duplicate, not the last Map entry.
+    for (const p of updates) if (!updatesByName.has(p.name)) updatesByName.set(p.name, p)
+  }
   const source = tab === "installed" ? installed : tab === "updates" ? updates : (available ?? [])
   const shown = filterPkgs(source, q, limit)
   const run = (title: string, effect: string, fn: () => Promise<{ code: number; out: string }>) => guarded(setBusy, async () => {
@@ -677,7 +683,7 @@ function SoftwarePage({ active }: { active: Controller }) {
       <Picker title="" pickerStyle="segmented" value={tab} onChanged={(v: any) => { setTab(v); setLimit(100) }}><Text tag="available">可用</Text><Text tag="installed">已安装</Text><Text tag="updates">更新</Text></Picker>
     </Section>
     <Section listRowBackground={panelRowBackground()} footer={<Text>{tab !== "installed" && !available ? "正在读取软件源（首次约十几秒）…" : shown.total > shown.items.length ? `显示 ${shown.items.length} / ${shown.total}，输入关键字缩小范围` : !installedData ? "正在读取…" : `共 ${shown.total} 项`}</Text>}>
-      {shown.items.map(p => { const q = tab === "available" && installed.some(i => i.name === p.name) ? { ...p, installed: true, upgradeTo: updates.find(u => u.name === p.name)?.upgradeTo } : p; return <PkgRow key={p.name + p.version} p={q} actions={swipeFor(q)} /> })}
+      {shown.items.map(p => { const q = tab === "available" && installedNames.has(p.name) ? { ...p, installed: true, upgradeTo: updatesByName.get(p.name)?.upgradeTo } : p; return <PkgRow key={p.name + p.version} p={q} actions={swipeFor(q)} /> })}
       {shown.total > shown.items.length ? <Button title="显示更多" action={() => setLimit(limit + 100)} /> : null}
     </Section>
     {log ? <Section listRowBackground={panelRowBackground()} header={<Text>操作输出</Text>}><Text font={11} foregroundStyle="secondaryLabel">{log}</Text></Section> : null}
