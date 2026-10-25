@@ -17,6 +17,7 @@ import {
 import { confirmed, sourceKey, SceneVisibility } from "./dashboard-model"
 import { DOCKER_PNG_BASE64 } from "./docker-icon"
 import { useSmoothPlot } from "./chart-ui"
+import { requestPlotKick } from "./plot-view"
 import { CHART_HISTORY } from "./chart"
 import { panelRowBackground, PanelSettingsSections, LogsPage, KernelConfigPage, usePageColorScheme, usePreferences } from "./settings-ui"
 import { getPreferences, controllerHealth, cachedIcon, feedback, recordEvent } from "./preferences"
@@ -281,7 +282,7 @@ function OverviewPage({ active, version, onSwitch, onClose, selected = true }: {
     return () => AppEvents.scenePhase.removeListener(changed)
   }, [])
   const hideHome = () => { if (sceneVisibility.model.disappear(Date.now())) setVisible(false) }
-  const showHome = () => { sceneVisibility.model.appear(); setVisible(true) }
+  const showHome = () => { sceneVisibility.model.appear(); setVisible(true); requestPlotKick("appear") }
   const foreground = useForeground()
   const showCharts = foreground && selected && (visible || cpuOpen)
   useEffect(() => { const frame=overviewPrime.get(source);setHistories(frame?.histories??newHistory());setOv(frame?.overview??null);setSampleSource(source);setCpuOpen(false) }, [source])
@@ -298,7 +299,7 @@ function OverviewPage({ active, version, onSwitch, onClose, selected = true }: {
     receive(source,overviewPrime.get(source),overviewErrors.get(source))
     return()=>{overviewPrimeListeners.delete(receive)}
   },[source,showCharts])
-  useEffect(()=>{if(selected)setVisible(true);else setCpuOpen(false)},[selected])
+  useEffect(()=>{if(selected){setVisible(true);requestPlotKick("selected")}else setCpuOpen(false)},[selected])
   useEffect(() => {
     setHosts([])
     if (!active || !prefs.connectionBackground || !showCharts) return

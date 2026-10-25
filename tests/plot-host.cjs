@@ -98,13 +98,42 @@ async function mount(){const node=render(plot.MountedCanvasPlot,props,true);awai
  })
  await test('3.3兼容：恢复探针返回值不明时由plotAck确认，不重载；无ack才在超时后重载',async()=>{
   for(const acked of [true,false]){
-   timeouts.clear();await mount();const host=hosts.at(-1);host.handlers.plotReady({generation:1});host.handlers.plotPainted({generation:1});await flush()
+   timeouts.clear();await mount();const host=hosts.at(-1);host.handlers.plotReady({generation:1});host.handlers.plotPainted({generation:1});await flush();const baseTimers=timeouts.size
    emitScene('inactive');emitScene('active');await flush();const seq=Number(/"seq":(\d+)/.exec(host.sent.at(-1))[1]);host.resolve(undefined);await flush()
    assert.equal(host.loads,1)
-   if(acked){host.handlers.plotAck({generation:1,seq});await flush();assert.equal(timeouts.size,0,'ack clears the probe');assert.equal(host.loads,1)}
+   if(acked){host.handlers.plotAck({generation:1,seq});await flush();assert.equal(timeouts.size,baseTimers,'ack clears the probe');assert.equal(host.loads,1)}
    else{const probe=[...timeouts.values()].at(-1);probe();await flush();assert.equal(host.loads,2,'no ack: bounded reload')}
    unmount()
   }
+ })
+ await test('重新合成kick：首次shown后有界两次、选中/出现请求合并、重复事件不叠加计时器、卸载清理、与后台恢复协同',async()=>{
+  const diag=load('cadence-diagnostics'),fire=()=>{const fns=[...timeouts.values()];timeouts.clear();fns.forEach(f=>f())}
+  const sentUpdates=h=>h.sent.filter(c=>c.includes('plotCanvas.update')).length
+  timeouts.clear();render(plot.MountedCanvasPlot,props,true);await flush();const host=hosts.at(-1)
+  assert.equal(sentUpdates(host),0)
+  host.handlers.plotReady({generation:1});host.handlers.plotPainted({generation:1,w:329,h:96});await flush()
+  // first-shown chain: at most two kicks, each re-applies latest samples as resume (history untouched)
+  let kicks=0
+  for(let i=0;i<6;i++){fire();await flush();if(host.resolve){const r=host.resolve;host.resolve=null;r(true);await flush()}}
+  const shownKicks=host.sent.filter(c=>c.includes('"resume":true')).length;assert.equal(shownKicks,2,'bounded: exactly two shown-kicks')
+  assert.ok(host.sent.at(-1).includes('[10,20]'));assert.equal(host.loads,1)
+  let node=render(plot.MountedCanvasPlot,props);await flush();node=render(plot.MountedCanvasPlot,props);await flush();node=render(plot.MountedCanvasPlot,props);assert.equal(nodes(node,'WebView')[0].props.opacity,1,'nudge settles back to fully opaque after its one render')
+  // selected/appear: duplicates coalesce into a single timer and a single update
+  const before=sentUpdates(host),t0=timeouts.size
+  plot.requestPlotKick('selected');plot.requestPlotKick('appear');plot.requestPlotKick('selected');assert.equal(timeouts.size,t0+1,'duplicate events do not stack timers')
+  fire();await flush();assert.equal(sentUpdates(host),before+1);host.resolve(true);await flush()
+  // background/resume cooperation: a kick during background is skipped; resume path still owns the repaint
+  emitScene('background');plot.requestPlotKick('appear');fire();await flush();assert.equal(sentUpdates(host),before+1,'no bridge while backgrounded')
+  now+=7200000;emitScene('active');await flush();assert.equal(sentUpdates(host),before+2);assert.equal(host.loads,1);host.resolve(true);await flush()
+  const t=diag.cadenceSummary();assert.ok(t.includes('kick-shown')&&t.includes('kick-selected')&&t.includes('kick-skipped'));assert.ok(!t.includes('http'))
+  plot.requestPlotKick('selected');unmount();assert.equal(timeouts.size,0,'dispose clears kick timers');plot.requestPlotKick('selected');assert.equal(timeouts.size,0,'unmounted charts unsubscribe')
+ })
+ await test('reload后旧kick作废，新文档shown后重新获得有界kick',async()=>{
+  timeouts.clear();render(plot.MountedCanvasPlot,props,true);await flush();const host=hosts.at(-1)
+  host.handlers.plotReady({generation:1});host.handlers.plotPainted({generation:1,w:300,h:96});await flush()
+  emitScene('inactive');emitScene('active');await flush();host.resolve('missing');await flush();assert.equal(host.loads,2)
+  host.handlers.plotReady({generation:2});host.handlers.plotPainted({generation:2,w:300,h:96});await flush()
+  assert.ok(timeouts.size>=1);unmount();assert.equal(timeouts.size,0)
  })
  await test('完全不发送原生出现事件：首屏仍创建并加载且只加载一次，首帧携带样本',async()=>{
   const slot=render(plot.InlineCanvasPlot,props,true)
@@ -192,9 +221,9 @@ async function mount(){const node=render(plot.MountedCanvasPlot,props,true);awai
  await test('恢复探针本身悬挂时只重载一次当前图表文档并清理超时owner',async()=>{
   await mount();const host=hosts.at(-1);host.handlers.plotReady();host.handlers.plotPainted();await flush()
   emitScene('background');now+=86400000;emitScene('active');await flush();const staleResolve=host.resolve
-  assert.equal(timeouts.size,1);[...timeouts.values()][0]();await flush();assert.equal(host.loads,2);assert.equal(timeouts.size,2,'only the new document load deadline and its ready-poll remain')
+  assert.equal(timeouts.size,2,'shown-kick chain + probe');[...timeouts.values()].at(-1)();await flush();assert.equal(host.loads,2);assert.equal(timeouts.size,2,'reload cancels old kicks; only new load deadline and ready-poll remain')
   staleResolve(false);await flush();assert.equal(host.loads,2)
-  host.handlers.plotReady({generation:2});const timersAfterReady=timeouts.size;host.handlers.plotReady({generation:2});assert.equal(timeouts.size,timersAfterReady,'ready is idempotent');host.handlers.plotPainted({generation:2});await flush();assert.equal(timeouts.size,0)
+  host.handlers.plotReady({generation:2});const timersAfterReady=timeouts.size;host.handlers.plotReady({generation:2});assert.equal(timeouts.size,timersAfterReady,'ready is idempotent');host.handlers.plotPainted({generation:2});await flush();assert.ok(timeouts.size<=2,'only bounded kick timers remain')
   unmount();assert.equal(sceneListeners.size,0);assert.equal(timeouts.size,0)
  })
  await test('后台合并样本不发送桥接，恢复保持显式running=false且卸载后无恢复动作',async()=>{

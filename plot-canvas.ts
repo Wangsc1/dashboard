@@ -32,7 +32,7 @@ function paint(){
 function stop(){if(raf)cancelAnimationFrame(raf);raf=0;stats.liveLoops=0}
 function frame(at){raf=0;const gap=lastFrameAt>=0?at-lastFrameAt:0;lastFrameAt=at;if(gap>=1500){try{Promise.resolve(window.webkit?.messageHandlers?.plotLag?.postMessage({ms:gap,epoch:config.timingEpoch})).catch(()=>{})}catch(_){}}const p=Math.max(0,Math.min(1,(at-start)/duration));shown=from.map((a,i)=>({x:mix(a.x,to[i].x,p),y:mix(a.y,to[i].y,p)}));scale=mix(scaleFrom,scaleTo,p);paint();if(p<1&&active&&!document.hidden){raf=requestAnimationFrame(frame);stats.liveLoops=1}else stats.liveLoops=0}
 window.plotCanvas={
- update(message){if(!message||message.seq<=seq)return false;seq=message.seq;stats.updates++;config=message;document.body.style.background=message.background||'#f2f2f7';
+ update(message){if(!message||message.seq<=seq)return false;seq=message.seq;if(message.resume&&hasPaintedBridge)paintedQueued=false;stats.updates++;config=message;document.body.style.background=message.background||'#f2f2f7';
  const sampleAt=Number(message.sampleAt)||0,observed=sampleAt>lastSampleAt&&lastSampleAt?sampleAt-lastSampleAt:1000;lastSampleAt=sampleAt;lastFrameAt=-1;
  const values=(message.samples||[]).filter(Number.isFinite).slice(-60),target=canonical(values),oldHistory=history,wasActive=active;
  stop();active=!!message.running;scaleTo=message.percent?100:Math.max(1024,...values);

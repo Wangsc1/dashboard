@@ -31,12 +31,19 @@ function messageBody(v:any):any{
   return v&&typeof v==='object'&&'body' in v&&!('generation' in v)?v.body:v
 }
 const truthy=(v:any)=>v===true||v===1||v==='true'||v==='1'||v==='2'||v===2
+// Host-level recomposition requests (home tab selected / page appeared). Charts that are not yet shown ignore them;
+// their own bounded shown-kick covers the first reveal. No parent props, so card memoisation is unaffected.
+const kickListeners=new Set<(reason:'selected'|'appear')=>void>()
+export function requestPlotKick(reason:'selected'|'appear'){for(const fn of [...kickListeners])fn(reason)}
 export function MountedCanvasPlot({samples,tone,plotHeight=96,area=false,running=true,percent=false,elevated=false}:CanvasPlotProps) {
   const [error,setError]=useState('')
   // A WebView is white until its document exists; stay transparent so the card colour shows through until the canvas has drawn.
   const [shown,setShown]=useState(false)
+  // One-render opacity nudge asks the native compositor to re-present an already-painted WebView.
+  const [nudge,setNudge]=useState(false)
+  useEffect(()=>{if(nudge)setNudge(false)},[nudge])
   const theme=useColorScheme()
-  const [host]=useState(()=>({controller:new WebViewController({ephemeral:true}),alive:true,shown:false,ready:false,loadRetries:0,bridgeFailures:0,markReady:(()=>{}) as ()=>void,ackSeq:0,probeSeq:0,resumeUnverified:false,clearProbe:(()=>{}) as ()=>void,busy:false,registered:false,loaded:false,foreground:true,generation:0,bridgeEpoch:0,seq:0,sampleAt:0,lastSamples:null as number[]|null,token:undefined as TimingToken|undefined,latest:null as PlotMessage|null,pending:null as PlotMessage|null,flush:()=>{}}))
+  const [host]=useState(()=>({controller:new WebViewController({ephemeral:true}),alive:true,shown:false,ready:false,loadRetries:0,bridgeFailures:0,markReady:(()=>{}) as ()=>void,setNudge,ackSeq:0,kicksLeft:0,scheduleShownKicks:(()=>{}) as ()=>void,probeSeq:0,resumeUnverified:false,clearProbe:(()=>{}) as ()=>void,busy:false,registered:false,loaded:false,foreground:true,generation:0,bridgeEpoch:0,seq:0,sampleAt:0,lastSamples:null as number[]|null,token:undefined as TimingToken|undefined,latest:null as PlotMessage|null,pending:null as PlotMessage|null,flush:()=>{}}))
   useEffect(()=>{
     host.alive=true;plotLifecycle('mount',host.generation)
     let timeout:ReturnType<typeof setTimeout>|undefined,reveal:ReturnType<typeof setTimeout>|undefined,probe:ReturnType<typeof setTimeout>|undefined,probeReady:ReturnType<typeof setTimeout>|undefined
@@ -101,6 +108,7 @@ export function MountedCanvasPlot({samples,tone,plotHeight=96,area=false,running
       host.bridgeEpoch++;host.busy=false;host.ready=false;host.loaded=false
       if(probe!==undefined)clearTimeout(probe);probe=undefined
       if(timeout!==undefined)clearTimeout(timeout);if(probeReady!==undefined)clearTimeout(probeReady);if(reveal!==undefined)clearTimeout(reveal)
+      host.kicksLeft=0;if(kickTimer!==undefined)clearTimeout(kickTimer);kickTimer=undefined;if(kickChain!==undefined)clearTimeout(kickChain);kickChain=undefined
       host.shown=false;setShown(false);setError('');host.pending=host.latest;start()
     }
     const changed=(phase:'active'|'inactive'|'background')=>{
@@ -117,6 +125,23 @@ export function MountedCanvasPlot({samples,tone,plotHeight=96,area=false,running
       if(host.loaded&&!host.ready)return
       flush()
     }
+    // Bounded recomposition: coalesced into one timer; re-applies the latest samples (resume repaint, no history change)
+    // and nudges the native view. Only for an already-shown, healthy, foreground document.
+    let kickTimer:ReturnType<typeof setTimeout>|undefined
+    const scheduleKick=(event:'kick-selected'|'kick-appear'|'kick-shown',delay:number)=>{
+      if(!host.alive||kickTimer!==undefined){if(host.alive)plotLifecycle('kick-skipped',host.generation);return}
+      kickTimer=setTimeout(()=>{
+        kickTimer=undefined
+        if(!host.alive||!host.foreground||!host.ready||!host.shown||!host.latest){plotLifecycle('kick-skipped',host.generation);return}
+        plotLifecycle(event,host.generation)
+        host.latest={...host.latest,seq:++host.seq,resume:true};host.pending=host.latest
+        host.setNudge(true);flush()
+      },delay)
+    }
+    host.scheduleShownKicks=()=>{host.kicksLeft=2;const step=()=>{if(!host.alive||host.kicksLeft<=0)return;host.kicksLeft--;scheduleKick('kick-shown',host.kicksLeft===1?250:900);if(host.kicksLeft>0)kickChain=setTimeout(step,1000)};if(kickChain!==undefined)clearTimeout(kickChain);kickChain=setTimeout(step,0)}
+    let kickChain:ReturnType<typeof setTimeout>|undefined
+    const onKick=(reason:'selected'|'appear')=>scheduleKick(reason==='selected'?'kick-selected':'kick-appear',0)
+    kickListeners.add(onKick)
     AppEvents.scenePhase.addListener(changed)
     const accepts=(raw:any)=>{const value=messageBody(raw);return host.alive&&(value?.generation===host.generation||(value==null&&host.generation===1))}
     const markReady=()=>{
@@ -132,7 +157,7 @@ export function MountedCanvasPlot({samples,tone,plotHeight=96,area=false,running
         if(!host.alive||host.generation!==generation||host.shown)return
         void host.controller.evaluateJavaScript('return window.plotCanvas?.painted?.() === true').then(ok=>{
           if(!host.alive||host.generation!==generation||host.shown)return
-          plotLifecycle('reveal-check',generation);if(truthy(ok)){plotLifecycle('shown',generation);host.shown=true;setShown(true)}else if(left>0)check(left-1)
+          plotLifecycle('reveal-check',generation);if(truthy(ok)){plotLifecycle('shown',generation);host.shown=true;setShown(true);host.scheduleShownKicks()}else if(left>0)check(left-1)
         },()=>{if(host.alive&&host.generation===generation&&left>0)check(left-1)})
       },700)}
       check(6)
@@ -145,8 +170,9 @@ export function MountedCanvasPlot({samples,tone,plotHeight=96,area=false,running
       if(!accepts(value))return false
       if(reveal!==undefined)clearTimeout(reveal)
       plotLifecycle('painted',host.generation,(()=>{const b=messageBody(value);return typeof b?.w==='number'&&typeof b?.h==='number'?{w:b.w,h:b.h}:undefined})())
-      if(!host.shown)plotLifecycle('shown',host.generation)
-      host.shown=true;setShown(true);return true
+      const first=!host.shown
+      if(first)plotLifecycle('shown',host.generation)
+      host.shown=true;setShown(true);if(first)host.scheduleShownKicks();return true
     })).then(()=>host.controller.addScriptMessageHandler('plotAck',(value:any)=>{
       const b=messageBody(value);if(!host.alive||b?.generation!==host.generation||typeof b?.seq!=='number')return false
       if(b.seq>=host.ackSeq)host.ackSeq=b.seq
@@ -155,7 +181,7 @@ export function MountedCanvasPlot({samples,tone,plotHeight=96,area=false,running
       return true
     }).catch(()=>{})).then(()=>host.controller.addScriptMessageHandler('plotLag',(value:any)=>{if(host.alive&&value?.epoch===host.token?.epoch&&typeof value?.ms==='number')timing(host.token,'canvas-gap',value.ms);return true})).then(()=>{host.registered=true;start()},fail)
     start()
-    return()=>{plotLifecycle('dispose',host.generation);AppEvents.scenePhase.removeListener(changed);host.alive=false;host.bridgeEpoch++;host.ready=false;host.pending=null;if(probe!==undefined)clearTimeout(probe);if(timeout!==undefined)clearTimeout(timeout);if(probeReady!==undefined)clearTimeout(probeReady);if(reveal!==undefined)clearTimeout(reveal);host.controller.dispose()}
+    return()=>{plotLifecycle('dispose',host.generation);kickListeners.delete(onKick);if(kickTimer!==undefined)clearTimeout(kickTimer);if(kickChain!==undefined)clearTimeout(kickChain);host.kicksLeft=0;AppEvents.scenePhase.removeListener(changed);host.alive=false;host.bridgeEpoch++;host.ready=false;host.pending=null;if(probe!==undefined)clearTimeout(probe);if(timeout!==undefined)clearTimeout(timeout);if(probeReady!==undefined)clearTimeout(probeReady);if(reveal!==undefined)clearTimeout(reveal);host.controller.dispose()}
   },[host])
   useEffect(()=>{
     if(host.lastSamples!==samples){host.lastSamples=samples;host.sampleAt=Date.now()}
@@ -163,5 +189,5 @@ export function MountedCanvasPlot({samples,tone,plotHeight=96,area=false,running
     host.latest=host.pending={timingEpoch:host.token?.epoch,sampleAt:host.sampleAt,seq:++host.seq,samples:samples.filter(Number.isFinite).slice(-60),tone,area,running,percent,background:plotBackground(theme,elevated)}
     host.flush()
   },[samples,tone,area,running,percent,theme,elevated,host])
-  return error?<Text font={11} foregroundStyle="secondaryLabel" frame={{height:plotHeight}}>{error}</Text>:<ZStack frame={{minHeight:plotHeight,maxHeight:plotHeight,minWidth:0,maxWidth:'infinity'}}>{shown?null:<Canvas opaque={false} draw={drawPlotGrid} frame={{minHeight:plotHeight,maxHeight:plotHeight,minWidth:0,maxWidth:'infinity'}}/>}<WebView controller={host.controller} disabled opacity={shown?1:0} frame={{minHeight:plotHeight,maxHeight:plotHeight,minWidth:0,maxWidth:'infinity'}}/></ZStack>
+  return error?<Text font={11} foregroundStyle="secondaryLabel" frame={{height:plotHeight}}>{error}</Text>:<ZStack frame={{minHeight:plotHeight,maxHeight:plotHeight,minWidth:0,maxWidth:'infinity'}}>{shown?null:<Canvas opaque={false} draw={drawPlotGrid} frame={{minHeight:plotHeight,maxHeight:plotHeight,minWidth:0,maxWidth:'infinity'}}/>}<WebView controller={host.controller} disabled opacity={shown?(nudge?0.999:1):0} frame={{minHeight:plotHeight,maxHeight:plotHeight,minWidth:0,maxWidth:'infinity'}}/></ZStack>
 }
