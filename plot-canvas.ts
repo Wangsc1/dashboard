@@ -7,7 +7,8 @@ const canvas=document.querySelector('canvas'),ctx=canvas.getContext('2d');
 let config={tone:'#3485eb',area:false,percent:true},history=[],from=[],to=[],shown=[],scale=100,scaleFrom=100,scaleTo=100,start=0,duration=1000,lastSampleAt=0,lastFrameAt=-1,raf=0,seq=-1,active=false;
 const stats={frames:0,updates:0,liveLoops:0};
 const diagnosticEnabled=${diagnostics},startedAt=performance.now();let attempts=0,grids=0,lastError='';
-// Native reveals the WebView only after a real frame has been drawn and composited, so its white backing never flashes.
+// Native removes its coloured grid cover after a real non-zero-size canvas draw.
+// This reports document drawing, not proof of native screen composition.
 let paintedQueued=false,paintedOnce=false;const hasPaintedBridge=!!(window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.plotPainted);
 function ack(n){try{const h=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.plotAck;if(h)Promise.resolve(h.postMessage({generation:${generation},seq:n})).catch(()=>{})}catch(_){}}
 function diagnosticSnapshot(){const r=canvas.getBoundingClientRect();return {ms:Math.round(performance.now()-startedAt),width:Math.round(r.width),height:Math.round(r.height),viewportWidth:innerWidth,viewportHeight:innerHeight,bitmapWidth:canvas.width,bitmapHeight:canvas.height,context:!!ctx,hidden:document.hidden,attempts,grids,frames:stats.frames,updates:stats.updates,samples:history.length,seq,active,error:lastError}}

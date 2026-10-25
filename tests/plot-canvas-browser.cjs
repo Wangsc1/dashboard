@@ -3,6 +3,9 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('n
 const ts=require('/tmp/chk/node_modules/typescript'),vm=require('node:vm')
 const js=ts.transpileModule(fs.readFileSync(path.join(__dirname,'../plot-canvas.ts'),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS}}).outputText
 const mod={exports:{}};vm.runInNewContext(js,{exports:mod.exports});const html=mod.exports.plotCanvasHTML()
+// Rasterize the exact native cover drawing helper in a browser Canvas for pixel equivalence.
+const viewJS=ts.transpileModule(fs.readFileSync(path.join(__dirname,'../plot-view.tsx'),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,jsx:ts.JsxEmit.React}}).outputText
+const viewMod={exports:{}};vm.runInNewContext(viewJS,{exports:viewMod.exports,require:()=>({})})
 const {chromium,webkit}=require(process.env.PLAYWRIGHT_PATH||'/tmp/neko-editor-build/node_modules/playwright')
 ;(async()=>{
  for(const [name,type] of [['chromium',chromium],['webkit',webkit]]){
@@ -113,6 +116,26 @@ const {chromium,webkit}=require(process.env.PLAYWRIGHT_PATH||'/tmp/neko-editor-b
    const multi=await page.evaluate(async()=>{const views=[...document.querySelectorAll('iframe')].map(f=>f.contentWindow.plotCanvas);for(const p of views){p.update({seq:1,samples:Array(60).fill(10),running:true,tone:'#2dbf82',percent:true});p.update({seq:2,samples:[...Array(59).fill(10),80],running:true,tone:'#2dbf82',percent:true})}await new Promise(r=>setTimeout(r,1200));return views.map(p=>p.inspect())})
    assert.equal(multi.length,32);for(const p of multi){assert.equal(p.stats.liveLoops,0);assert.equal(p.history.length,60);assert.equal(p.shown.at(-1).y,80);assert.ok(p.stats.frames>2)}
    assert.deepEqual(errors,[]);assert.deepEqual(requests,[])
+   // Stable visible WebView + opaque-colour cover: no white backing or doubled grid.
+   // This exercises pixel composition, not Scripting's native layer compositor.
+   for(const background of ['#f2f2f7','#1c1c1e','#2c2c2e']){
+    const coverPage=await browser.newPage({viewport:{width:145,height:76},deviceScaleFactor:3});await coverPage.route('**/*',r=>r.abort())
+    const initial={seq:1,samples:[10,20,40,15],tone:'#3485eb',running:false,percent:true,background}
+    await coverPage.setContent(mod.exports.plotCanvasHTML(initial));await coverPage.waitForFunction(()=>window.plotCanvas?.painted())
+    const baseline=await coverPage.screenshot()
+    await coverPage.evaluate(({grid,cover,background})=>{
+     const drawPlotGrid=eval('('+grid+')'),drawPlotCover=eval('('+cover+')')
+     const c=document.createElement('canvas');c.id='native-cover';Object.assign(c.style,{position:'fixed',left:'0',top:'0',width:'100%',height:'100%',pointerEvents:'none'});document.body.appendChild(c)
+     const d=devicePixelRatio;c.width=innerWidth*d;c.height=innerHeight*d;const ctx=c.getContext('2d');ctx.scale(d,d);drawPlotCover(ctx,{width:innerWidth,height:innerHeight},background)
+    },{grid:viewMod.exports.drawPlotGrid.toString(),cover:viewMod.exports.drawPlotCover.toString(),background})
+    assert.equal(await coverPage.evaluate(()=>{const c=document.querySelector('#native-cover'),d=c.getContext('2d').getImageData(0,0,c.width,c.height).data;return d.every((v,i)=>i%4!==3||v===255)}),true,'cover fills every pixel; no underlay grid bleeds through')
+    const covered=await coverPage.screenshot()
+    await coverPage.evaluate(()=>{document.querySelector('canvas').style.visibility='hidden';document.body.style.background='white';document.documentElement.style.background='white'})
+    assert.deepEqual(await coverPage.screenshot(),covered,'white initial backing and web grid give identical covered pixels')
+    await coverPage.evaluate(background=>{document.querySelector('canvas').style.visibility='visible';document.body.style.background=background;document.documentElement.style.background=background;document.querySelector('#native-cover').style.opacity='0'},background)
+    assert.deepEqual(await coverPage.screenshot(),baseline,'transparent cover leaves exactly the single original web grid/curve')
+    await coverPage.close()
+   }
    console.log(JSON.stringify({browser:name,readyHandshake:1,framesIn400ms:mid.stats.frames-base.stats.frames,visiblePixels:pixels,coreDocuments:32,networkRequests:requests.length,errors:errors.length}))
   }finally{await browser.close()}
  }
