@@ -26,7 +26,7 @@ function rawNodes(tree,name){const out=[];function walk(n){if(!n||typeof n!=='ob
     for(const [title,options,value] of [['外观模式',themeOptions,'dark'],['默认打开界面',pageOptions,'rules']]){
      const node=choice(tree,title),native=ui.Choice(node.props);assert.equal(native.type,'Picker');assert.equal(native.props.pickerStyle,'menu');assert.equal(native.props.value,value);same(native.props.children.map(n=>[n.props.tag,text(n)]),options)
     }
-    for(const panel of rawNodes(tree,'MorePanel').slice(0,1)){assert.equal(panel.props.contentInset,16);assert.equal(panel.props.padding,undefined);const native=panel.type(panel.props);assert.equal(native.type,'VStack');assert.equal(native.props.modifiers.steps[0][0],'padding');assert.equal(native.props.modifiers.steps[0][1],16)}
+    for(const panel of rawNodes(tree,'MorePanel').slice(0,1)){assert.equal(panel.props.contentInset,undefined);assert.equal(panel.props.padding,undefined);const native=panel.type(panel.props);assert.equal(native.type,'VStack');assert.equal(native.props.modifiers,undefined);same(row.props.modifiers.steps,[['frame',{height:49,alignment:'center'}],['padding',{horizontal:16}],['frame',{maxWidth:'infinity'}]])}
     assert.equal(tree.props.toolbar.topBarTrailing,undefined);assert.equal(tree.props.navigationTitle,active?.name??'更多');if(active){assert.ok(text(tree).includes('运行信息'));assert.ok(nodes(tree,'NavigationLink').length>=5)}
     page.close()
    }

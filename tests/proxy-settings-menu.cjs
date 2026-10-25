@@ -15,7 +15,7 @@ const same=(a,b)=>assert.equal(JSON.stringify(a),JSON.stringify(b))
    same(nodes(tree,'Section').map(n=>text(n.props.header)),['缓存管理'])
    assert.ok(!nodes(tree,'Toggle').some(n=>['showHidden','customIcons','disconnectOnSwitch'].includes(n.props.key)))
    for(const title of ['显示隐藏代理组','自定义代理组图标','自动断开旧连接'])assert.ok(!text(tree).includes(title))
-   assert.ok(!nodes(tree,'Toggle').some(n=>n.props.key==='nestedDelay'));assert.ok(button(tree,'清除图片缓存'))
+   assert.ok(!nodes(tree,'Toggle').some(n=>n.props.key==='nestedDelay'));assert.ok(button(tree,'清除缓存'))
    same(pref.getPreferences(),prior);same(store.get(key),stored);assert.equal(writes,0)
    assert.equal(pref.DEFAULTS.customIcons,true);assert.equal(pref.DEFAULTS.showHidden,false);assert.equal(pref.DEFAULTS.disconnectOnSwitch,false)
   }finally{context.Storage.set=original;unmount()}
