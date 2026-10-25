@@ -874,7 +874,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) { const lazy = ['proxies','rules'].includes(ids[i]) && ids[i] !== id; assert.equal(nodes(tree, types[i]).length, lazy ? 0 : 1); if (!lazy) assert.equal(nodes(tree, types[i])[0].props.selected, ids[i] === id) }
     }
-    assert.equal(api.VERSION, '1.91'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.92'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('独立导航栈保留业务owner和身份，只有选中页提供可见工具栏', () => {
     pref.savePreferences({ defaultPage: 'overview' })
@@ -1764,12 +1764,14 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     assert.equal(delayRow.props.padding, undefined); assert.equal(delayRow.props.children[0].props.padding, undefined)
     let release; responder = () => ({ wait: new Promise(r => { release = r }), status: 204 })
     const pending = cards(tree)[1].props.action(); tree = render(pages.GroupSection, { c, g, onChanged() {} })
-    assert.ok(text(cards(tree)[1]).includes('B')); assert.equal(nodes(cards(tree)[1], 'Image').length, 1)
+    assert.ok(text(cards(tree)[1]).includes('B')); assert.equal(nodes(cards(tree)[1], 'Image').length, 0)
+    assert.equal(nodes(cards(tree)[1], 'VStack')[0].props.background.props.fill, 'systemBlue')
     assert.equal(nodes(cards(tree)[0], 'Image').length, 0)
     await flush(); release(); await pending; await flush(); unmount()
     tree = await open(); responder = () => ({ status: 500 }); context.confirmResult = true
     await cards(tree)[1].props.action(); await flush(); tree = render(pages.GroupSection, { c, g, onChanged() {} })
-    assert.equal(nodes(cards(tree)[0], 'Image').length, 1); assert.equal(nodes(cards(tree)[1], 'Image').length, 0)
+    assert.equal(nodes(cards(tree)[0], 'Image').length, 0); assert.equal(nodes(cards(tree)[1], 'Image').length, 0)
+    assert.equal(nodes(cards(tree)[0], 'VStack')[0].props.background.props.fill, 'systemBlue')
     responder = () => ({ status: 204 }); unmount()
   })
   await test('策略组：点标题和点箭头都能展开/收拢；节点卡片显示协议；重新进入保留最近一次测速延迟', async () => {
