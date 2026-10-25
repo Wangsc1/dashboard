@@ -743,6 +743,17 @@ export function nikkiEditorExtension(filename:string){
   const extensions:Record<string,"tsx"|"ts"|"js"|"jsx"|"txt"|"md"|"css"|"html"|"json"|"yaml">={tsx:"tsx",ts:"ts",js:"js",jsx:"jsx",txt:"txt",md:"md",css:"css",html:"html",json:"json",yaml:"yaml",yml:"yaml"}
   return extensions[filename.split(".").pop()?.toLowerCase()??""]??"txt"
 }
+// At most the matching start line and its neighbours, never every result.
+export function nikkiMatchPreview(content:string,match:EditorTextRange){
+  const lines=content.split("\n"),start=Math.max(0,match.line-2),end=Math.min(lines.length,match.line+1)
+  let offset=0;const rows:{line:number;before:string;hit:string;after:string}[]=[]
+  for(let i=0;i<end;i++){
+    const line=lines[i],visible=line.endsWith("\r")?line.slice(0,-1):line
+    if(i>=start){const from=Math.max(0,Math.min(visible.length,match.start-offset)),to=Math.max(from,Math.min(visible.length,match.end-offset));rows.push({line:i+1,before:visible.slice(0,from),hit:visible.slice(from,to),after:visible.slice(to)})}
+    offset+=line.length+1
+  }
+  return rows
+}
 const nikkiFileDrafts=new Map<string,{original:string;text:string}>()
 type NikkiEditResult="confirmed"|"conflict"|"timeout"|"closed"
 type NikkiPendingEdit={check:()=>void;finish:(result:NikkiEditResult)=>void}
@@ -827,17 +838,22 @@ export function NikkiFileEditor({c,base,file,done,entryKey="direct",onExit}:{c:C
     host.searchContent=content;setMatches(result);setIndex(i);setSearchStatus(!query?"请输入查找内容":result.length?"":"无匹配")
     return {result,i,content}
   }
-  async function search(){await localAction(async s=>{const {result,i}=collect(s);if(result.length)await locate(s,result[i])})}
-  async function go(next:number){await localAction(async s=>{
-    if(!matches.length)return
-    // Only match navigation closes the keyboard; editing/search/replace do not.
-    let keyboardError=""
-    try{
-      keyboardError=hideKeyboard()
-      if(s.controller.content!==host.searchContent){collect(s);setLocalError("正文已改变，请重新定位");return}
-      const i=(next+matches.length)%matches.length;setIndex(i);await locate(s,matches[i])
-    }finally{if(valid(s)){keyboardError=hideKeyboard()||keyboardError;if(keyboardError)setLocalNotice("键盘未能自动收起："+keyboardError)}}
+  function currentMatch(s:NikkiEditorSession){
+    if(s.controller.content!==host.searchContent){
+      host.searchEpoch++;setMatches([]);setLocalNotice("");setSearchStatus("正文已改变，请重新搜索");return null
+    }
+    return matches[index]??null
+  }
+  async function search(){await localAction(async s=>{
+    collect(s)
+    // Close only the search field keyboard; browsing never touches Editor focus.
+    const error=hideKeyboard();if(error)setLocalNotice("键盘未能自动收起："+error)
   })}
+  async function go(next:number){await localAction(async s=>{
+    if(!currentMatch(s)||!matches.length)return
+    setIndex((next+matches.length)%matches.length)
+  })}
+  async function editMatch(){await localAction(async s=>{const m=currentMatch(s);if(m)await locate(s,m)})}
   // Command dispatch is not a document acknowledgement. Observe the complete
   // getter through onContentChanged, with a timeout bound (not a sleep/retry).
   async function applyEdit(s:NikkiEditorSession,before:string,expected:string,payload:string,label:string,preferred=0){
@@ -880,8 +896,7 @@ export function NikkiFileEditor({c,base,file,done,entryKey="direct",onExit}:{c:C
     if(!await locate(s,m)||!valid(s)||host.searchEpoch!==epoch||s.controller.content!==content)return
     if(typeof s.controller.replaceSelection!=="function"){setLocalError("此版本不支持替换；正文未改动");return}
     const expected=content.slice(0,m.start)+replacement+content.slice(m.end)
-    const outcome=await applyEdit(s,content,expected,replacement,"已替换 1 处（未保存）",index)
-    if(outcome==="confirmed"&&valid(s)&&host.searchEpoch===epoch){const {result,i}=collect(s,index);if(result.length)await locate(s,result[i])}
+    await applyEdit(s,content,expected,replacement,"已替换 1 处（未保存）",index)
   })}
   async function replaceAll(){await localAction(async s=>{
     if(!query||!matches.length)return
@@ -900,6 +915,8 @@ export function NikkiFileEditor({c,base,file,done,entryKey="direct",onExit}:{c:C
     await applyEdit(s,content,updated,updated,`已替换 ${ranges.length} 处（未保存）`)
   })}
   const session=host.session,editPending=!!session?.edit,enabled=!!session&&valid(session)&&!loadError
+  const stalePreview=enabled&&matches.length>0&&session!.controller.content!==host.searchContent
+  const preview=enabled&&!stalePreview&&query&&matches[index]&&host.searchContent!==null?nikkiMatchPreview(host.searchContent,matches[index]):[]
   // Keep save available before the debounced dirty callback; unchanged saves are no-ops.
   const toolbar={topBarTrailing:<Button accessibilityLabel="保存" buttonStyle="plain" disabled={!enabled||work.busy||localBusy||editPending} action={save}><Image systemName="checkmark.circle"/></Button>}
   return <VStack alignment="leading" spacing={0} tabBarVisibility="hidden" background="systemBackground" frame={{maxWidth:"infinity",maxHeight:"infinity"}} navigationTitle={file.filename} navigationBarTitleDisplayMode="inline" toolbar={toolbar} onAppear={()=>{host.exitNotified=false;work.onAppear();if(appeared&&(!host.session||host.session.closed))setTick(n=>n+1);setAppeared(true)}} onDisappear={leave}>
@@ -911,9 +928,15 @@ export function NikkiFileEditor({c,base,file,done,entryKey="direct",onExit}:{c:C
     {loadError?<><Note error>{loadError}</Note><Button title="重试读取" action={()=>setTick(n=>n+1)}/></>:!session?<Note>正在完整读取配置正文…</Note>:null}
     {enabled?<><HStack spacing={12} padding={{horizontal:12,vertical:2}}><Button accessibilityLabel="撤销" buttonStyle="plain" disabled={work.busy||localBusy||editPending} action={()=>{if(session&&valid(session))session.controller.undo()}}><Image systemName="arrow.uturn.backward" frame={{minWidth:44,minHeight:44}}/></Button><Button accessibilityLabel="重做" buttonStyle="plain" disabled={work.busy||localBusy||editPending} action={()=>{if(session&&valid(session))session.controller.redo()}}><Image systemName="arrow.uturn.forward" frame={{minWidth:44,minHeight:44}}/></Button><Spacer/><Button accessibilityLabel="查找 / 替换" buttonStyle="plain" disabled={work.busy} action={()=>setSearching(!searching)}><Image systemName="magnifyingglass" frame={{minWidth:44,minHeight:44}}/></Button></HStack>
       {searching?<VStack spacing={2} padding={{horizontal:12}}>
-        <HStack spacing={4}><TextField title="查找" prompt="查找" labelsHidden textFieldStyle="roundedBorder" value={query} onChanged={v=>{host.searchEpoch++;setQuery(v);setMatches([]);setLocalError("");setLocalNotice("");setSearchStatus("输入关键字后点击搜索")}}/><Button accessibilityLabel="搜索" buttonStyle="plain" disabled={work.busy||localBusy||editPending} action={search}><Image systemName="magnifyingglass" frame={{minWidth:44,minHeight:44}}/></Button><Button accessibilityLabel="展开替换" buttonStyle="plain" action={()=>setReplacing(!replacing)}><Image systemName={replacing?"chevron.up":"chevron.down"} frame={{minWidth:44,minHeight:44}}/></Button></HStack>
-        <HStack spacing={4}><Text>{matches.length?`${index+1} / ${matches.length}`:searchStatus}</Text><Spacer/><Button accessibilityLabel="上一个" buttonStyle="plain" disabled={!matches.length||work.busy||localBusy||editPending} action={()=>go(index-1)}><Image systemName="chevron.up" frame={{minWidth:44,minHeight:44}}/></Button><Button accessibilityLabel="下一个" buttonStyle="plain" disabled={!matches.length||work.busy||localBusy||editPending} action={()=>go(index+1)}><Image systemName="chevron.down" frame={{minWidth:44,minHeight:44}}/></Button></HStack>
-        {replacing?<HStack spacing={4}><TextField title="替换为" prompt="替换为" labelsHidden textFieldStyle="roundedBorder" value={replacement} onChanged={setReplacement}/><Button accessibilityLabel="替换" buttonStyle="plain" disabled={!matches.length||work.busy||localBusy||editPending} action={replace}><Image systemName="arrow.left.arrow.right" frame={{minWidth:44,minHeight:44}}/></Button><Button title="全部" accessibilityLabel="全部替换" disabled={!query||!matches.length||work.busy||localBusy||editPending} action={replaceAll} frame={{minWidth:44,minHeight:44}}/></HStack>:null}
+        <HStack spacing={4}><TextField title="查找" prompt="查找" labelsHidden textFieldStyle="roundedBorder" value={query} onChanged={v=>{host.searchEpoch++;host.searchContent=null;setQuery(v);setMatches([]);setLocalError("");setLocalNotice("");setSearchStatus("输入关键字后点击搜索")}}/><Button accessibilityLabel="搜索" buttonStyle="plain" disabled={work.busy||localBusy||editPending} action={search}><Image systemName="magnifyingglass" frame={{minWidth:44,minHeight:44}}/></Button><Button accessibilityLabel="展开替换" buttonStyle="plain" action={()=>setReplacing(!replacing)}><Image systemName={replacing?"chevron.up":"chevron.down"} frame={{minWidth:44,minHeight:44}}/></Button></HStack>
+        <HStack spacing={4}><Text>{stalePreview?"正文已改变，请重新搜索":matches.length?`${index+1} / ${matches.length}`:searchStatus}</Text><Spacer/><Button accessibilityLabel="上一个" buttonStyle="plain" disabled={!matches.length||stalePreview||work.busy||localBusy||editPending} action={()=>go(index-1)}><Image systemName="chevron.up" frame={{minWidth:44,minHeight:44}}/></Button><Button accessibilityLabel="下一个" buttonStyle="plain" disabled={!matches.length||stalePreview||work.busy||localBusy||editPending} action={()=>go(index+1)}><Image systemName="chevron.down" frame={{minWidth:44,minHeight:44}}/></Button></HStack>
+        {preview.length?<VStack alignment="leading" spacing={2} frame={{maxWidth:"infinity"}}>
+          <HStack><Text font={12} foregroundStyle="secondaryLabel">{`匹配预览 · 第 ${matches[index].line} 行`}</Text><Spacer/><Button title="定位编辑" accessibilityLabel="定位编辑" disabled={work.busy||localBusy||editPending} action={editMatch} frame={{minHeight:44}}/></HStack>
+          <ScrollView axes="horizontal" frame={{maxWidth:"infinity",maxHeight:72}}><VStack alignment="leading" spacing={2}>
+            {preview.map(row=><HStack key={row.line} spacing={0} font={13}><Text monospaced foregroundStyle="secondaryLabel">{`${row.line}  `}</Text><Text monospaced>{row.before}</Text><Text monospaced fontWeight="bold" foregroundStyle="systemBlue">{row.hit}</Text><Text monospaced>{row.after||(!row.before&&!row.hit?" ":"")}</Text></HStack>)}
+          </VStack></ScrollView>
+        </VStack>:null}
+        {replacing?<HStack spacing={4}><TextField title="替换为" prompt="替换为" labelsHidden textFieldStyle="roundedBorder" value={replacement} onChanged={setReplacement}/><Button accessibilityLabel="替换" buttonStyle="plain" disabled={!matches.length||stalePreview||work.busy||localBusy||editPending} action={replace}><Image systemName="arrow.left.arrow.right" frame={{minWidth:44,minHeight:44}}/></Button><Button title="全部" accessibilityLabel="全部替换" disabled={!query||!matches.length||stalePreview||work.busy||localBusy||editPending} action={replaceAll} frame={{minWidth:44,minHeight:44}}/></HStack>:null}
         {localError?<Text foregroundStyle="red">{localError}</Text>:localNotice?<Text>{localNotice}</Text>:null}
       </VStack>:null}
     </>:null}
