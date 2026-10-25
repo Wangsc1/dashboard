@@ -86,6 +86,17 @@ const sub={name:'Edited',url:'https://new-subscription.invalid/file',userAgent:'
     d=await api.loadNikkiManagement(n);calls.length=0;await assert.rejects(()=>api.saveNikkiSubscription({...n,url:'http://other.invalid'},d,'s1',sub),/来源/);assert.equal(calls.length,0)
     dirty=[['set','s1','name','foreign']];await assert.rejects(()=>api.saveNikkiSubscription(n,d,'s1',sub),/未提交/);assert.equal(writes().length,0);assert.equal(dirty.length,1)
   })
+  await test('subscription preflight distinguishes dirty/unknown changes from permission failure, with zero writes',async()=>{
+    for(const response of [{changes:[['set','s1','name','foreign']]},{changes:{}},{},{changes:null}]){
+      fixture();const base=await api.loadNikkiManagement(n);calls.length=0
+      fail=(obj,m)=>obj==='uci'&&m==='changes'?{body:{result:[0,response]}}:null
+      const expected=Array.isArray(response.changes)?/当前会话有未提交的 Nikki 改动/:/无法核验当前会话的 Nikki 暂存状态/
+      await assert.rejects(()=>api.saveNikkiSubscription(n,base,'s1',sub),expected);assert.equal(writes().length,0);assert.equal(state.s1.name,'Mock subscription')
+    }
+    fixture();const base=await api.loadNikkiManagement(n);calls.length=0
+    fail=(obj,m)=>obj==='uci'&&m==='changes'?{body:{result:[6]}}:null
+    await assert.rejects(()=>api.saveNikkiSubscription(n,base,'s1',sub),/没有权限访问 uci.changes/);assert.equal(writes().length,0)
+  })
   await test('permission denial does not retry mutations, cleanup own staging; lost commit is uncertain not replayed',async()=>{
     fixture();let d=await api.loadNikkiManagement(n);fail=(obj,m)=>obj==='uci'&&m==='set'?{body:{result:[6]}}:null
     await assert.rejects(()=>api.saveNikkiSubscription(n,d,'s1',sub),/保存未完成/);assert.equal(state.s1.name,'Mock subscription');assert.equal(writes().filter(c=>JSON.parse(c.init.body).params[2]==='set').length,1);assert.equal(staged,null)
@@ -156,8 +167,8 @@ const sub={name:'Edited',url:'https://new-subscription.invalid/file',userAgent:'
   })
   await test('subscription editor has no actions; returning saves actual values and failures retain draft',async()=>{
     fixture();const base=await api.loadNikkiManagement(n);let saved=false;const props={c:n,base,value:base.subscriptions[0],done:v=>saved=v};let tree=render(management.NikkiSubscriptionEditor,props,true);await settle();tree=render(management.NikkiSubscriptionEditor,props);assertEditorActionsAbsent(tree);assert.ok(!text(tree).includes('返回时保存修改'));assert.ok(!text(tree).includes('提交设置可能自动重载'));assert.equal(nodes(tree,'Section').length,3);assert.equal(nodes(tree,'Picker')[0].props.value,'clash.meta');assert.equal(nodes(tree,'Picker')[1].props.value,'local');calls.length=0;const confirmations=confirms.length;await tree.props.onDisappear();assert.equal(calls.length,0);assert.equal(confirms.length,confirmations);tree.props.onAppear()
-    nodes(tree,'TextField')[0].props.onChanged('Draft kept');calls.length=0;fail=(obj,m)=>obj==='uci'&&m==='set'?{body:{result:[6]}}:null;await tree.props.onDisappear();tree=render(management.NikkiSubscriptionEditor,props);assert.equal(nodes(tree,'TextField')[0].props.value,'Draft kept');assert.equal(saved,false);assert.ok(text(tree).includes('草稿'))
-    fail=null;tree.props.onAppear();await tree.props.onDisappear();assert.equal(saved,true);const written=writes().length;await tree.props.onDisappear();assert.equal(writes().length,written);assert.equal(state.s1.name,'Draft kept');assert.equal(state.s1.user_agent,'clash.meta');assert.equal(state.s1.prefer,'local')
+    nodes(tree,'TextField')[0].props.onChanged('Draft kept');calls.length=0;context.confirmResult=false;fail=(obj,m)=>obj==='uci'&&m==='set'?{body:{result:[6]}}:null;await tree.props.onDisappear();tree=render(management.NikkiSubscriptionEditor,props);assert.equal(nodes(tree,'TextField')[0].props.value,'Draft kept');assert.equal(saved,false);assert.ok(text(tree).includes('草稿'))
+    fail=null;tree.props.onAppear();await tree.props.onDisappear();assert.equal(saved,true);assert.equal(confirms.length,confirmations,'subscription back-save never confirms, even when confirmation result is false');context.confirmResult=true;const written=writes().length;await tree.props.onDisappear();assert.equal(writes().length,written);assert.equal(state.s1.name,'Draft kept');assert.equal(state.s1.user_agent,'clash.meta');assert.equal(state.s1.prefer,'local')
     saved=false;tree=render(management.NikkiSubscriptionEditor,props,true);assertEditorActionsAbsent(tree);calls.length=0;await settle();assert.equal(calls.length,0);assert.equal(saved,false)
   })
   await test('editor initialization cannot depend on loadHTML promise settling after document script',async()=>{

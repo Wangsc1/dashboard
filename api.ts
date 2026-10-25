@@ -1,7 +1,7 @@
 import { CpuSampler, CpuUsage, CpuMeta, parseCpuInfo, thermalCelsius } from "./openwrt-metrics"
 
 import { getPreferences, customHeaders, recordEvent, controllerHealth, feedback } from "./preferences"
-export const VERSION = "1.74"
+export const VERSION = "1.75"
 
 export type Kind = "clash" | "openwrt"
 export type Plugin = "openclash" | "nikki" | "mihomo"
@@ -973,13 +973,14 @@ async function nikkiTransaction(c:Controller,base:NikkiManagement,mutate:(call:(
   return nikkiExclusive(c,async()=>{
     const snap=nikkiSnapshots.get(base);if(!snap||snap.source!==nikkiSource(c))return nikkiFail("来源已改变，请返回并刷新")
     const changes=await nikkiRead(c,"uci","changes",{config:"nikki"})
-    if(!Array.isArray(changes.changes)||changes.changes.length>0)return nikkiFail("会话存在未提交改动或无法核验，请先在原管理端处理后刷新")
+    if(!Array.isArray(changes.changes))return nikkiFail("无法核验当前会话的 Nikki 暂存状态（uci.changes 返回结构异常），未写入；草稿仍保留")
+    if(changes.changes.length>0)return nikkiFail("当前会话有未提交的 Nikki 改动，未写入；请先处理暂存改动后刷新，草稿仍保留")
     let staged=false,committing=false
     const sid=await nikkiSession(c),call=(method:string,args:any={})=>{if(["set","add","delete","order"].includes(method))staged=true;return ubusRaw(c,sid,"uci",method,{config:"nikki",...args})}
     const current=(await call("get")).values
     if(canonical(current)!==canonical(snap.values))return nikkiFail("设备配置已改变，请刷新后重新编辑；当前草稿未丢弃")
     // rpcd commit emits config.change; Nikki registers procd_add_reload_trigger("nikki").
-    // UI must warn/confirm this upstream side effect even without an explicit rc.init.
+    // No explicit rc.init: committing can still trigger this upstream side effect.
     try { await mutate(call,current);committing=true;await call("commit") }
     catch(e) {
       if(!committing&&staged){try{await call("revert")}catch{return nikkiFail("保存未完成且清理暂存失败，请检查设备；草稿仍保留")}}
