@@ -12,7 +12,6 @@ const clone = v => v === undefined ? undefined : JSON.parse(JSON.stringify(v))
 const h = (type, props, ...children) => ({ type, props: { ...props, children: children.flat(Infinity).filter(x => x !== null && x !== undefined && x !== false) } })
 const scripting = new Proxy({
   useColorScheme:()=>mockColorScheme,
-  Keyboard:{visible:false,hide(){this.visible=false}},
   Device:{screen:{width:393,height:852,scale:3}},
   gradient: (kind, spec) => ({ kind, ...spec }),
   AppEvents: { scenePhase: { addListener: fn => sceneListeners.add(fn), removeListener: fn => sceneListeners.delete(fn) } },
@@ -34,6 +33,7 @@ const scripting = new Proxy({
   modifiers: () => { const steps=[];const chain=new Proxy({steps},{get:(o,k)=>k==='steps'?steps:(...args)=>{steps.push([k,...args]);return chain}});return chain },
 }, { get: (o, k) => k in o ? o[k] : k })
 const context = {
+  Keyboard:{visible:false,hide(){this.visible=false}},
   AbortController:class {constructor(){this.signal={aborted:false}} abort(){this.signal.aborted=true}},
   Data:{fromUint8Array:bytes=>({toRawString:()=>{try{return new (require('node:util').TextDecoder)('utf-8',{fatal:true}).decode(bytes)}catch{return null}}})},
   h, React: { Fragment: 'Fragment' }, console, Date: class extends Date { static now() { return now } },
@@ -874,7 +874,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) { const lazy = ['proxies','rules'].includes(ids[i]) && ids[i] !== id; assert.equal(nodes(tree, types[i]).length, lazy ? 0 : 1); if (!lazy) assert.equal(nodes(tree, types[i])[0].props.selected, ids[i] === id) }
     }
-    assert.equal(api.VERSION, '1.85'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.86'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('独立导航栈保留业务owner和身份，只有选中页提供可见工具栏', () => {
     pref.savePreferences({ defaultPage: 'overview' })

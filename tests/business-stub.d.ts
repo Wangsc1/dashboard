@@ -4,8 +4,6 @@ declare module "scripting" {
   // Official views/charts and view_modifiers/chart_mark_props.
   export const Chart:any, LineChart:any, AreaChart:any;
   export const Device: {screen:{width:number;height:number;scale:number};colorScheme:"light"|"dark"};
-  // Official Views/Text input/Keyboard: hide dismisses the current keyboard.
-  export const Keyboard: {readonly visible:boolean;hide():void};
   export const GeometryReader: any, gradient: any, Divider:any;
   export function Editor(props:{controller:EditorController;scriptName?:string;showAccessoryView?:boolean;disabled?:boolean;frame?:{maxWidth?:string|number;maxHeight?:string|number}}):any;
   export const AppEvents: { scenePhase: { addListener(fn: (phase: "active" | "inactive" | "background") => void): void; removeListener(fn: (phase: "active" | "inactive" | "background") => void): void } }, Safari: any, LazyVStack: any, TabView: any, Tab: any, Slider: any, Transition: any, Circle: any, Animation: any, withAnimation: any, ProgressView: any, RoundedRectangle: any, ScrollView: any, SVG: any, ZStack: any, modifiers: any, Image: any, Menu: any, Button: any, ForEach: any, Form: any, HStack: any, Label: any, Navigation: any, NavigationLink: any, NavigationStack: any, NavigationDestination: any, Picker: any, Script: any, Section: any, SecureField: any, Spacer: any, Text: any, TextField: any, Toggle: any, VStack: any
@@ -45,3 +43,6 @@ declare class EditorController {
   replaceSelection(text:string):void;
   undo():void;redo():void;dispose():void;
 }
+
+// Official views/toolbars/index.tsx uses Keyboard as a global (not a module export).
+declare var Keyboard: {readonly visible:boolean;hide():void};
