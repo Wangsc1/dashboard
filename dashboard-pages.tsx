@@ -10,8 +10,8 @@ const FG = { light: "#41434B", dark: "#CFD0D7" }
 
 export const safeError = () => "请求未完成：请检查连接、认证与当前内核/Nikki版本支持（404/权限不足可能不支持该操作）。详情不会写入日志。"
 async function attempt(fn: () => Promise<any>) { try { await fn() } catch { await Dialog.alert({ title: "操作未完成", message: safeError() }) } }
-function Card({children,compact=false,contextMenu,...rest}: {children?:any;animation?:any;transition?:any;compact?:boolean;opacity?:number;contextMenu?:any;navigationDestination?:any;onAppear?:()=>void;onDisappear?:()=>void}) { const content=<VStack {...rest} alignment="leading" spacing={compact?6:10} font={compact?12:14} foregroundStyle={FG} modifiers={modifiers().frame({maxWidth:"infinity",alignment:"leading"}).padding({horizontal:compact?10:14,vertical:compact?10:14}).background(<RoundedRectangle cornerRadius={compact?16:22} fill="secondarySystemBackground"/>)}>{children}</VStack>;return contextMenu?<VStack spacing={0} frame={{maxWidth:"infinity"}} contextMenu={contextMenu}>{content}</VStack>:content }
-function Shell({children,title,toolbar,onAppear,onDisappear,animation,background,overlay,refresh}:any) { return <ScrollView {...(refresh?{refreshable:refresh}:{})} overlay={overlay} background={background} navigationTitle={title} navigationBarTitleDisplayMode="inline" toolbar={toolbar} onAppear={onAppear} onDisappear={onDisappear}><LazyVStack animation={animation} spacing={12} padding={{horizontal:14,vertical:8}}>{children}</LazyVStack></ScrollView> }
+function Card({children,compact=false,contextMenu,...rest}: {children?:any;animation?:any;transition?:any;compact?:boolean;opacity?:number;contextMenu?:any}) { const content=<VStack {...rest} alignment="leading" spacing={compact?6:10} font={compact?12:14} foregroundStyle={FG} modifiers={modifiers().frame({maxWidth:"infinity",alignment:"leading"}).padding({horizontal:compact?10:14,vertical:compact?10:14}).background(<RoundedRectangle cornerRadius={compact?16:22} fill="secondarySystemBackground"/>)}>{children}</VStack>;return contextMenu?<VStack spacing={0} frame={{maxWidth:"infinity"}} contextMenu={contextMenu}>{content}</VStack>:content }
+function Shell({children,title,toolbar,onAppear,onDisappear,animation,background,overlay,refresh,navigationDestination}:any) { return <ScrollView navigationDestination={navigationDestination} {...(refresh?{refreshable:refresh}:{})} overlay={overlay} background={background} navigationTitle={title} navigationBarTitleDisplayMode="inline" toolbar={toolbar} onAppear={onAppear} onDisappear={onDisappear}><LazyVStack animation={animation} spacing={12} padding={{horizontal:14,vertical:8}}>{children}</LazyVStack></ScrollView> }
 function Hint({children}:any) { return <Text font={12} foregroundStyle="secondaryLabel">{children}</Text> }
 function Chip({title,color="systemBlue",small=false}:{title:string;color?:string;small?:boolean}) { return <Text font={small?10:11} foregroundStyle={color as any} padding={{horizontal:6,vertical:3}} background={<RoundedRectangle cornerRadius={6} fill="tertiarySystemBackground"/>}>{title}</Text> }
 function Pages({limit,total,more,hideCount=false}:{limit:number;total:number;more:()=>void;hideCount?:boolean}) { if(hideCount&&limit>=total)return null;return <HStack>{hideCount?null:<Hint>{`已展示 ${Math.min(limit,total)} / ${total}`}</Hint>}<Spacer/>{limit<total ? <Button title="加载更多" action={more}/> : null}</HStack> }
@@ -76,12 +76,39 @@ export function ProxyNodeDetailPage({c,name}:{c:Controller;name:string}) {
       <Section header={<Text>延迟历史</Text>} footer={<Text>仅内核提供的最近十次记录；不代表实时可用性。</Text>}>{data.history.length?data.history.map((h,i)=><Text key={String(i)}>{`${h.time??"时间未提供"} · ${h.delay>0?h.delay+" ms":"失败"}`}</Text>):<Text>内核未提供记录</Text>}</Section></>:null}
   </Form>
 }
+// The page (not a lazy card/context-menu preview) owns navigation and actions.
+export function useProxyNodeActions(c:Controller|null,enabled:boolean) {
+  const source=JSON.stringify(c),[detail,setDetail]=useState<{source:string;name:string}|null>(null)
+  const [busy,setBusy]=useState(""),[notice,setNotice]=useState("")
+  const [owner]=useState({source,epoch:0,alive:true,visible:true,pending:false,enabled})
+  if(owner.source!==source||owner.enabled!==enabled){owner.source=source;owner.enabled=enabled;owner.epoch++;owner.pending=false}
+  useEffect(()=>{setBusy("");setNotice("");setDetail(null)},[source])
+  useEffect(()=>{if(!enabled){setBusy("");setNotice("")}},[enabled])
+  useEffect(()=>()=>{owner.alive=false;owner.epoch++;owner.pending=false},[])
+  const valid=()=>owner.alive&&owner.source===source&&owner.enabled
+  function show(name:string){if(valid())setDetail({source,name})}
+  async function test(name:string){
+    if(!c||!valid()||!owner.visible||owner.pending)return
+    owner.pending=true;const epoch=owner.epoch,controller={...c}
+    const current=()=>valid()&&owner.visible&&owner.epoch===epoch
+    setBusy(name);setNotice(`${name}：测速中…`)
+    try{const value=await testProxyNode(controller,name);if(current()){publishNodeDelay(controller,name,value);setNotice(`${name}：${value} ms`)}}
+    catch(e){if(current())setNotice(`${name}：${proxyNodeError(e)}`)}
+    finally{if(current()){owner.pending=false;setBusy("")}}
+  }
+  const destination={isPresented:!!c&&detail?.source===source,onChanged:(v:boolean)=>{if(!v)setDetail(null)},
+    content:c&&detail?.source===source?<ProxyNodeDetailPage key={source+detail.name} c={c} name={detail.name}/>:<Text/>}
+  return {show,test,busy,notice,destination,
+    appear:()=>{owner.visible=true},
+    disappear:()=>{owner.visible=false;owner.epoch++;if(owner.pending)setNotice("");owner.pending=false;setBusy("")}}
+}
+type ProxyNodeActions=ReturnType<typeof useProxyNodeActions>
 // Native SF Symbols content replacement: no JS timer, rotation modifier,
 // Animation factory or state-update wrapper is required for this transition.
 export function GroupChevron({expanded}:{expanded:boolean}) {
   return <Image systemName={expanded?"chevron.down":"chevron.right"} contentTransition="symbolEffect" font={12} foregroundStyle="tertiaryLabel" frame={{width:28,height:28}}/>
 }
-export function GroupSection({c,g,onChanged,expanded=false}:{c:Controller;g:Group;onChanged:()=>void;expanded?:boolean}) {
+export function GroupSection({c,g,onChanged,expanded=false,nodeActions}:{c:Controller;g:Group;onChanged:()=>void;expanded?:boolean;nodeActions?:ProxyNodeActions}) {
   const prefs=usePreferences(),[busy,setBusy]=useState(false),storeKey=`${sourceKey(c)}|${g.name}`,merged=()=>{const o:Record<string,number>={...g.delays};for(const n of g.all){const v=testedNodes.get(`${sourceKey(c)}|${n}`);if(v!==undefined&&o[n]===undefined)o[n]=v}return{...o,...(testedDelays.get(storeKey)??{})}},[delays,setDelays]=useState(merged),[open,setOpen]=useState(false),[nodeLimit,setNodeLimit]=useState(40),[now,setNow]=useState(g.now),[failed,setFailed]=useState<Set<string>>(new Set()),[guard]=useState({alive:true});useEffect(()=>()=>{guard.alive=false},[])
   useEffect(()=>setDelays(merged()),[g.delays,storeKey]);useEffect(()=>setNow(g.now),[g.now]);const d=delays[now]
   const isOpen=expanded||open
@@ -97,34 +124,22 @@ export function GroupSection({c,g,onChanged,expanded=false}:{c:Controller;g:Grou
       if(guard.alive){setDelays(merged());if(still.length)setFailed(f=>new Set([...f,...still]))}
     })().finally(()=>{for(const n of missing)probing.delete(`${storeKey}|${n}`)})
   },[isOpen,storeKey,g.all.length])
-  const [detail,setDetail]=useState<string|null>(null),[nodeError,setNodeError]=useState(""),[nodeBusy,setNodeBusy]=useState("")
-  const [actions]=useState({source:JSON.stringify(c),epoch:0,visible:true,pending:false})
-  if(actions.source!==JSON.stringify(c)){actions.source=JSON.stringify(c);actions.epoch++;actions.pending=false}
-  useEffect(()=>{setDetail(null);setNodeError("");setNodeBusy("")},[actions.source])
+  // Cache notifications may outlive a preview; only actual component disposal
+  // removes this subscriber. Menu actions themselves belong to the page owner.
   useEffect(()=>{
     const source=sourceKey(c),notify=(n:string,v:number)=>{
-      if(!guard.alive||actions.source!==JSON.stringify(c)||!g.all.includes(n))return
+      if(!guard.alive||!g.all.includes(n))return
       testedDelays.set(storeKey,{...(testedDelays.get(storeKey)??{}),[n]:v})
-      if(actions.visible)setDelays(d=>({...d,[n]:v}))
+      setDelays(d=>({...d,[n]:v}))
     }
     let listeners=nodeDelayListeners.get(source);if(!listeners){listeners=new Set();nodeDelayListeners.set(source,listeners)}listeners.add(notify)
     return()=>{listeners!.delete(notify);if(!listeners!.size)nodeDelayListeners.delete(source)}
-  },[actions.source,g.all,storeKey])
-  async function testOne(n:string){
-    if(actions.pending||!actions.visible||!guard.alive||actions.source!==JSON.stringify(c))return
-    actions.pending=true;const epoch=actions.epoch,owner={...c},source=actions.source
-    const current=()=>guard.alive&&actions.visible&&actions.epoch===epoch&&actions.source===source
-    setNodeBusy(n);setNodeError("")
-    try{const value=await testProxyNode(owner,n);if(current())publishNodeDelay(owner,n,value)}
-    catch(e){if(current())setNodeError(`${n}：${proxyNodeError(e)}`)}
-    finally{if(current()){actions.pending=false;setNodeBusy("")}}
-  }
+  },[JSON.stringify(c),g.all,storeKey])
   const sorted=useMemo(()=>isOpen?sortedNodes(g,delays):[],[isOpen,g.all,delays,prefs.nodeSort])
   const toggleOpen=()=>{setOpen(v=>!v);feedback()}
-  return <Card onAppear={()=>{actions.visible=true;setDelays(merged())}} onDisappear={()=>{actions.visible=false;actions.epoch++;actions.pending=false;setNodeBusy("")}} navigationDestination={{isPresented:detail!==null,onChanged:(v:boolean)=>{if(!v)setDetail(null)},content:detail!==null?<ProxyNodeDetailPage key={JSON.stringify(c)+detail} c={c} name={detail}/>:<Text/>}}><HStack onLongPressGesture={()=>{if(prefs.collapseGesture)toggleOpen()}}><Button buttonStyle="plain" frame={{maxWidth:"infinity",alignment:"leading"}} action={toggleOpen}><HStack spacing={12} frame={{maxWidth:"infinity",alignment:"leading"}} contentShape="rect">{prefs.customIcons ? <GroupIcon g={g}/> : null}<VStack alignment="leading" spacing={4}><Text font={16} fontWeight="semibold">{g.name}</Text><HStack spacing={10}><Text font={12} foregroundStyle="secondaryLabel">{now||"内核未提供当前节点"}</Text>{d!==undefined?<><Text font={12} foregroundStyle={delayColor(d) as any}>{d>0?`${d}ms`:"超时"}</Text></>:null}</HStack></VStack><Spacer/></HStack></Button><Button title="" systemImage="bolt.fill" tint="systemOrange" action={async()=>{if(busy)return;setBusy(true);await attempt(async()=>{const save=(k:string,v:number)=>{testedDelays.set(storeKey,{...(testedDelays.get(storeKey)??{}),[k]:v});testedNodes.set(`${sourceKey(c)}|${k}`,v)};const d=await testGroup(c,g,(k,v)=>{save(k,v);if(guard.alive)setDelays(merged())});for(const[k,v]of Object.entries(d))save(k,v);if(guard.alive){setDelays(merged());onChanged()}});if(guard.alive)setBusy(false)}}/><Button buttonStyle="plain" action={toggleOpen}><VStack frame={{width:44,height:44}} contentShape="rect"><GroupChevron expanded={isOpen}/></VStack></Button></HStack>
-    {nodeError?<Text foregroundStyle="systemRed" font={12}>{nodeError}</Text>:null}
+  return <Card><HStack onLongPressGesture={()=>{if(prefs.collapseGesture)toggleOpen()}}><Button buttonStyle="plain" frame={{maxWidth:"infinity",alignment:"leading"}} action={toggleOpen}><HStack spacing={12} frame={{maxWidth:"infinity",alignment:"leading"}} contentShape="rect">{prefs.customIcons ? <GroupIcon g={g}/> : null}<VStack alignment="leading" spacing={4}><Text font={16} fontWeight="semibold">{g.name}</Text><HStack spacing={10}><Text font={12} foregroundStyle="secondaryLabel">{now||"内核未提供当前节点"}</Text>{d!==undefined?<><Text font={12} foregroundStyle={delayColor(d) as any}>{d>0?`${d}ms`:"超时"}</Text></>:null}</HStack></VStack><Spacer/></HStack></Button><Button title="" systemImage="bolt.fill" tint="systemOrange" action={async()=>{if(busy)return;setBusy(true);await attempt(async()=>{const save=(k:string,v:number)=>{testedDelays.set(storeKey,{...(testedDelays.get(storeKey)??{}),[k]:v});testedNodes.set(`${sourceKey(c)}|${k}`,v)};const d=await testGroup(c,g,(k,v)=>{save(k,v);if(guard.alive)setDelays(merged())});for(const[k,v]of Object.entries(d))save(k,v);if(guard.alive){setDelays(merged());onChanged()}});if(guard.alive)setBusy(false)}}/><Button buttonStyle="plain" action={toggleOpen}><VStack frame={{width:44,height:44}} contentShape="rect"><GroupChevron expanded={isOpen}/></VStack></Button></HStack>
     {prefs.collapseGesture?<Button title={open?"收起预览":"展开预览"} action={()=>{setOpen(!open);feedback()}}/>:null}
-    {expanded||open?<>{(()=>{const ns=sorted.slice(0,nodeLimit),rows:string[][]=[];for(let i=0;i<ns.length;i+=2)rows.push(ns.slice(i,i+2));return rows.map(r=><HStack key={r[0]} spacing={8}>{r.map(n=>{const on=now===n,dn=delays[n];return <VStack key={n} spacing={0} frame={{maxWidth:"infinity"}} contextMenu={{menuItems:<><Button title="详细信息" systemImage="info.circle" action={()=>{if(guard.alive&&actions.source===JSON.stringify(c))setDetail(n)}}/><Button title={nodeBusy===n?"测速中…":"延迟测试"} systemImage="speedometer" disabled={!!nodeBusy} action={()=>testOne(n)}/></>}}><Button key={n} buttonStyle="plain" disabled={!selectable(g)} frame={{maxWidth:"infinity"}} action={()=>{if(n===now)return;const prev=now;setNow(n);void attempt(async()=>{try{await selectProxy(c,g.name,n)}catch(e){if(guard.alive)setNow(prev);throw e}if(guard.alive)onChanged()})}}><VStack alignment="leading" spacing={10} frame={{maxWidth:"infinity",alignment:"leading"}} padding={{horizontal:10,vertical:14}} background={<RoundedRectangle cornerRadius={12} fill={on?"systemBlue":"tertiarySystemBackground"}/>}><HStack><Text font={prefs.proxyStyle==="compact"?12:13} fontWeight="semibold" lineLimit={1} foregroundStyle={on?"white":FG}>{n}</Text><Spacer/></HStack><HStack spacing={4} frame={{maxWidth:"infinity"}}><Text font={11} lineLimit={1} foregroundStyle={on?"white":"secondaryLabel"}>{g.types?.[n]||"协议未知"}</Text><Spacer/><Text font={11} foregroundStyle={dn!==undefined?delayColor(dn) as any:"secondaryLabel"}>{dn===undefined?(failed.has(n)?"超时":"未测速"):dn>0?`${dn}ms`:"超时"}</Text></HStack></VStack></Button></VStack>})}{r.length<2?<Spacer frame={{maxWidth:"infinity"}}/>:null}</HStack>)})()}<Pages hideCount limit={nodeLimit} total={g.all.length} more={()=>setNodeLimit(nodeLimit+40)}/></>:null}
+    {expanded||open?<>{(()=>{const ns=sorted.slice(0,nodeLimit),rows:string[][]=[];for(let i=0;i<ns.length;i+=2)rows.push(ns.slice(i,i+2));return rows.map(r=><HStack key={r[0]} spacing={8}>{r.map(n=>{const on=now===n,dn=delays[n];return <VStack key={n} spacing={0} frame={{maxWidth:"infinity"}} contextMenu={nodeActions?{menuItems:<><Button title="详细信息" systemImage="info.circle" action={()=>nodeActions.show(n)}/><Button title={nodeActions.busy===n?"测速中…":"延迟测试"} systemImage="speedometer" disabled={!!nodeActions.busy} action={()=>nodeActions.test(n)}/></>}:undefined}><Button key={n} buttonStyle="plain" disabled={!selectable(g)} frame={{maxWidth:"infinity"}} action={()=>{if(n===now)return;const prev=now;setNow(n);void attempt(async()=>{try{await selectProxy(c,g.name,n)}catch(e){if(guard.alive)setNow(prev);throw e}if(guard.alive)onChanged()})}}><VStack alignment="leading" spacing={10} frame={{maxWidth:"infinity",alignment:"leading"}} padding={{horizontal:10,vertical:14}} background={<RoundedRectangle cornerRadius={12} fill={on?"systemBlue":"tertiarySystemBackground"}/>}><HStack><Text font={prefs.proxyStyle==="compact"?12:13} fontWeight="semibold" lineLimit={1} foregroundStyle={on?"white":FG}>{n}</Text><Spacer/></HStack><HStack spacing={4} frame={{maxWidth:"infinity"}}><Text font={11} lineLimit={1} foregroundStyle={on?"white":"secondaryLabel"}>{g.types?.[n]||"协议未知"}</Text><Spacer/><Text font={11} foregroundStyle={dn!==undefined?delayColor(dn) as any:"secondaryLabel"}>{nodeActions?.busy===n?"测速中…":dn===undefined?(failed.has(n)?"超时":"未测速"):dn>0?`${dn}ms`:"超时"}</Text></HStack></VStack></Button></VStack>})}{r.length<2?<Spacer frame={{maxWidth:"infinity"}}/>:null}</HStack>)})()}<Pages hideCount limit={nodeLimit} total={g.all.length} more={()=>setNodeLimit(nodeLimit+40)}/></>:null}
   </Card>
 }
 const PROXY_MODE_OPTIONS = [["rule","规则模式"],["direct","直连模式"],["global","全局模式"]] as const
@@ -231,6 +246,7 @@ function usePageScene(){
 export function ProxiesPage({active,version,onClose,selected=true}:{active:Controller|null;version:number;onClose?:()=>void;selected?:boolean}) {
   const p=usePreferences(),cacheKey=active?sourceKey(active):"",cached=hydrateProxyCache(cacheKey),[groups,setGroups]=useState<Group[]>(cached?.groups??[]),[providers,setProviders]=useState<Provider[]>(cached?.providers??[]),[loaded,setLoaded]=useState(!!cached),[err,setErr]=useState(""),[tick,setTick]=useState(0),[expanded,setExpanded]=useState(false),[showProviders,setShowProviders]=useState(true),[limit,setLimit]=useState(40),[visible,setVisible]=useState(selected),[confirmedMode,setConfirmedMode]=useState<{key:string;mode:string|null}>(()=>({key:cacheKey,mode:proxyModeCache.get(cacheKey)??null})),globalMode=confirmedMode.key===cacheKey&&confirmedMode.mode==="global"
   const {scene,revision}=usePageScene()
+  const nodeActions=useProxyNodeActions(active,selected&&scene.active)
   scene.restore=()=>{if(selected)setVisible(true)}
   useEffect(()=>setVisible(selected),[selected])
   useEffect(()=>{const c=hydrateProxyCache(cacheKey);setGroups(c?.groups??[]);setProviders(c?.providers??[]);setLoaded(!!c)},[cacheKey])
@@ -239,7 +255,7 @@ export function ProxiesPage({active,version,onClose,selected=true}:{active:Contr
   const remote=providers.filter(x=>x.vehicleType.toLowerCase()==="http")
   const shownGroups=groups.filter(g=>g.name!=="GLOBAL"||p.showGlobal||globalMode)
   const menu=<Menu label={<Image systemName="ellipsis.circle"/>}><Picker title="节点排序" pickerStyle="menu" value={p.nodeSort} onChanged={(v:string)=>savePreferences({nodeSort:v as any})}>{NODE_SORT_OPTIONS.map(([key, label]) => <Text key={key} tag={key}>{label}</Text>)}</Picker><Toggle title="展示全部代理组" value={expanded} onChanged={setExpanded}/><Toggle title="显示代理来源" value={showProviders} onChanged={setShowProviders}/><Toggle title="显示隐藏组" value={p.showHidden} onChanged={(v:boolean)=>savePreferences({showHidden:v})}/><Toggle key="customIcons" title="显示图标" value={p.customIcons} onChanged={(v:boolean)=>updatePreference({customIcons:v})}/><Toggle key="disconnectOnSwitch" title="自动断开旧连接" value={p.disconnectOnSwitch} onChanged={(v:boolean)=>updatePreference({disconnectOnSwitch:v})}/></Menu>
-  return Shell({title:active?.name??"代理",toolbar:rootToolbar("proxies",onClose,menu),onAppear:()=>{scene.vis.appear();setVisible(true)},onDisappear:()=>{if(scene.vis.disappear(Date.now()))setVisible(false)},children:<>{!active?<Empty/>:<><ProxyModeControl key={JSON.stringify(active)} c={active} enabled={selected&&visible&&scene.active} version={version} resume={revision} onMode={mode=>setConfirmedMode({key:cacheKey,mode})}/><HStack><Text font={20} fontWeight="bold" padding={{top:6}}>策略组</Text><Spacer/></HStack>{err?<Hint>{err}</Hint>:null}{!err&&loaded&&shownGroups.length===0?<Hint>未读取到策略组</Hint>:null}{shownGroups.slice(0,limit).map(g=><GroupSection key={g.name} c={active} g={g} expanded={expanded} onChanged={()=>setTick(t=>t+1)}/>)}<Pages hideCount limit={limit} total={shownGroups.length} more={()=>setLimit(limit+40)}/>{showProviders?<><HStack><Text font={20} fontWeight="bold" padding={{top:6}}>代理来源</Text><Spacer/></HStack>{remote.slice(0,limit).map(p=><ProviderCard key={p.name} c={active} p={p} kind="proxies" onChanged={()=>setTick(t=>t+1)}/>)}<Pages hideCount limit={limit} total={remote.length} more={()=>setLimit(limit+40)}/></>:null}</>}<ProxyTestSettings /></>})
+  return Shell({title:active?.name??"代理",toolbar:rootToolbar("proxies",onClose,menu),navigationDestination:nodeActions.destination,onAppear:()=>{nodeActions.appear();scene.vis.appear();setVisible(true)},onDisappear:()=>{nodeActions.disappear();if(scene.vis.disappear(Date.now()))setVisible(false)},children:<>{!active?<Empty/>:<><ProxyModeControl key={JSON.stringify(active)} c={active} enabled={selected&&visible&&scene.active} version={version} resume={revision} onMode={mode=>setConfirmedMode({key:cacheKey,mode})}/><HStack><Text font={20} fontWeight="bold" padding={{top:6}}>策略组</Text><Spacer/></HStack>{err?<Hint>{err}</Hint>:null}{nodeActions.notice?<Text font={12} foregroundStyle="secondaryLabel">{nodeActions.notice}</Text>:null}{!err&&loaded&&shownGroups.length===0?<Hint>未读取到策略组</Hint>:null}{shownGroups.slice(0,limit).map(g=><GroupSection key={g.name} c={active} g={g} expanded={expanded} nodeActions={nodeActions} onChanged={()=>setTick(t=>t+1)}/>)}<Pages hideCount limit={limit} total={shownGroups.length} more={()=>setLimit(limit+40)}/>{showProviders?<><HStack><Text font={20} fontWeight="bold" padding={{top:6}}>代理来源</Text><Spacer/></HStack>{remote.slice(0,limit).map(p=><ProviderCard key={p.name} c={active} p={p} kind="proxies" onChanged={()=>setTick(t=>t+1)}/>)}<Pages hideCount limit={limit} total={remote.length} more={()=>setLimit(limit+40)}/></>:null}</>}<ProxyTestSettings /></>})
 }
 function ruleColor(type:string) { return /AND|OR|NOT|MATCH/.test(type)?"systemRed":/PROCESS/i.test(type)?"systemPurple":/IP|GEOIP/i.test(type)?"systemGreen":"systemBlue" }
 // Last-seen rules / connections are kept on this device and loaded at launch, so the first frame is not empty while the live request runs.

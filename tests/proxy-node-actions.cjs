@@ -27,31 +27,60 @@ const group=(title='test')=>({name:title,type:'Selector',all:[name,'other'],now:
   responder=()=>({status:503});await assert.rejects(()=>api.testProxyNode(device,name),/HTTP 503/)
   responder=()=>({body:{delay:0}});await assert.rejects(()=>api.testProxyNode(device,name),/未返回有效延迟/)
  })
- await test('menu actions never select; exact single request updates mounted same-name cards and cached cards',async()=>{
-  const a=owner(pages.GroupSection),b=owner(pages.GroupSection),g=group('shared-one'),h=group('shared-two');calls.length=0;responder=()=>({body:{delay:123}})
+ function actionsOwner(){return owner(({c,enabled=true})=>pages.useProxyNodeActions(c,enabled))}
+ await test('menu preview disposal cannot cancel page-owned navigation or single-node action',async()=>{
+  const host=actionsOwner(),a=owner(pages.GroupSection),b=owner(pages.GroupSection),g=group('shared-one'),h=group('shared-two');calls.length=0
   try{
-   let t=a.render({c:device,g,expanded:true,onChanged(){throw Error('must not refresh group')}});const hidden=b.render({c:device,g:h,expanded:true,onChanged(){}});await settle();hidden.props.onDisappear()
+   let state=host.render({c:device}),t=a.render({c:device,g,expanded:true,nodeActions:state,onChanged(){throw Error('must not refresh group')}})
+   b.render({c:device,g:h,expanded:true,onChanged(){}})
    const bottom=nodes(t,'HStack').find(x=>text(x.props.children[0])==='Shadowsocks');assert.ok(bottom);assert.equal(text(bottom.props.children.at(-1)),'30ms');assert.equal(bottom.props.children[0].props.foregroundStyle,'white');assert.equal(bottom.props.children.at(-1).props.foregroundStyle,api.delayColor(30))
    assert.equal(nodes(t,'Image').filter(n=>n.props.systemName==='checkmark').length,0)
-   action(t,name,'info.circle');t=a.render();assert.equal(t.props.navigationDestination.content.type,pages.ProxyNodeDetailPage);assert.equal(calls.length,0);t.props.navigationDestination.onChanged(false)
-   await action(a.render(),name,'speedometer');await settle();assert.equal(calls.length,1);assert.ok(calls[0].url.includes('/delay?'));assert.ok(text(a.render()).includes('123ms'));assert.ok(!text(b.render()).includes('123ms'));b.render().props.onAppear();assert.ok(text(b.render()).includes('123ms'));assert.equal(confirms.length,0)
+   assert.equal(t.props.navigationDestination,undefined);assert.equal(t.props.onDisappear,undefined,'lazy card does not own action visibility')
+   const frozenMenu=menu(t,name);a.close() // native preview/original lazy subtree is disposed before action delivery
+   button(frozenMenu,'详细信息').props.action();state=host.render();assert.equal(state.destination.isPresented,true);assert.equal(state.destination.content.type,pages.ProxyNodeDetailPage);assert.equal(calls.length,0)
+   state.disappear();state=host.render();assert.equal(state.destination.isPresented,true,'push disappearance must not pop its destination')
+   state.destination.onChanged(false);state=host.render();assert.equal(state.destination.isPresented,false);state.appear()
+   const wait=deferred();responder=()=>({wait:wait.promise,body:{delay:123}})
+   const pending=button(frozenMenu,'延迟测试').props.action();await settle();state=host.render();assert.equal(calls.length,1);assert.ok(calls[0].url.includes('/delay?'));assert.ok(state.notice.includes('测速中'));assert.equal(state.busy,name)
+   const replacement=owner(pages.GroupSection);try{
+    t=replacement.render({c:device,g,expanded:true,nodeActions:state,onChanged(){}});assert.ok(text(t).includes('测速中'))
+    wait.resolve();await pending;await settle();state=host.render();assert.equal(state.busy,'');assert.ok(state.notice.includes('123 ms'));assert.ok(text(replacement.render()).includes('123ms'));assert.ok(text(b.render()).includes('123ms'));assert.equal(confirms.length,0)
+   }finally{replacement.close()}
    b.close();const remount=owner(pages.GroupSection);try{assert.ok(text(remount.render({c:device,g:h,expanded:true,onChanged(){}})).includes('123ms'))}finally{remount.close()}
-  }finally{a.close();b.close()}
+  }finally{host.close();a.close();b.close()}
  })
- await test('duplicate clicks, failures, disappearance, source changes and unmount reject late publication',async()=>{
-  for(const kind of ['duplicate','failure','disappear','source','unmount']){
-   const c={...device,id:'case-'+kind},g=group('case-'+kind),a=owner(pages.GroupSection),wait=deferred();calls.length=0
+ await test('actual ProxiesPage root hosts destination across lazy-card rebuild and page push',async()=>{
+  const loadGroups=api.loadGroups,loadProviders=api.loadProviders,page=owner(pages.ProxiesPage),card=owner(pages.GroupSection)
+  api.loadGroups=async()=>[group('stable-host')];api.loadProviders=async()=>[]
+  try{
+   let t=page.render({active:device,version:0,selected:true});await settle();t=page.render();assert.equal(t.type,'ScrollView');assert.ok(t.props.navigationDestination)
+   let p=nodes(t,pages.GroupSection)[0].props;p={...p,expanded:true};const preview=card.render(p),saved=menu(preview,name);card.close()
+   button(saved,'详细信息').props.action();t=page.render();assert.equal(t.props.navigationDestination.isPresented,true)
+   t=page.render({active:{...device},version:1,selected:true});assert.equal(t.props.navigationDestination.isPresented,true,'same-value source refresh must retain detail');t.props.onDisappear();t=page.render();await settle();t=page.render();assert.equal(t.props.navigationDestination.isPresented,true)
+   assert.equal(t.props.navigationDestination.content.props.name,name);assert.equal(t.props.navigationDestination.content.type,pages.ProxyNodeDetailPage)
+   t.props.navigationDestination.onChanged(false);t=page.render();assert.equal(t.props.navigationDestination.isPresented,false)
+   t.props.onAppear();t=page.render();await settle();t=page.render()
+   const fresh=owner(pages.GroupSection);try{
+    const v=fresh.render({...nodes(t,pages.GroupSection)[0].props,expanded:true});const wait=deferred();responder=()=>({wait:wait.promise,body:{delay:432}})
+    const pending=action(v,name,'speedometer');await settle();t=page.render();assert.ok(text(t).includes('测速中'));wait.resolve();await pending;t=page.render();assert.ok(text(t).includes('432 ms'))
+   }finally{fresh.close()}
+  }finally{card.close();page.close();api.loadGroups=loadGroups;api.loadProviders=loadProviders}
+ })
+ await test('duplicate clicks, failures, real page departure, source changes, disabled and unmount reject late publication',async()=>{
+  for(const kind of ['duplicate','failure','disappear','source','disabled','unmount']){
+   const c={...device,id:'case-'+kind},g=group('case-'+kind),host=actionsOwner(),a=owner(pages.GroupSection),wait=deferred();calls.length=0
    responder=()=>({wait:wait.promise,status:kind==='failure'?500:200,body:{delay:678}})
-   let t=a.render({c,g,expanded:true,onChanged(){}});await settle();const start=()=>action(t,name,'speedometer');const pending=start();await settle()
+   let state=host.render({c}),t=a.render({c,g,expanded:true,nodeActions:state,onChanged(){}});const start=()=>action(t,name,'speedometer');const pending=start();await settle()
    if(kind==='duplicate'){await start();assert.equal(calls.length,1)}
-   if(kind==='disappear')t.props.onDisappear()
-   if(kind==='source'){t=a.render({c:{...c,url:'http://other.invalid'},g,expanded:true,onChanged(){}});await settle()}
-   if(kind==='unmount')a.close()
+   if(kind==='disappear')state.disappear()
+   if(kind==='source')state=host.render({c:{...c,url:'http://other.invalid'}})
+   if(kind==='disabled')state=host.render({c,enabled:false})
+   if(kind==='unmount')host.close()
    wait.resolve();await pending;await settle()
-   if(kind==='failure'){t=a.render();assert.ok(text(t).includes('HTTP 500'));assert.ok(!text(t).includes('678ms'))}
-   if(['disappear','source'].includes(kind)){assert.ok(!text(a.render()).includes('678ms'))}
-   a.close()
-   if(['disappear','source','unmount'].includes(kind)){const fresh=owner(pages.GroupSection);try{assert.ok(!text(fresh.render({c,g,expanded:true,onChanged(){}})).includes('678ms'))}finally{fresh.close()}}
+   if(kind==='failure'){state=host.render();assert.ok(state.notice.includes('HTTP 500'));assert.equal(state.busy,'');assert.ok(!text(a.render()).includes('678ms'))}
+   if(['disappear','source','disabled'].includes(kind)){assert.ok(!host.render().notice.includes('678 ms'));assert.ok(!text(a.render()).includes('678ms'))}
+   a.close();host.close()
+   if(['disappear','source','disabled','unmount'].includes(kind)){const fresh=owner(pages.GroupSection);try{assert.ok(!text(fresh.render({c,g,expanded:true,onChanged(){}})).includes('678ms'))}finally{fresh.close()}}
   }
  })
  await test('native detail unknown fields, HTTP error and late completion safety',async()=>{
