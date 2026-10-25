@@ -1,7 +1,7 @@
 import { NikkiManagement, NikkiSubscription, NikkiRule, NikkiFile, NikkiManagementError, NIKKI_RULE_TYPES, loadNikkiManagement, saveNikkiSubscription, deleteNikkiSubscription, updateNikkiSubscription, saveNikkiRule, deleteNikkiRule, setNikkiRulesEnabled, reorderNikkiRules, selectNikkiProfile, readNikkiFile, saveNikkiFile } from "./api"
 import { rootToolbar } from "./root-toolbar"
 import { AppEvents, Button, Divider, HStack, VStack, Text, Image, Circle, RoundedRectangle, Spacer, ScrollView, LazyVStack, NavigationLink, Menu, Picker, TextField, Toggle, Form, Section, ProgressView, Editor, ZStack, modifiers, Safari, useState, useEffect, useMemo } from "scripting"
-import { ProxyTestTarget, ProxyNodeDetail, loadProxyNode, testProxyNode, proxyNodeError, Controller, Group, Conn, Rule, Provider, setRuleDisabled, closeRuleConnections, ruleToggleSupported, loadGroups, testGroup, selectProxy, loadProviders, updateProvider, loadRules, loadConnections, closeConnection, closeAllConnections, fmtBytes, fmtSpeed, fmtUptime, delayColor, loadRuntimeVersions, checkCoreUpdate, loadNikkiRuntime, NikkiRuntime, verifyCoreRestart, upgradeCoreAndVerify, lastControllerMode, loadConfig, setMode as setControllerMode, nikkiService, nikkiServiceStatus, coreAction, CoreAction, queryDNS, webpage } from "./api"
+import { ProxyNodeConnections, loadProxyNodeConnections, ProxyTestTarget, ProxyNodeDetail, loadProxyNode, testProxyNode, proxyNodeError, Controller, Group, Conn, Rule, Provider, setRuleDisabled, closeRuleConnections, ruleToggleSupported, loadGroups, testGroup, selectProxy, loadProviders, updateProvider, loadRules, loadConnections, closeConnection, closeAllConnections, fmtBytes, fmtSpeed, fmtUptime, delayColor, loadRuntimeVersions, checkCoreUpdate, loadNikkiRuntime, NikkiRuntime, verifyCoreRestart, upgradeCoreAndVerify, lastControllerMode, loadConfig, setMode as setControllerMode, nikkiService, nikkiServiceStatus, coreAction, CoreAction, queryDNS, webpage } from "./api"
 import { usePreferences, KernelConfigPage, updatePreference, Choice, ThresholdRange, Range, TestURLField } from "./settings-ui"
 import { NODE_SORT_OPTIONS, savePreferences, getPreferences, cachedIcon, readCachedIcon, feedback } from "./preferences"
 import { selectable, sortedNodes, historyFor, SceneVisibility, filterConnections, clientLabels, saveClientLabel, sourceKey, confirmed } from "./dashboard-model"
@@ -59,24 +59,53 @@ function publishNodeDelay(c:Controller,name:string,delay:number) {
   for(const [key,values] of testedDelays) if(key.startsWith(source+"|")&&Object.prototype.hasOwnProperty.call(values,name)) testedDelays.set(key,{...values,[name]:delay})
   for(const notify of nodeDelayListeners.get(source)??[])notify(name,delay)
 }
+// Explicit system-colored boxes, independent of Form's platform default grouping.
+function NodeDetailBox({title,children}:{title?:string;children?:any}) {
+  return <VStack alignment="leading" spacing={8} frame={{maxWidth:"infinity"}}>
+    {title?<Text foregroundStyle="secondaryLabel" padding={{leading:16}}>{title}</Text>:null}
+    <VStack spacing={0} padding={{horizontal:16}} frame={{maxWidth:"infinity"}} background={<RoundedRectangle cornerRadius={22} fill="secondarySystemBackground"/>}>{children}</VStack>
+  </VStack>
+}
+function NodeDetailRow({label,value}:{label:string;value:string}) {
+  return <HStack padding={{vertical:16}}><Text>{label}</Text><Spacer/><Text foregroundStyle="secondaryLabel">{value}</Text></HStack>
+}
 export function ProxyNodeDetailPage({c,name,target}:{c:Controller;name:string;target?:ProxyTestTarget}) {
   const [data,setData]=useState<ProxyNodeDetail|null>(null),[error,setError]=useState(""),[revision,setRevision]=useState(0)
+  const [snapshot,setSnapshot]=useState<ProxyNodeConnections|null>(null),[connectionError,setConnectionError]=useState("")
   const source=JSON.stringify([c,name,target]),[owner]=useState({epoch:0,alive:true,source})
   if(owner.source!==source){owner.source=source;owner.epoch++}
-  useEffect(()=>{owner.alive=true;const epoch=++owner.epoch;setData(null);setError("")
-    void loadProxyNode(c,name,target).then(d=>{if(owner.alive&&owner.epoch===epoch)setData(d)}).catch(e=>{if(owner.alive&&owner.epoch===epoch)setError(proxyNodeError(e))})
+  useEffect(()=>{owner.alive=true;const epoch=++owner.epoch;setData(null);setError("");setSnapshot(null);setConnectionError("")
+    const current=()=>owner.alive&&owner.epoch===epoch
+    void loadProxyNode(c,name,target).then(d=>{if(current())setData(d)}).catch(e=>{if(current())setError(proxyNodeError(e))})
+    void loadProxyNodeConnections(c,target?.name??name).then(d=>{if(current())setSnapshot(d)}).catch(e=>{if(current())setConnectionError(proxyNodeError(e))})
     return()=>{owner.epoch++}
-  },[source,name,revision])
+  },[source,revision])
   useEffect(()=>()=>{owner.alive=false;owner.epoch++},[])
+  const refresh=()=>{owner.alive=true;setRevision(n=>n+1)}
+  const capability=(v:boolean|undefined)=>v===undefined?"内核未提供":v?"支持":"不支持"
   return <ScrollView background="systemBackground" navigationTitle={name} navigationBarTitleDisplayMode="inline" onAppear={()=>{owner.alive=true}} onDisappear={()=>{owner.alive=false;owner.epoch++}}>
     <VStack spacing={20} padding={{horizontal:16,vertical:8}}>
-      {error?<Card><Text foregroundStyle="systemRed">{error}</Text><Button title="重试" action={()=>{owner.alive=true;setRevision(n=>n+1)}}/></Card>:null}
-      {!data&&!error?<Card><Text>正在读取…</Text></Card>:null}
-      {data?<VStack spacing={0} padding={{horizontal:16}} frame={{maxWidth:"infinity"}} background={<RoundedRectangle cornerRadius={22} fill="secondarySystemBackground"/>}>
-        <HStack padding={{vertical:16}}><Text>代理类型</Text><Spacer/><Text foregroundStyle="secondaryLabel">{data.type||"内核未提供"}</Text></HStack>
-        <Divider/>
-        <HStack padding={{vertical:16}}><Text>UDP 转发</Text><Spacer/><Text foregroundStyle="secondaryLabel">{data.udp===undefined?"内核未提供":data.udp?"支持":"不支持"}</Text></HStack>
-      </VStack>:null}
+      <Button title="刷新快照" action={refresh}/>
+      {error?<NodeDetailBox><Text foregroundStyle="systemRed">{error}</Text><Button title="重试" action={refresh}/></NodeDetailBox>:null}
+      {!data&&!error?<NodeDetailBox><Text>正在读取代理信息…</Text></NodeDetailBox>:null}
+      {data?<>
+        <NodeDetailBox><NodeDetailRow label="代理类型" value={data.type||"内核未提供"}/><Divider/><NodeDetailRow label="UDP 转发" value={capability(data.udp)}/></NodeDetailBox>
+        <NodeDetailBox title="来源"><NodeDetailRow label="所属订阅" value={target?.provider??"未指定提供者（全局代理接口）"}/>{target&&target.name!==name?<><Divider/><NodeDetailRow label="实际节点" value={target.name}/></>:null}</NodeDetailBox>
+        <NodeDetailBox title="协议能力">{(["xudp","tfo","mptcp"] as const).map((key,i)=><VStack key={key} spacing={0} frame={{maxWidth:"infinity"}}>{i?<Divider/>:null}<NodeDetailRow label={key.toUpperCase()} value={capability(data[key])}/></VStack>)}</NodeDetailBox>
+        <NodeDetailBox title="最近探测"><NodeDetailRow label="最近探测状态" value={data.alive===undefined?"内核未提供":data.alive?"存活":"未存活"}/></NodeDetailBox>
+        <Text font={12} foregroundStyle="secondaryLabel">最近探测结果不是实时可用性。</Text>
+      </>:null}
+      <Text font={12} foregroundStyle="secondaryLabel">仅进入页面或手动刷新时读取活动连接快照；按实际节点名称精确匹配代理链，可能包含其他订阅的同名节点。字节为这些活动连接自建立以来的计数，不是刷新间隔增量，也不是此订阅的精确统计或节点历史累计。</Text>
+      {connectionError?<NodeDetailBox title="当前关联连接"><Text foregroundStyle="systemRed">{`连接快照读取失败：${connectionError}`}</Text><Button title="重试连接快照" action={refresh}/></NodeDetailBox>:null}
+      {!snapshot&&!connectionError?<NodeDetailBox title="当前关联连接"><Text>正在读取连接快照…</Text></NodeDetailBox>:null}
+      {snapshot?<>
+        <NodeDetailBox title="当前连接流量"><NodeDetailRow label="总计" value={fmtBytes(snapshot.upload+snapshot.download)}/><Divider/><NodeDetailRow label="上传" value={fmtBytes(snapshot.upload)}/><Divider/><NodeDetailRow label="下载" value={fmtBytes(snapshot.download)}/></NodeDetailBox>
+        <NodeDetailBox title="当前关联连接"><NodeDetailRow label="匹配活动连接" value={String(snapshot.connections.length)}/><Divider/><NodeDetailRow label="快照时间" value={new Date(snapshot.at).toLocaleTimeString()}/>
+          {!snapshot.connections.length?<Text padding={{vertical:16}}>快照中没有同名关联活动连接</Text>:null}
+          {snapshot.connections.slice(0,20).map(connection=><VStack key={connection.id} alignment="leading" spacing={6} frame={{maxWidth:"infinity"}}><Divider/><Text padding={{top:12}}>{connection.host}</Text><Text font={12} foregroundStyle="secondaryLabel">{connection.rule||"规则未提供"}</Text><Text font={12} foregroundStyle="secondaryLabel">{connection.chain}</Text><NodeDetailRow label="上传 / 下载" value={`${fmtBytes(connection.up)} / ${fmtBytes(connection.down)}`}/></VStack>)}
+        </NodeDetailBox>
+        {snapshot.connections.length>20?<Text font={12} foregroundStyle="secondaryLabel">{`仅展示前20条；流量合计涵盖全部${snapshot.connections.length}条匹配活动连接。`}</Text>:null}
+      </>:null}
     </VStack>
   </ScrollView>
 }

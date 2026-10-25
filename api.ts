@@ -1,7 +1,7 @@
 import { CpuSampler, CpuUsage, CpuMeta, parseCpuInfo, thermalCelsius } from "./openwrt-metrics"
 
 import { getPreferences, customHeaders, recordEvent, controllerHealth, feedback } from "./preferences"
-export const VERSION = "1.97"
+export const VERSION = "1.98"
 
 export type Kind = "clash" | "openwrt"
 export type Plugin = "openclash" | "nikki" | "mihomo"
@@ -640,6 +640,16 @@ export async function loadConnections(c0: Controller, signal?: AbortController["
       }
     })
   }
+}
+
+// Read-only point-in-time view; does not publish to ConnectionHistory or sampling owners.
+export interface ProxyNodeConnections {
+  name: string; at: number; connections: Conn[]; upload: number; download: number
+}
+export async function loadProxyNodeConnections(c: Controller, name: string): Promise<ProxyNodeConnections> {
+  const connections = (await loadConnections(c)).filter(x => x.chains?.includes(name))
+  return { name, at: Date.now(), connections,
+    upload: connections.reduce((sum,x) => sum+x.up,0), download: connections.reduce((sum,x) => sum+x.down,0) }
 }
 
 export async function loadConnectionHosts(c0: Controller, limit = 20): Promise<string[]> {

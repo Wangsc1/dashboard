@@ -3,8 +3,9 @@ const fs=require('node:fs'),vm=require('node:vm')
 const harness=fs.readFileSync(__dirname+'/run.cjs','utf8').split(';(async () => {')[0]
 const checks=String.raw`
 scripting.useState=function(v){const slots=hooks,i=hookIndex++;if(!(i in slots))slots[i]=typeof v==='function'?v():v;return [slots[i],v=>{slots[i]=typeof v==='function'?v(slots[i]):v}]}
+function expandDetail(n){if(!n||typeof n!=="object")return n;if(typeof n.type==="function"&&["NodeDetailBox","NodeDetailRow"].includes(n.type.name))return expandDetail(n.type(n.props));return {...n,props:{...n.props,children:(n.props?.children??[]).map(expandDetail)}}}
 function owner(fn){const state={hooks:[],cleanups:new Map()};let props
- return {render(p){props=p??props;const saved={hooks,cleanups,effects,hookIndex};hooks=state.hooks;cleanups=state.cleanups;effects=[];hookIndex=0;const tree=fn(props),queued=effects;hooks=saved.hooks;cleanups=saved.cleanups;effects=saved.effects;hookIndex=saved.hookIndex;for(const f of queued){const old=cleanups;cleanups=state.cleanups;f();cleanups=old}return tree},close(){for(const f of state.cleanups.values())f();state.cleanups.clear()},state}}
+ return {render(p){props=p??props;const saved={hooks,cleanups,effects,hookIndex};hooks=state.hooks;cleanups=state.cleanups;effects=[];hookIndex=0;const tree=expandDetail(fn(props)),queued=effects;hooks=saved.hooks;cleanups=saved.cleanups;effects=saved.effects;hookIndex=saved.hookIndex;for(const f of queued){const old=cleanups;cleanups=state.cleanups;f();cleanups=old}return tree},close(){for(const f of state.cleanups.values())f();state.cleanups.clear()},state}}
 function deferred(){let resolve;const promise=new Promise(r=>resolve=r);return {promise,resolve}}
 async function settle(){for(let i=0;i<100;i++)await Promise.resolve()}
 function menu(t,n){const card=nodes(t,'VStack').find(v=>v.props.contextMenu&&text(v).includes(n));assert.ok(card);return card.props.contextMenu.menuItems}
@@ -99,6 +100,7 @@ const group=(title='test')=>({name:title,type:'Selector',all:[name,'other'],now:
     assert.ok(url.startsWith(base+'/'),'controller must use discovered host/port, not LuCI forwarding')
     assert.equal(init.headers.Authorization,'Bearer synthetic-token')
     const path=url.slice(base.length).split('?')[0]
+    if(path==='/connections')return {body:{connections:[]}}
     if(path==='/proxies')return {body:{proxies:{G:{type:'Selector',all:[leaf,local],now:leaf},[local]:{type:'Direct',history:[{delay:33}]}}}}
     if(path==='/providers/proxies')return {body:{providers:{[provider]:{vehicleType:'HTTP',proxies:[{name:leaf,...detail}]}}}}
     if(path===providerPath||path===localPath)return {body:detail}
@@ -117,21 +119,56 @@ const group=(title='test')=>({name:title,type:'Selector',all:[name,'other'],now:
     assert.ok(calls[0].url.includes('timeout='+Math.min(2000,pref.getPreferences().testTimeout)));assert.ok(calls[0].url.includes('url='+encodeURIComponent(pref.getPreferences().testURL)))
     assert.ok(text(card.render()).includes('77ms'))
     action(t,leaf,'info.circle');state=host.render();assert.equal(state.destination.content.props.target.provider,provider)
-    form.render(state.destination.content.props);await settle();assert.ok(text(form.render()).includes('Snell'));assert.equal(calls.length,2);assert.equal(calls[1].url,base+providerPath)
+    form.render(state.destination.content.props);await settle();assert.ok(text(form.render()).includes('Snell'));assert.equal(calls.length,3);assert.ok(calls.some(x=>x.url===base+providerPath));assert.ok(calls.some(x=>x.url===base+'/connections'))
     assert.ok(!text(form.render()).includes('NEVER'));assert.ok(calls.every(x=>x.init.method==='GET'))
     calls.length=0;await api.testProxyNode(c,local,g.testTargets[local]);await api.loadProxyNode(c,local,g.testTargets[local]);assert.equal(calls[0].url.split('?')[0],base+localPath+'/delay');assert.equal(calls[1].url,base+localPath)
    }finally{form.close();card.close();host.close()}
   }
  })
+ await test('independent connection snapshot uses exact chain elements and aggregates all same-name connections without sampling',async()=>{
+  const c={...device,id:'snapshot-independent'},node='🇭🇰 Exact',before=model.historyFor(c),active=before.active,closed=before.closed
+  const rows=[{id:'a',chains:['Group',node],providerChains:['Subscription A'],upload:100,download:200},{id:'b',chains:[node],providerChains:['Subscription B'],upload:30,download:70},{id:'c',chains:[node+' extra'],upload:9000,download:9000},{id:'d',chains:['other'],upload:5000,download:5000}]
+  responder=()=>({body:{connections:rows}});calls.length=0
+  const result=await api.loadProxyNodeConnections(c,node);assert.equal(result.connections.length,2);assert.equal(result.upload,130);assert.equal(result.download,270);assert.equal(result.name,node);assert.ok(result.at>0)
+  assert.equal(calls.length,1);assert.ok(calls[0].url.endsWith('/connections'));assert.equal(before.active,active);assert.equal(before.closed,closed)
+  responder=()=>({body:{connections:[]}});assert.equal((await api.loadProxyNodeConnections(c,node)).connections.length,0)
+  responder=()=>({status:503});await assert.rejects(()=>api.loadProxyNodeConnections(c,node),/503/)
+ })
+ await test('detail capabilities, provider identity, name-only scope, totals, list cap, refresh and partial failures',async()=>{
+  const node='actual-node',target={name:node,provider:'Subscription A'},view=owner(pages.ProxyNodeDetailPage)
+  const connections=Array.from({length:22},(_,i)=>({id:String(i),chains:['Group',node],metadata:{host:'target-'+i+'.invalid'},rule:'MATCH',upload:100,download:200}))
+  let failConnections=false,failDetail=false
+  responder=url=>url.endsWith('/connections')?(failConnections?{status:503}:{body:{connections}}):(failDetail?{status:404}:{body:{type:'Shadowsocks',udp:true,xudp:true,tfo:false,mptcp:true,alive:true,history:[{delay:98765}],password:'NEVER'}})
+  try{
+   calls.length=0;view.render({c:device,name:'display-group',target});await settle();let t=view.render();assert.equal(calls.length,2)
+   const words=text(t);for(const value of ['Subscription A','actual-node','XUDP','TFO','MPTCP','最近探测','存活','当前连接流量','22','仅展示前20条','同名节点',api.fmtBytes(2200),api.fmtBytes(4400),api.fmtBytes(6600)])assert.ok(words.includes(value),value)
+   assert.ok(!/延迟历史|98765|NEVER|最高上传|最近错误/.test(words));assert.ok(words.includes('target-19.invalid'));assert.ok(!words.includes('target-20.invalid'))
+   view.render();await settle();assert.equal(calls.length,2,'rerender does not poll')
+   failConnections=true;button(t,'刷新快照').props.action();t=view.render();await settle();t=view.render();assert.ok(text(t).includes('Shadowsocks'));assert.ok(text(t).includes('连接快照读取失败'));assert.ok(!text(t).includes('总计'))
+   failConnections=false;failDetail=true;button(t,'重试连接快照').props.action();view.render();await settle();t=view.render();assert.ok(text(t).includes('HTTP 404'));assert.ok(text(t).includes('当前连接流量'));assert.ok(text(t).includes('22'))
+  }finally{view.close()}
+  const empty=owner(pages.ProxyNodeDetailPage);try{responder=url=>({body:url.endsWith('/connections')?{connections:[]}:{type:'Direct'}});empty.render({c:device,name:node});await settle();const t=empty.render();assert.ok(text(t).includes('没有同名关联活动连接'));assert.ok(text(t).includes('未指定提供者（全局代理接口）'));assert.ok(!text(t).includes('连接快照读取失败'))}finally{empty.close()}
+ })
+ await test('detail snapshot late responses are isolated on source change, departure and disposal',async()=>{
+  for(const kind of ['source','disappear','unmount']){
+   const view=owner(pages.ProxyNodeDetailPage),wait=deferred();let isOld=true
+   responder=url=>url.endsWith('/connections')?{wait:isOld?wait.promise:undefined,body:{connections:[{id:'one',metadata:{host:isOld?'OLD-HOST':'NEW-HOST'},chains:['actual'],upload:1,download:2}]}}:{body:{type:'Direct'}}
+   let t=view.render({c:device,name:'display',target:{name:'actual',provider:'A'}});await settle()
+   if(kind==='source'){isOld=false;t=view.render({c:{...device,url:'http://changed.invalid'},name:'display',target:{name:'actual',provider:'B'}});await settle()}
+   if(kind==='disappear')t.props.onDisappear()
+   if(kind==='unmount')view.close()
+   wait.resolve();await settle();if(kind!=='unmount'){t=view.render();assert.ok(!text(t).includes('OLD-HOST'));if(kind==='source')assert.ok(text(t).includes('NEW-HOST'))}view.close()
+  }
+ })
  await test('native detail unknown fields, HTTP error and late completion safety',async()=>{
   const a=owner(pages.ProxyNodeDetailPage);responder=()=>({body:{type:'VMess',udp:true,alive:false}})
-  let t=a.render({c:device,name});await settle();t=a.render();assert.equal(t.props.navigationTitle,name);assert.ok(text(t).includes('UDP 转发'));assert.ok(text(t).includes('支持'));assert.ok(!/XUDP|TFO|MPTCP|存活|延迟历史|流量|最高|最近错误/.test(text(t)))
+  let t=a.render({c:device,name});await settle();t=a.render();assert.equal(t.props.navigationTitle,name);assert.ok(text(t).includes('UDP 转发'));assert.ok(text(t).includes('支持'));assert.ok(text(t).includes('最近探测状态'));assert.ok(text(t).includes('未存活'));assert.ok(!/延迟历史|最高|最近错误/.test(text(t)))
   assert.equal(t.type,'ScrollView');assert.equal(t.props.background,'systemBackground');assert.equal(t.props.preferredColorScheme,undefined)
   const box=nodes(t,'VStack').find(n=>n.props.background?.type==='RoundedRectangle');assert.ok(box);assert.equal(box.props.background.props.fill,'secondarySystemBackground');assert.equal(box.props.background.props.cornerRadius,22)
   assert.equal(nodes(box,'Divider').length,1);assert.equal(nodes(box,'HStack').length,2)
   const rows=nodes(box,'HStack');assert.equal(text(rows[0].props.children[0]),'代理类型');assert.equal(text(rows[0].props.children.at(-1)),'VMess');assert.equal(rows[0].props.children.at(-1).props.foregroundStyle,'secondaryLabel')
   assert.equal(text(rows[1].props.children[0]),'UDP 转发');assert.equal(text(rows[1].props.children.at(-1)),'支持');assert.equal(rows[1].props.children.at(-1).props.foregroundStyle,'secondaryLabel');a.close()
-  for(const udp of [undefined,false]){const view=owner(pages.ProxyNodeDetailPage);responder=()=>({body:{udp,history:[{delay:99}],xudp:true,alive:true}});view.render({c:device,name});await settle();const tree=view.render();assert.ok(text(tree).includes(udp===false?'不支持':'内核未提供'));assert.ok(!/延迟历史|99|XUDP|存活/.test(text(tree)));view.close()}
+  for(const udp of [undefined,false]){const view=owner(pages.ProxyNodeDetailPage);responder=()=>({body:{udp,history:[{delay:99}],xudp:true,alive:true}});view.render({c:device,name});await settle();const tree=view.render();assert.ok(text(tree).includes(udp===false?'不支持':'内核未提供'));assert.ok(!/延迟历史|99/.test(text(tree)));view.close()}
   for(const kind of ['failure','unmount','disappear','source']){
    const b=owner(pages.ProxyNodeDetailPage),wait=deferred();responder=()=>({wait:wait.promise,status:kind==='failure'?404:200,body:{type:'OLD-DETAIL'}})
    let view=b.render({c:device,name});await settle()
