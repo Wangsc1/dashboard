@@ -117,7 +117,7 @@ const group=(title='test')=>({name:title,type:'Selector',all:[name,'other'],now:
     assert.ok(calls[0].url.includes('timeout='+Math.min(2000,pref.getPreferences().testTimeout)));assert.ok(calls[0].url.includes('url='+encodeURIComponent(pref.getPreferences().testURL)))
     assert.ok(text(card.render()).includes('77ms'))
     action(t,leaf,'info.circle');state=host.render();assert.equal(state.destination.content.props.target.provider,provider)
-    form.render(state.destination.content.props);await settle();assert.ok(text(form.render()).includes('类型：Snell'));assert.equal(calls.length,2);assert.equal(calls[1].url,base+providerPath)
+    form.render(state.destination.content.props);await settle();assert.ok(text(form.render()).includes('Snell'));assert.equal(calls.length,2);assert.equal(calls[1].url,base+providerPath)
     assert.ok(!text(form.render()).includes('NEVER'));assert.ok(calls.every(x=>x.init.method==='GET'))
     calls.length=0;await api.testProxyNode(c,local,g.testTargets[local]);await api.loadProxyNode(c,local,g.testTargets[local]);assert.equal(calls[0].url.split('?')[0],base+localPath+'/delay');assert.equal(calls[1].url,base+localPath)
    }finally{form.close();card.close();host.close()}
@@ -125,7 +125,13 @@ const group=(title='test')=>({name:title,type:'Selector',all:[name,'other'],now:
  })
  await test('native detail unknown fields, HTTP error and late completion safety',async()=>{
   const a=owner(pages.ProxyNodeDetailPage);responder=()=>({body:{type:'VMess',udp:true,alive:false}})
-  let t=a.render({c:device,name});await settle();t=a.render();assert.equal(t.props.navigationTitle,name);assert.ok(text(t).includes('UDP：是'));assert.ok(text(t).includes('XUDP：内核未提供'));assert.ok(text(t).includes('存活（最近探测）：否'));assert.ok(!text(t).includes('流量'));a.close()
+  let t=a.render({c:device,name});await settle();t=a.render();assert.equal(t.props.navigationTitle,name);assert.ok(text(t).includes('UDP 转发'));assert.ok(text(t).includes('支持'));assert.ok(!/XUDP|TFO|MPTCP|存活|延迟历史|流量|最高|最近错误/.test(text(t)))
+  assert.equal(t.type,'ScrollView');assert.equal(t.props.background,'systemBackground');assert.equal(t.props.preferredColorScheme,undefined)
+  const box=nodes(t,'VStack').find(n=>n.props.background?.type==='RoundedRectangle');assert.ok(box);assert.equal(box.props.background.props.fill,'secondarySystemBackground');assert.equal(box.props.background.props.cornerRadius,22)
+  assert.equal(nodes(box,'Divider').length,1);assert.equal(nodes(box,'HStack').length,2)
+  const rows=nodes(box,'HStack');assert.equal(text(rows[0].props.children[0]),'代理类型');assert.equal(text(rows[0].props.children.at(-1)),'VMess');assert.equal(rows[0].props.children.at(-1).props.foregroundStyle,'secondaryLabel')
+  assert.equal(text(rows[1].props.children[0]),'UDP 转发');assert.equal(text(rows[1].props.children.at(-1)),'支持');assert.equal(rows[1].props.children.at(-1).props.foregroundStyle,'secondaryLabel');a.close()
+  for(const udp of [undefined,false]){const view=owner(pages.ProxyNodeDetailPage);responder=()=>({body:{udp,history:[{delay:99}],xudp:true,alive:true}});view.render({c:device,name});await settle();const tree=view.render();assert.ok(text(tree).includes(udp===false?'不支持':'内核未提供'));assert.ok(!/延迟历史|99|XUDP|存活/.test(text(tree)));view.close()}
   for(const kind of ['failure','unmount','disappear','source']){
    const b=owner(pages.ProxyNodeDetailPage),wait=deferred();responder=()=>({wait:wait.promise,status:kind==='failure'?404:200,body:{type:'OLD-DETAIL'}})
    let view=b.render({c:device,name});await settle()

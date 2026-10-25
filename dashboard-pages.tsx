@@ -68,13 +68,17 @@ export function ProxyNodeDetailPage({c,name,target}:{c:Controller;name:string;ta
     return()=>{owner.epoch++}
   },[source,name,revision])
   useEffect(()=>()=>{owner.alive=false;owner.epoch++},[])
-  const boolean=(v:boolean|undefined)=>v===undefined?"内核未提供":v?"是":"否"
-  return <Form background="systemBackground" navigationTitle={name} navigationBarTitleDisplayMode="inline" onAppear={()=>{owner.alive=true}} onDisappear={()=>{owner.alive=false;owner.epoch++}}>
-    {error?<Section><Text foregroundStyle="systemRed">{error}</Text><Button title="重试" action={()=>{owner.alive=true;setRevision(n=>n+1)}}/></Section>:null}
-    {!data&&!error?<Section><Text>正在读取…</Text></Section>:null}
-    {data?<><Section header={<Text>代理信息</Text>}><Text>{`类型：${data.type||"内核未提供"}`}</Text>{target&&target.name!==name?<Text>{`实际节点：${target.name}`}</Text>:null}{(["udp","xudp","tfo","mptcp","alive"] as const).map(k=><Text key={k}>{`${k==="alive"?"存活（最近探测）":k.toUpperCase()}：${boolean(data[k])}`}</Text>)}</Section>
-      <Section header={<Text>延迟历史</Text>} footer={<Text>仅内核提供的最近十次记录；不代表实时可用性。</Text>}>{data.history.length?data.history.map((entry,i)=><Text key={String(i)}>{`${entry.time??"时间未提供"} · ${entry.delay>0?entry.delay+" ms":"失败"}`}</Text>):<Text>内核未提供记录</Text>}</Section></>:null}
-  </Form>
+  return <ScrollView background="systemBackground" navigationTitle={name} navigationBarTitleDisplayMode="inline" onAppear={()=>{owner.alive=true}} onDisappear={()=>{owner.alive=false;owner.epoch++}}>
+    <VStack spacing={20} padding={{horizontal:16,vertical:8}}>
+      {error?<Card><Text foregroundStyle="systemRed">{error}</Text><Button title="重试" action={()=>{owner.alive=true;setRevision(n=>n+1)}}/></Card>:null}
+      {!data&&!error?<Card><Text>正在读取…</Text></Card>:null}
+      {data?<VStack spacing={0} padding={{horizontal:16}} frame={{maxWidth:"infinity"}} background={<RoundedRectangle cornerRadius={22} fill="secondarySystemBackground"/>}>
+        <HStack padding={{vertical:16}}><Text>代理类型</Text><Spacer/><Text foregroundStyle="secondaryLabel">{data.type||"内核未提供"}</Text></HStack>
+        <Divider/>
+        <HStack padding={{vertical:16}}><Text>UDP 转发</Text><Spacer/><Text foregroundStyle="secondaryLabel">{data.udp===undefined?"内核未提供":data.udp?"支持":"不支持"}</Text></HStack>
+      </VStack>:null}
+    </VStack>
+  </ScrollView>
 }
 // The page (not a lazy card/context-menu preview) owns navigation and actions.
 export function useProxyNodeActions(c:Controller|null,enabled:boolean) {
