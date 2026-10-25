@@ -10,7 +10,7 @@ const plot=load('plot-view'),geometry=load('native-plot')
 function instance(initial){const state={hooks:[],cleanups:new Map()},p={...initial};return {props:p,render(){const saved={hooks,cleanups,effects,hookIndex};hooks=state.hooks;cleanups=state.cleanups;effects=[];hookIndex=0;let tree=plot.MountedCanvasPlot(p);const queued=effects;queued.forEach(f=>f());hookIndex=0;effects=[];tree=plot.MountedCanvasPlot(p);hooks=saved.hooks;cleanups=saved.cleanups;effects=saved.effects;hookIndex=saved.hookIndex;return tree},host(){return state.hooks[0].current},close(){for(const f of state.cleanups.values())f();state.cleanups.clear()}}}
 function draw(tree,width=145,height=76){const ops=[],ctx=new Proxy({}, {get:(_,k)=>(...args)=>ops.push([k,...args]),set:(_,k,v)=>{ops.push([k,v]);return true}});const before=writes;insideDraw=true;try{tree.props.draw(ctx,{width,height},now/1000)}finally{insideDraw=false};assert.equal(writes,before);return ops}
 function drain(){const callbacks=[...timers.values()];timers.clear();callbacks.forEach(f=>f())}
-function native(tree){assert.equal(tree.type,'TimelineCanvas');assert.equal(tree.props.schedule,'animation');assert.equal(tree.props.opaque,false);assert.equal(nodes(tree,'WebView').length,0);assert.equal(nodes(tree,'ZStack').length,0);assert.ok(!('opacity' in tree.props));return tree}
+function native(tree){assert.equal(tree.type,'TimelineCanvas');assert.equal(tree.props.schedule.minimumInterval,1/30);assert.equal(tree.props.opaque,false);assert.equal(nodes(tree,'WebView').length,0);assert.equal(nodes(tree,'ZStack').length,0);assert.ok(!('opacity' in tree.props));return tree}
 ;(async()=>{
  await test('20 native hosts: stable models/frames, one completion queue, final drawn geometry before pause, no per-frame React renders',async()=>{
   const os=Array.from({length:20},(_,i)=>instance({samples:[10,20,30],tone:'#3485eb',percent:true,running:true,plotHeight:i<3?96:76,role:i<3?'home':'detail',sheetTrace:i<3?undefined:7}))
@@ -83,6 +83,18 @@ function native(tree){assert.equal(tree.type,'TimelineCanvas');assert.equal(tree
   assert.equal(JSON.stringify({shown:m.shown,from:m.from,to:m.to,start:m.start,duration:m.duration}),before,'duplicate lifecycle cannot snap or restart current animation')
   assert.equal(writes,n+2,'only the two idle visible hosts accept a one-shot external redraw; live/hidden hosts do not toggle pause')
   assert.ok(os.slice(3).every(o=>o.render().props.paused))
+  os.forEach(o=>o.close());assert.equal(timers.size,0);assert.equal(sceneListeners.size,0)
+ })
+ await test('exact stationary geometry completes after one actual draw; parent renders alone do not toggle timeline state',async()=>{
+  const os=Array.from({length:20},()=>instance({samples:Array(12).fill(0),tone:'#3485eb',running:true,percent:true}))
+  os.map(o=>o.render()).forEach(t=>draw(t));drain()
+  for(let sample=0;sample<3;sample++){
+   now+=1000
+   for(const o of os){o.props.samples=Array(12).fill(0);const t=o.render();assert.equal(o.host().model.animating,false);assert.equal(t.props.paused,false);draw(t)}
+   assert.equal(timers.size,1);drain();assert.ok(os.every(o=>o.render().props.paused))
+   const before=writes;for(let j=0;j<5;j++)for(const o of os)assert.equal(o.render().props.paused,true)
+   assert.equal(writes,before,'unchanged parent props do not restart JS animation or pause setters');assert.equal(timers.size,0)
+  }
   os.forEach(o=>o.close());assert.equal(timers.size,0);assert.equal(sceneListeners.size,0)
  })
  await test('unmount before completion cancels queue, stale draw cannot set state; diagnostic is native, not document ready/painted',async()=>{

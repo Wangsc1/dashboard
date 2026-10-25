@@ -94,7 +94,7 @@ function instance(fn){const state={hooks:[],cleanups:new Map()};return {state,as
      return walk(await own.draw(n.props),where)
     }
     skeleton.push([where,n.props.frame??null])
-    assert.notEqual(n.type,'WebView');if(n.type==='TimelineCanvas'){const parent=[...instances.entries()].find(([key])=>where.startsWith(key+'/TimelineCanvas'));plots.push({path:where,model:parent[1].state.hooks[0].current.model});assert.equal(n.props.schedule,'animation')}
+    assert.notEqual(n.type,'WebView');if(n.type==='TimelineCanvas'){const parent=[...instances.entries()].find(([key])=>where.startsWith(key+'/TimelineCanvas'));plots.push({path:where,model:parent[1].state.hooks[0].current.model});assert.equal(n.props.schedule.minimumInterval,1/30)}
     // Assert key uniqueness at the actual sibling scope, not globally across distinct parents.
     const kids=(n.props?.children??[]).filter(x=>x&&typeof x==='object'),keys=kids.map(x=>x.props?.key).filter(x=>x!==undefined)
     assert.equal(new Set(keys).size,keys.length,'duplicate sibling key '+where)

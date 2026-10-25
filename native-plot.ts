@@ -26,14 +26,23 @@ export function updateNativePlot(s:NativePlotModel,input:NativePlotInput,now:num
   let goal=target
   if(old.length===60&&values.length===60)goal=[{x:-1/59,y:old[0]},...target]
   const n=Math.max(origin.length,goal.length)
-  s.from=Array.from({length:n},(_,i)=>origin[Math.min(i,origin.length-1)])
+  // from must not alias shown: the per-frame loop now reuses shown's point objects.
+  s.from=Array.from({length:n},(_,i)=>{const p=origin[Math.min(i,origin.length-1)];return {x:p.x,y:p.y}})
   s.to=Array.from({length:n},(_,i)=>goal[Math.min(i,goal.length-1)])
-  s.history=values;s.scaleFrom=s.scale;s.start=now;s.duration=Math.max(1000,Math.min(2500,observed));s.animating=true
+  s.history=values;s.scaleFrom=s.scale;s.start=now;s.duration=Math.max(1000,Math.min(2500,observed))
+  s.animating=s.scaleFrom!==s.scaleTo||s.from.some((p,i)=>p.x!==s.to[i].x||p.y!==s.to[i].y)
+  // Allocate only at sample boundaries, never per native animation tick.
+  s.shown.length=n
+  for(let i=0;i<n;i++)if(!s.shown[i])s.shown[i]={x:s.from[i].x,y:s.from[i].y}
 }
 export function advanceNativePlot(s:NativePlotModel,now:number){
   if(!s.animating)return
-  const p=Math.max(0,Math.min(1,(now-s.start)/s.duration)),mix=(a:number,b:number)=>a+(b-a)*p
-  s.shown=s.from.map((a,i)=>({x:mix(a.x,s.to[i].x),y:mix(a.y,s.to[i].y)}));s.scale=mix(s.scaleFrom,s.scaleTo)
+  const p=Math.max(0,Math.min(1,(now-s.start)/s.duration))
+  for(let i=0;i<s.from.length;i++){
+    const a=s.from[i],b=s.to[i],out=s.shown[i]
+    out.x=a.x+(b.x-a.x)*p;out.y=a.y+(b.y-a.y)*p
+  }
+  s.scale=s.scaleFrom+(s.scaleTo-s.scaleFrom)*p
   if(p>=1)s.animating=false
 }
 export function restoreNativePlot(s:NativePlotModel){s.animating=false;s.shown=canonicalPlot(s.history);s.scale=s.scaleTo;s.lastSampleAt=0}

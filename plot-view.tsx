@@ -17,6 +17,8 @@ function afterFinalDraw(owner:object,finish:()=>void){
   if(completionTimer!==undefined)return
   completionTimer=setTimeout(()=>{completionTimer=undefined;const pending=[...completions.values()];completions.clear();for(const done of pending)done()},0)
 }
+// Explicitly approved cadence: reduce native bridge load without changing sample timing.
+const PLOT_SCHEDULE={minimumInterval:1/30}
 const kickListeners=new Set<(reason:'selected'|'appear')=>void>()
 export function requestPlotKick(reason:'selected'|'appear'){for(const fn of [...kickListeners])fn(reason)}
 export function MountedCanvasPlot({samples,tone,plotHeight=96,plotWidth,area=false,running=true,percent=false,elevated=false,role='home',sheetTrace}:CanvasPlotProps){
@@ -50,7 +52,7 @@ export function MountedCanvasPlot({samples,tone,plotHeight=96,plotWidth,area=fal
   },[samples,tone,area,percent,running,theme,elevated,host])
   // A layout change is not a sample: redraw retained geometry without a synthetic x-shift.
   useEffect(()=>{wake()},[plotHeight,plotWidth,host])
-  return <TimelineCanvas schedule="animation" paused={paused} opaque={false}
+  return <TimelineCanvas schedule={PLOT_SCHEDULE} paused={paused} opaque={false}
     frame={{minHeight:plotHeight,maxHeight:plotHeight,minWidth:0,maxWidth:'infinity'}}
     onAppear={()=>{if(!host.alive)return;const returning=!host.visible;host.visible=true;record('host-appear');if(returning){restoreNativePlot(host.model);host.model.active=host.running&&host.foreground;wake()}}
     onDisappear={()=>{if(!host.alive)return;host.visible=false;record('host-disappear');restoreNativePlot(host.model);host.model.active=false;park()}}
