@@ -105,7 +105,7 @@ const plain=x=>JSON.parse(JSON.stringify(x))
       assert.ok(text(tree).includes('#2'));assert.ok(text(tree).includes('#160'));assert.ok(!text(tree).includes('other-'))
       reads=0;button(tree,'加载更多').props.action();tree=render(pages.RulesPage,props);assert.equal(reads,0);assert.ok(text(tree).includes('#200'))
       api.loadRules=async()=>[{type:'DOMAIN',payload:'MATCH-NEW',proxy:'DIRECT'}]
-      button(trailing(tree.props.toolbar),'刷新规则').props.action();render(pages.RulesPage,props);await settle();tree=render(pages.RulesPage,props)
+      void tree.props.refreshable();render(pages.RulesPage,props);await settle();tree=render(pages.RulesPage,props)
       assert.ok(text(tree).includes('MATCH-NEW'));assert.ok(text(tree).includes('#1'));assert.ok(!text(tree).includes('MATCH-199'))
     }finally{unmount();api.loadRules=loadRules;api.loadProviders=loadProviders}
   })

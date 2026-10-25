@@ -15,7 +15,7 @@ const FG = { light: "#41434B", dark: "#CFD0D7" }
 export const safeError = () => "请求未完成：请检查连接、认证与当前内核/Nikki版本支持（404/权限不足可能不支持该操作）。详情不会写入日志。"
 async function attempt(fn: () => Promise<any>) { try { await fn() } catch { await Dialog.alert({ title: "操作未完成", message: safeError() }) } }
 function Card({children,compact=false,contextMenu,...rest}: {children?:any;animation?:any;transition?:any;compact?:boolean;opacity?:number;contextMenu?:any}) { const content=<VStack {...rest} alignment="leading" spacing={compact?6:10} font={compact?12:14} foregroundStyle={FG} modifiers={modifiers().frame({maxWidth:"infinity",alignment:"leading"}).padding({horizontal:compact?10:14,vertical:compact?10:14}).background(<RoundedRectangle cornerRadius={compact?16:22} fill="secondarySystemBackground"/>)}>{children}</VStack>;return contextMenu?<VStack spacing={0} frame={{maxWidth:"infinity"}} contextMenu={contextMenu}>{content}</VStack>:content }
-function Shell({children,title,toolbar,onAppear,onDisappear,animation,background,overlay}:any) { return <ScrollView overlay={overlay} background={background} navigationTitle={title} navigationBarTitleDisplayMode="inline" toolbar={toolbar} onAppear={onAppear} onDisappear={onDisappear}><LazyVStack animation={animation} spacing={12} padding={{horizontal:14,vertical:8}}>{children}</LazyVStack></ScrollView> }
+function Shell({children,title,toolbar,onAppear,onDisappear,animation,background,overlay,refresh}:any) { return <ScrollView {...(refresh?{refreshable:refresh}:{})} overlay={overlay} background={background} navigationTitle={title} navigationBarTitleDisplayMode="inline" toolbar={toolbar} onAppear={onAppear} onDisappear={onDisappear}><LazyVStack animation={animation} spacing={12} padding={{horizontal:14,vertical:8}}>{children}</LazyVStack></ScrollView> }
 function Hint({children}:any) { return <Text font={12} foregroundStyle="secondaryLabel">{children}</Text> }
 function Chip({title,color="systemBlue",small=false}:{title:string;color?:string;small?:boolean}) { return <Text font={small?10:11} foregroundStyle={color as any} padding={{horizontal:6,vertical:3}} background={<RoundedRectangle cornerRadius={6} fill="tertiarySystemBackground"/>}>{title}</Text> }
 function Pages({limit,total,more,hideCount=false}:{limit:number;total:number;more:()=>void;hideCount?:boolean}) { if(hideCount&&limit>=total)return null;return <HStack>{hideCount?null:<Hint>{`已展示 ${Math.min(limit,total)} / ${total}`}</Hint>}<Spacer/>{limit<total ? <Button title="加载更多" action={more}/> : null}</HStack> }
@@ -245,14 +245,35 @@ export function prefetchConnections(active:Controller|null){
 export function RulesPage({active,version,onClose,selected=true}:{active:Controller|null;version:number;onClose?:()=>void;selected?:boolean}) {
   const rulesKey=active?sourceKey(active):"",rulesCached=hydrateRules(rulesKey),[rules,setRules]=useState<Rule[]>(rulesCached?.rules??[]),[providers,setProviders]=useState<Provider[]>(rulesCached?.providers??[]),[tab,setTab]=useState("rules"),[q,setQ]=useState(""),[search,setSearch]=useState(false),[limit,setLimit]=useState(80),[tick,setTick]=useState(0),[err,setErr]=useState(""),[visible,setVisible]=useState(selected)
   useEffect(()=>{const c=hydrateRules(rulesKey);setRules(c?.rules??[]);setProviders(c?.providers??[])},[rulesKey])
-  useEffect(()=>{if(!active||!visible)return;let alive=true;setErr("");loadRules(active).then(xs=>{if(alive){setRules(xs);setRulesCache(rulesKey,{rules:xs,providers:rulesCache.get(rulesKey)?.providers??[]})}}).catch(()=>{if(alive)setErr(safeError())});loadProviders(active,"rules").then(xs=>{if(alive){setProviders(xs);setRulesCache(rulesKey,{rules:rulesCache.get(rulesKey)?.rules??[],providers:xs})}}).catch(()=>{if(alive)setErr("规则提供者数量未提供：内核未支持或权限不足；分段显示的是已加载数量。规则列表独立读取。")});return()=>{alive=false}},[active&&sourceKey(active),version,tick,visible])
+  // Pull-to-refresh and effect reads share one reader. Results are published only while their
+  // owner (source/version/mount generation) is current; a stale read can never overwrite newer data.
+  const [pullBox]=useState({gen:0,pull:undefined as undefined|Promise<void>,mounted:true})
+  const reloadRules=(current:()=>boolean):Promise<void>=>{
+    if(!active)return Promise.resolve()
+    setErr("")
+    const a=loadRules(active).then(xs=>{if(current()){setRules(xs);setRulesCache(rulesKey,{rules:xs,providers:rulesCache.get(rulesKey)?.providers??[]})}}).catch(()=>{if(current())setErr(safeError())})
+    const b=loadProviders(active,"rules").then(xs=>{if(current()){setProviders(xs);setRulesCache(rulesKey,{rules:rulesCache.get(rulesKey)?.rules??[],providers:xs})}}).catch(()=>{if(current())setErr("规则提供者数量未提供：内核未支持或权限不足；分段显示的是已加载数量。规则列表独立读取。")})
+    return Promise.all([a,b]).then(()=>{})
+  }
+  useEffect(()=>{pullBox.mounted=true;return()=>{pullBox.mounted=false;pullBox.gen++;pullBox.pull=undefined}},[])
+  useEffect(()=>{pullBox.gen++;pullBox.pull=undefined},[active&&sourceKey(active),version])
+  useEffect(()=>{if(!active||!visible)return;let alive=true;void reloadRules(()=>alive);return()=>{alive=false}},[active&&sourceKey(active),version,tick,visible])
+  // Pull = former "全部更新" (no confirmation, same updateAllProviders semantics and failure alert) followed by
+  // the former "刷新规则" re-read. The promise ends only when both have really finished or failed.
+  const pullRules=():Promise<void>=>{
+    if(!active)return Promise.resolve()
+    if(pullBox.pull)return pullBox.pull
+    const gen=pullBox.gen,current=()=>pullBox.mounted&&pullBox.gen===gen
+    const p:Promise<void>=updateAllProviders(active,"rules",providers,()=>{}).then(()=>current()?reloadRules(current):undefined).then(()=>{if(pullBox.pull===p)pullBox.pull=undefined})
+    pullBox.pull=p;return p
+  }
   const shown=useMemo(()=>{
     const needle=q.toLowerCase(),matches:(Rule&{index:number})[]=[]
     // Keep original rule numbers, but allocate indexed copies only for matches.
     for(let i=0;i<rules.length;i++){const r=rules[i];if([r.type,r.payload,r.proxy].join(" ").toLowerCase().includes(needle))matches.push({...r,index:i+1})}
     return matches
   },[rules,q])
-  return Shell({title:active?.name??"规则",onAppear:()=>setVisible(true),onDisappear:()=>setVisible(false),toolbar:rootToolbar("rules",onClose,<Menu label={<Image systemName="ellipsis.circle"/>}><Button title="搜索规则" action={()=>setSearch(!search)}/><Button title="刷新规则" action={()=>setTick(tick+1)}/><Button title="全部更新" action={()=>{if(active)void updateAllProviders(active,"rules",providers,()=>setTick(t=>t+1))}}/></Menu>),children:<>{!active?<Empty/>:<><Picker title="规则与提供者" pickerStyle="segmented" value={tab} onChanged={setTab}><Text tag="rules">{`规则 ${rules.length}`}</Text><Text tag="providers">{`提供者 ${providers.length}`}</Text></Picker>{search?<TextField title="搜索规则" value={q} onChanged={(v:string)=>{setQ(v);setLimit(80)}}/>:null}{err?<Hint>{err}</Hint>:null}{tab==="providers"?<>{providers.slice(0,limit).map(p=><ProviderCard key={p.name} c={active} p={p} kind="rules" onChanged={()=>setTick(t=>t+1)}/>)}<Pages hideCount limit={limit} total={providers.length} more={()=>setLimit(limit+80)}/></>:<>{shown.slice(0,limit).map(r=><Card key={String(r.index)}><HStack spacing={8}><Hint>{`#${r.index}`}</Hint><Chip title={r.type} color={ruleColor(r.type)}/><Text font={13}>{r.payload||"—"}</Text><Spacer/><Text font={12} foregroundStyle="secondaryLabel">{r.proxy}</Text></HStack></Card>)}<Pages hideCount limit={limit} total={shown.length} more={()=>setLimit(limit+80)}/></>}</>}</>})
+  return Shell({title:active?.name??"规则",refresh:pullRules,onAppear:()=>setVisible(true),onDisappear:()=>setVisible(false),toolbar:rootToolbar("rules",onClose,<Menu label={<Image systemName="ellipsis.circle"/>}><Button title="搜索规则" action={()=>setSearch(!search)}/></Menu>),children:<>{!active?<Empty/>:<><Picker title="规则与提供者" pickerStyle="segmented" value={tab} onChanged={setTab}><Text tag="rules">{`规则 ${rules.length}`}</Text><Text tag="providers">{`提供者 ${providers.length}`}</Text></Picker>{search?<TextField title="搜索规则" value={q} onChanged={(v:string)=>{setQ(v);setLimit(80)}}/>:null}{err?<Hint>{err}</Hint>:null}{tab==="providers"?<>{providers.slice(0,limit).map(p=><ProviderCard key={p.name} c={active} p={p} kind="rules" onChanged={()=>setTick(t=>t+1)}/>)}<Pages hideCount limit={limit} total={providers.length} more={()=>setLimit(limit+80)}/></>:<>{shown.slice(0,limit).map(r=><Card key={String(r.index)}><HStack spacing={8}><Hint>{`#${r.index}`}</Hint><Chip title={r.type} color={ruleColor(r.type)}/><Text font={13}>{r.payload||"—"}</Text><Spacer/><Text font={12} foregroundStyle="secondaryLabel">{r.proxy}</Text></HStack></Card>)}<Pages hideCount limit={limit} total={shown.length} more={()=>setLimit(limit+80)}/></>}</>}</>})
 }
 const pad2=(n:number)=>String(n).padStart(2,"0")
 const fmtClock=(t:number)=>{const d=new Date(t);return `${pad2(d.getMonth()+1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}.${String(d.getMilliseconds()).padStart(3,"0")}`}
@@ -269,12 +290,13 @@ export function ConnectionDetailPage({x,onDisconnect}:{x:Conn;onDisconnect:(x:Co
   </Form>
 }
 export function ConnectionsPage({active,version,onClose,selected=true}:{active:Controller|null;version:number;onClose?:()=>void;selected?:boolean}) {
-  const prefs=usePreferences(),[conns,setConns]=useState<Conn[]>(()=>active?hydrateConns(sourceKey(active))??[]:[]),[closed,setClosed]=useState<Conn[]>([]),[paused,setPaused]=useState(false),[visible,setVisible]=useState(selected),[tab,setTab]=useState("active"),[err,setErr]=useState(""),[q,setQ]=useState(""),[search,setSearch]=useState(false),[client,setClient]=useState(""),[labelsOpen,setLabelsOpen]=useState(false),[labels,setLabels]=useState<Record<string,string>>({}),[labelIP,setLabelIP]=useState(""),[label,setLabel]=useState(""),[limit,setLimit]=useState(60),[tick,setTick]=useState(0),[fresh,setFresh]=useState<Record<string,number>>({}),[sort,setSort]=useState("new"),[seenBox]=useState({seen:new Set<string>(),init:false}),[foreground,setForeground]=useState(true),[resume,setResume]=useState(0),[scene]=useState({active:true,epoch:0,stop:undefined as undefined|(()=>void),vis:new SceneVisibility(),selected:selected})
+  const prefs=usePreferences(),[conns,setConns]=useState<Conn[]>(()=>active?hydrateConns(sourceKey(active))??[]:[]),[closed,setClosed]=useState<Conn[]>([]),[paused,setPaused]=useState(false),[visible,setVisible]=useState(selected),[tab,setTab]=useState("active"),[err,setErr]=useState(""),[q,setQ]=useState(""),[search,setSearch]=useState(false),[client,setClient]=useState(""),[labelsOpen,setLabelsOpen]=useState(false),[labels,setLabels]=useState<Record<string,string>>({}),[labelIP,setLabelIP]=useState(""),[label,setLabel]=useState(""),[limit,setLimit]=useState(60),[tick,setTick]=useState(0),[fresh,setFresh]=useState<Record<string,number>>({}),[sort,setSort]=useState("new"),[seenBox]=useState({seen:new Set<string>(),init:false}),[foreground,setForeground]=useState(true),[resume,setResume]=useState(0),[scene]=useState({active:true,epoch:0,stop:undefined as undefined|(()=>void),vis:new SceneVisibility(),selected:selected,gen:0,pull:undefined as undefined|(()=>Promise<void>),oneShot:undefined as undefined|Promise<void>})
   // A boolean alone misses background -> active batched into one render (or a
   // repeated active). Every resume needs a new owner after epoch invalidation.
-  useEffect(()=>{const changed=(phase:"active"|"inactive"|"background")=>{if(scene.vis.scene(phase==="active",Date.now())&&scene.selected)setVisible(true);scene.active=phase==="active";scene.epoch++;scene.stop?.();setForeground(scene.active);connectionLifecycle(phase);if(scene.active){setResume(n=>n+1);setErr("");setFresh({})}};AppEvents.scenePhase.addListener(changed);return()=>{scene.stop?.();AppEvents.scenePhase.removeListener(changed)}},[])
+  useEffect(()=>{const changed=(phase:"active"|"inactive"|"background")=>{if(scene.vis.scene(phase==="active",Date.now())&&scene.selected)setVisible(true);scene.active=phase==="active";scene.epoch++;scene.stop?.();setForeground(scene.active);connectionLifecycle(phase);if(scene.active){setResume(n=>n+1);setErr("");setFresh({})}};AppEvents.scenePhase.addListener(changed);return()=>{scene.gen++;scene.oneShot=undefined;scene.stop?.();AppEvents.scenePhase.removeListener(changed)}},[])
   scene.selected=selected
   useEffect(()=>{setVisible(selected)},[selected])
+  useEffect(()=>{scene.gen++;scene.oneShot=undefined},[active&&sourceKey(active)])
   useEffect(()=>{if(!active)return;seenBox.seen.clear();seenBox.init=false;setFresh({});setLabels(clientLabels(active));setConns(hydrateConns(sourceKey(active))??[]);setClosed(historyFor(active).closed);setClient("")},[active&&sourceKey(active)])
   useEffect(()=>{if(active&&!paused&&selected&&visible&&foreground)historyFor(active).resume()},[active&&sourceKey(active),paused,selected,visible,foreground,resume])
   useEffect(()=>{
@@ -289,7 +311,8 @@ export function ConnectionsPage({active,version,onClose,selected=true}:{active:C
     // by wall-clock age too, and reuse the normal poll to replace expired reads.
     const maxAge=Math.max(1500,prefs.requestTimeout*1000)
     setErr("");const h=historyFor(active);connectionLifecycle("poll-start")
-    async function refresh(){
+    let flight:Promise<void>|undefined
+    async function run(){
       if(!current())return
       if(request){
         if(Date.now()-request.at<maxAge)return
@@ -322,16 +345,45 @@ export function ConnectionsPage({active,version,onClose,selected=true}:{active:C
         }
       }catch{if(publishable()){connectionLifecycle("request-error");setErr(safeError())}}finally{if(request===owned){if(current()&&Date.now()-owned.at>=maxAge){h.resume();connectionLifecycle("expired")}request=undefined}}
     }
+    // One owner for poll and pull: a pull joins the unexpired in-flight read instead of duplicating it.
+    function refresh():Promise<void>{
+      if(request&&flight&&Date.now()-request.at<maxAge)return flight
+      const p:Promise<void>=run().finally(()=>{if(flight===p)flight=undefined});flight=p;return p
+    }
     void refresh();const t=setInterval(refresh,1500)
-    const stop=()=>{if(!alive)return;alive=false;request?.abort.abort();request=undefined;clearInterval(t);for(const timer of timers)clearTimeout(timer);timers.clear();connectionLifecycle("poll-stop")}
+    scene.pull=refresh
+    const stop=()=>{if(!alive)return;alive=false;if(scene.pull===refresh)scene.pull=undefined;request?.abort.abort();request=undefined;clearInterval(t);for(const timer of timers)clearTimeout(timer);timers.clear();connectionLifecycle("poll-stop")}
     scene.stop=stop
     return()=>{stop();if(scene.stop===stop)scene.stop=undefined}
   },[active&&sourceKey(active),version,paused,selected,visible,tick,foreground,resume,prefs.requestTimeout])
   const sortFns:Record<string,(a:Conn,b:Conn)=>number>={new:(a,b)=>(b.start||0)-(a.start||0),old:(a,b)=>(a.start||0)-(b.start||0),down:(a,b)=>(b.downSpeed??0)-(a.downSpeed??0),up:(a,b)=>(b.upSpeed??0)-(a.upSpeed??0),traffic:(a,b)=>(b.up+b.down)-(a.up+a.down)}
   const shown=[...filterConnections((tab==="active"?conns:closed).filter(x=>!fresh[(tab==="active"?"a:":"c:")+x.id]),q,client,labels)].sort(sortFns[sort]),clients=Array.from(new Set([...conns,...closed].map(x=>x.sourceIP??"").filter(Boolean)))
   async function close(x?:Conn){if(!active)return;await attempt(async()=>{if(await confirmed(active.name,x?`断开到 ${x.host} 的连接（${x.src}）。应用可能重新建立连接。`:`断开此Mihomo内核的全部活动连接（当前观察 ${conns.length} 条）。应用可能重新建立连接。`,()=>x?closeConnection(active,x.id):closeAllConnections(active)))setTick(t=>t+1)})}
+  // Pull-to-refresh. Polling active: join the poll owner's read (no duplicate publish).
+  // Paused: one bounded snapshot read that keeps monitoring paused and never restarts polling.
+  const pullConnections=():Promise<void>=>{
+    if(!active||!selected||!visible||!foreground||!scene.active)return Promise.resolve()
+    if(!paused)return scene.pull?scene.pull():Promise.resolve()
+    if(scene.oneShot)return scene.oneShot
+    const gen=scene.gen,epoch=scene.epoch,key=sourceKey(active),ac=new AbortController(),at=Date.now(),maxAge=Math.max(1500,prefs.requestTimeout*1000)
+    const ok=()=>gen===scene.gen&&epoch===scene.epoch&&scene.active&&Date.now()-at<maxAge
+    const timer=setTimeout(()=>ac.abort(),maxAge)
+    let p:Promise<void>|undefined
+    p=(async()=>{
+      try{
+        const xs=await loadConnections(active,ac.signal)
+        if(ok()){
+          // Snapshot while paused: no closures inferred across the pause, closed history untouched.
+          const h=historyFor(active);h.resume();h.sample(xs,Date.now());setConns([...h.active]);setConnCache(key,h.active);setClosed([...h.closed]);setErr("")
+          seenBox.seen=new Set([...h.active.map(x=>"a:"+x.id),...h.closed.map(x=>"c:"+x.id)]);seenBox.init=true
+        }
+      }catch{if(ok())setErr(safeError())}
+      finally{clearTimeout(timer);if(scene.oneShot===p)scene.oneShot=undefined}
+    })()
+    scene.oneShot=p;return p
+  }
   connectionLifecycle("render")
-  return Shell({title:active?.name??"连接",onAppear:()=>{connectionLifecycle("appear");scene.vis.appear();setVisible(true);setResume(n=>n+1)},onDisappear:()=>{connectionLifecycle("disappear");if(scene.vis.disappear(Date.now())){scene.stop?.();setVisible(false)}}, toolbar:rootToolbar("connections",onClose,<Menu label={<Image systemName="ellipsis.circle"/>}><Button title="搜索连接" action={()=>setSearch(!search)}/><Button title={paused?"恢复监控":"暂停监控"} action={()=>setPaused(!paused)}/><Button title="客户端标签" action={()=>setLabelsOpen(!labelsOpen)}/><Button title="清理已断开连接" action={async()=>{if(active&&await confirmed(`${active.name} · 本地历史`,"清理本脚本已观察到的已断开历史，不操作远端连接。",async()=>{historyFor(active).clear();setClosed([])}))feedback()}}/><Button title="打断全部连接" action={()=>close()}/></Menu>),children:<>{!active?<Empty/>:<><VStack spacing={6} padding={6} background={<RoundedRectangle cornerRadius={16} fill="secondarySystemBackground"/>}>
+  return Shell({title:active?.name??"连接",refresh:pullConnections,onAppear:()=>{connectionLifecycle("appear");scene.vis.appear();setVisible(true);setResume(n=>n+1)},onDisappear:()=>{connectionLifecycle("disappear");if(scene.vis.disappear(Date.now())){scene.stop?.();setVisible(false)}}, toolbar:rootToolbar("connections",onClose,<Menu label={<Image systemName="ellipsis.circle"/>}><Button title={paused?"恢复监控":"暂停监控"} action={()=>setPaused(!paused)}/><Button title="客户端标签" action={()=>setLabelsOpen(!labelsOpen)}/><Button title="清理已断开连接" action={async()=>{if(active&&await confirmed(`${active.name} · 本地历史`,"清理本脚本已观察到的已断开历史，不操作远端连接。",async()=>{historyFor(active).clear();setClosed([])}))feedback()}}/><Button title="打断全部连接" action={()=>close()}/></Menu>),children:<>{!active?<Empty/>:<><VStack spacing={6} padding={6} background={<RoundedRectangle cornerRadius={16} fill="secondarySystemBackground"/>}>
       <HStack spacing={6}>
         {(["active","closed"] as const).map(k=><Button key={k} buttonStyle="plain" action={()=>{setTab(k);setLimit(60)}}><HStack spacing={6} padding={{horizontal:8,vertical:6}} background={<RoundedRectangle cornerRadius={12} fill={tab===k?"systemBackground":"clear"}/>}><Circle fill={k==="active"?(tab===k?"systemGreen":"tertiaryLabel"):"tertiaryLabel"} frame={{width:6,height:6}}/><Text font={13} fontWeight={tab===k?"semibold":"regular"} foregroundStyle={tab===k?"label":"secondaryLabel"}>{k==="active"?"活动中":"已关闭"}</Text><Text font={11} foregroundStyle={tab===k?"systemGreen":"secondaryLabel"} padding={{horizontal:6,vertical:1}} background={<RoundedRectangle cornerRadius={8} fill="tertiarySystemFill"/>}>{String(k==="active"?conns.length:closed.length)}</Text></HStack></Button>)}
         <Spacer/>
