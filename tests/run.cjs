@@ -871,7 +871,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) { const lazy = ['proxies','rules'].includes(ids[i]) && ids[i] !== id; assert.equal(nodes(tree, types[i]).length, lazy ? 0 : 1); if (!lazy) assert.equal(nodes(tree, types[i])[0].props.selected, ids[i] === id) }
     }
-    assert.equal(api.VERSION, '1.52'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.53'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('独立导航栈保留业务owner和身份，只有选中页提供可见工具栏', () => {
     pref.savePreferences({ defaultPage: 'overview' })
@@ -1307,8 +1307,8 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
   await test('1.5规则：编号保留真实位置、数量及规则提供者更新路径', async () => {
     responder=url=>({body:url.includes('/providers/')?{providers:{real:{type:'Rule',vehicleType:'HTTP',ruleCount:91,behavior:'domain'}}}:{rules:[{type:'DomainSuffix',payload:'alpha.invalid',proxy:'DIRECT'},{type:'IPCIDR',payload:'test-value',proxy:'REJECT'}]}})
     render(pages.RulesPage,{active:c,version:0},true);await flush();let tree=render(pages.RulesPage,{active:c,version:0})
-    assert.ok(text(tree).includes('规则 2'));assert.ok(text(tree).includes('提供者 1'));assert.ok(text(tree).includes('#2'));assert.ok(text(tree).includes('IPCIDR'))
-    nodes(tree,'Picker')[0].props.onChanged('providers');tree=render(pages.RulesPage,{active:c,version:0});assert.equal(nodes(tree,pages.ProviderCard)[0].props.p.count,91)
+    assert.equal(nodes(tree,'TextField').length,0,'rules search defaults collapsed');assert.ok(nodes(tree,'Button').some(b=>b.props.accessibilityLabel==='搜索规则与提供者'));assert.ok(text(tree).includes('规则 2'));assert.ok(text(tree).includes('提供者 1'));assert.ok(text(tree).includes('#2'));assert.ok(text(tree).includes('IPCIDR'))
+    nodes(tree,'Button').find(b=>b.props.key==='providers').props.action();tree=render(pages.RulesPage,{active:c,version:0});assert.equal(nodes(tree,pages.ProviderCard)[0].props.p.count,91)
     calls.length=0;await api.updateProvider(c,'rules','Rule / Name');assert.ok(calls[0].url.endsWith('/providers/rules/Rule%20%2F%20Name'))
   })
   await test('1.5连接模型：实测差分、计数回退、真实消失、限量和暂停断档', () => {
@@ -1881,7 +1881,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     let release; responder = () => ({ wait: new Promise(r => { release = r }), body: { rules: [], providers: {} } })
     assert.ok(!nodes(trailing(tree.props.toolbar), 'Button').some(n => ['刷新规则','全部更新'].includes(n.props.title))); void tree.props.refreshable(); await flush()
     tree = render(pages.RulesPage, { active: c, version: 0 }); assert.ok(text(tree).includes('keep.invalid'))
-    nodes(tree, 'Picker')[0].props.onChanged('providers'); tree = render(pages.RulesPage, { active: c, version: 0 }); assert.equal(nodes(tree, pages.ProviderCard).length, 1)
+    nodes(tree, 'Button').find(b=>b.props.key==='providers').props.action(); tree = render(pages.RulesPage, { active: c, version: 0 }); assert.equal(nodes(tree, pages.ProviderCard).length, 1)
     if (release) release(); await flush(); unmount(); responder = () => ({ status: 204 })
   })
   await test('规则页：条数超过上限时只有“加载更多”，没有“已展示”文字', async () => {
@@ -2115,7 +2115,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       const diagnostic = logs.filter(x => x.startsWith('[preferences-icon]'))
       for (const stage of ['change','accepted','proxies-render','group-render']) assert.ok(diagnostic.some(x => x.includes('stage=' + stage) && x.includes('enabled=false')))
       assert.ok(diagnostic.every(x => !x.includes('private.invalid') && !x.includes('private-group-name') && !x.includes('secret-')))
-      assert.ok(diagnostic.every(x => x.includes('build=1.52') && /instance=[a-z0-9]+/.test(x)))
+      assert.ok(diagnostic.every(x => x.includes('build=1.53') && /instance=[a-z0-9]+/.test(x)))
       assert.equal(new Set(diagnostic.map(x => x.match(/instance=([^ ]+)/)[1])).size, 1)
     } finally { context.console = originalConsole; unmount(); pref.savePreferences({ customIcons: true, testURL: 'https://www.gstatic.com/generate_204' }) }
   })

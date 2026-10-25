@@ -1,4 +1,4 @@
-// Rules page: persistent search, per-rule toggle, optional connection interruption. All IO/native hooks mocked; no device or remote.
+// Rules page: collapsible search, per-rule toggle, optional connection interruption. All IO/native hooks mocked; no device or remote.
 const fs=require('node:fs'),vm=require('node:vm')
 const harness=fs.readFileSync(__dirname+'/run.cjs','utf8').split(';(async () => {')[0]
 const checks=String.raw`
@@ -27,20 +27,45 @@ const kernelOf=(rules,conns=[])=>{
 const cn=(id,rule,rulePayload)=>({id,rule,rulePayload,upload:1,download:1,metadata:{host:id+'.invalid'}})
 const toggles=t=>nodes(t,'Toggle').filter(x=>x.props.title==='启用规则')
 ;(async()=>{
- await test('rules search is persistent (menu has no search); filters rules and providers; tabs keep their own input',async()=>{
+ await test('rules top matches connection grouping; search toggle retains filtering, separate inputs and current-tab clear',async()=>{
   const k=kernelOf([mkRule(0,'DomainSuffix','google.com','Proxy',false),mkRule(1,'GeoIP','CN','DIRECT',false),mkRule(2,'Match','','Final',false)]);responder=k.responder
   const page=owner(pages.RulesPage),props={active:{...base,id:'rt-search',url:'http://rt-s.invalid'},version:0,selected:true}
   page.render(props);await settle();let t=page.render(props)
   assert.equal(nodes(trailing(t.props.toolbar),'Button').length,0);assert.deepEqual(nodes(trailing(t.props.toolbar),'Toggle').map(x=>x.props.title),['禁用规则时打断连接'])
-  const field=()=>nodes(t,'TextField')[0];assert.equal(field().props.title,'搜索规则')
-  assert.equal(field().props.background.type,'RoundedRectangle');assert.equal(field().props.background.props.fill,'secondarySystemBackground');assert.equal(field().props.background.props.cornerRadius,10)
-  assert.equal(field().props.padding.horizontal,12);assert.equal(field().props.frame.height,36);assert.equal(field().props.font,16);assert.equal(field().props.prompt,'搜索规则...');assert.equal(field().props.textFieldStyle,'plain');assert.equal(field().props.labelsHidden,true);assert.equal(field().props.lineLimit,1)
+  const field=()=>nodes(t,'TextField')[0],pick=k=>nodes(t,'Button').find(b=>b.props.key===k)
+  const search=()=>button(t,'搜索规则与提供者').props.action()
+  assert.equal(field(),undefined,'default hidden');assert.equal(nodes(t,'Picker').length,0)
+  const group=nodes(t,'VStack').find(n=>n.props.background?.props.cornerRadius===16)
+  assert.equal(group.props.padding,6);assert.equal(group.props.spacing,6);assert.equal(group.props.background.props.fill,'secondarySystemBackground')
+  assert.equal(nodes(group,'Circle').length,0,'no connection status dots');assert.equal(nodes(group,'Menu').length,0,'no sorting menu')
+  const visual=k=>nodes(pick(k),'HStack')[0]
+  assert.equal(visual('rules').props.background.props.fill,'systemBackground');assert.equal(visual('providers').props.background.props.fill,'clear');assert.equal(visual('rules').props.background.props.cornerRadius,12)
+  assert.equal(text(pick('rules')),'规则 3');assert.equal(text(pick('providers')),'提供者 2')
+  search();t=page.render(props);assert.equal(field().props.title,'搜索规则...')
+  const row=nodes(t,'HStack').find(n=>n.props.background?.props.cornerRadius===10)
+  assert.equal(row.props.background.props.fill,'systemBackground');assert.equal(field().props.background,undefined)
+  assert.equal(field().props.padding.horizontal,8);assert.equal(field().props.frame.height,36);assert.equal(field().props.font,16);assert.equal(field().props.prompt,'搜索规则...');assert.equal(field().props.textFieldStyle,'plain');assert.equal(field().props.labelsHidden,true);assert.equal(field().props.lineLimit,1)
+  assert.ok(!nodes(t,'Button').some(b=>b.props.accessibilityLabel==='清除规则搜索'))
   field().props.onChanged('geoip');t=page.render(props);assert.ok(text(t).includes('CN'));assert.ok(!text(t).includes('google.com'))
   field().props.onChanged('final');t=page.render(props);assert.ok(text(t).includes('#3'),'original rule number kept')
-  nodes(t,'Picker')[0].props.onChanged('providers');t=page.render(props);assert.equal(field().props.title,'搜索提供者');assert.equal(field().props.prompt,'搜索提供者...');assert.equal(field().props.frame.height,36);assert.equal(field().props.value,'')
+  search();t=page.render(props);assert.equal(field(),undefined);assert.ok(text(t).includes('#3'));assert.ok(!text(t).includes('google.com'),'collapsed input still filters')
+  pick('providers').props.action();t=page.render(props);assert.equal(field(),undefined);search();t=page.render(props);assert.equal(field().props.title,'搜索提供者...');assert.equal(field().props.value,'')
+  assert.equal(visual('rules').props.background.props.fill,'clear');assert.equal(visual('providers').props.background.props.fill,'systemBackground')
   assert.equal(nodes(t,pages.ProviderCard).length,2);field().props.onChanged('file');t=page.render(props);assert.equal(nodes(t,pages.ProviderCard).length,1)
   field().props.onChanged('alp');t=page.render(props);assert.equal(nodes(t,pages.ProviderCard).length,1)
-  nodes(t,'Picker')[0].props.onChanged('rules');t=page.render(props);assert.equal(field().props.value,'final','rules input kept')
+  const clear=button(t,'清除提供者搜索');assert.equal(clear.props.padding.trailing,4);assert.equal(nodes(clear,'Image')[0].props.systemName,'xmark.circle.fill');clear.props.action();t=page.render(props);assert.equal(field().props.value,'');assert.equal(nodes(t,pages.ProviderCard).length,2)
+  field().props.onChanged('file');t=page.render(props);pick('rules').props.action();t=page.render(props);assert.equal(field().props.value,'final','rules input kept')
+  button(t,'清除规则搜索').props.action();t=page.render(props);assert.equal(field().props.value,'');assert.ok(text(t).includes('google.com'))
+  pick('providers').props.action();t=page.render(props);assert.equal(field().props.value,'file','clear only affects current tab')
+  page.close()
+ })
+ await test('rule search edit, clear and tab switch reset pagination to 80 without fetching again',async()=>{
+  const k=kernelOf(Array.from({length:170},(_,i)=>mkRule(i,'Domain','item-'+i,'P',false)));let reads=0;responder=(u,i)=>{if(u.endsWith('/rules'))reads++;return k.responder(u,i)}
+  const page=owner(pages.RulesPage),props={active:{...base,id:'rt-pages',url:'http://rt-pages.invalid'},version:0,selected:true};page.render(props);await settle();let t=page.render(props),n=reads
+  button(t,'加载更多').props.action();t=page.render(props);assert.ok(text(t).includes('#160'))
+  button(t,'搜索规则与提供者').props.action();t=page.render(props);nodes(t,'TextField')[0].props.onChanged('item');t=page.render(props);assert.ok(text(t).includes('#80'));assert.ok(!text(t).includes('#81'))
+  button(t,'加载更多').props.action();t=page.render(props);button(t,'清除规则搜索').props.action();t=page.render(props);assert.ok(!text(t).includes('#81'))
+  button(t,'加载更多').props.action();t=page.render(props);nodes(t,'Button').find(b=>b.props.key==='providers').props.action();t=page.render(props);nodes(t,'Button').find(b=>b.props.key==='rules').props.action();t=page.render(props);assert.ok(!text(t).includes('#81'));assert.equal(reads,n)
   page.close()
  })
  await test('unsupported kernel (no index/extra.disabled): no switch, rows unchanged',async()=>{
