@@ -3,9 +3,6 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('n
 const ts=require('/tmp/chk/node_modules/typescript'),vm=require('node:vm')
 const js=ts.transpileModule(fs.readFileSync(path.join(__dirname,'../plot-canvas.ts'),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS}}).outputText
 const mod={exports:{}};vm.runInNewContext(js,{exports:mod.exports});const html=mod.exports.plotCanvasHTML()
-// Rasterize the exact native cover drawing helper in a browser Canvas for pixel equivalence.
-const viewJS=ts.transpileModule(fs.readFileSync(path.join(__dirname,'../plot-view.tsx'),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,jsx:ts.JsxEmit.React}}).outputText
-const viewMod={exports:{}};vm.runInNewContext(viewJS,{exports:viewMod.exports,require:()=>({})})
 const {chromium,webkit}=require(process.env.PLAYWRIGHT_PATH||'/tmp/neko-editor-build/node_modules/playwright')
 ;(async()=>{
  for(const [name,type] of [['chromium',chromium],['webkit',webkit]]){
@@ -118,34 +115,27 @@ const {chromium,webkit}=require(process.env.PLAYWRIGHT_PATH||'/tmp/neko-editor-b
    const multi=await page.evaluate(async()=>{const views=[...document.querySelectorAll('iframe')].map(f=>f.contentWindow.plotCanvas);for(const p of views){p.update({seq:1,samples:Array(60).fill(10),running:true,tone:'#2dbf82',percent:true});p.update({seq:2,samples:[...Array(59).fill(10),80],running:true,tone:'#2dbf82',percent:true})}await new Promise(r=>setTimeout(r,1200));return views.map(p=>p.inspect())})
    assert.equal(multi.length,32);for(const p of multi){assert.equal(p.stats.liveLoops,0);assert.equal(p.history.length,60);assert.equal(p.shown.at(-1).y,80);assert.ok(p.stats.frames>2)}
    assert.deepEqual(errors,[]);assert.deepEqual(requests,[])
-   // Stable visible WebView + opaque-colour cover: no white backing or doubled grid.
-   // Retirement models documented SwiftUI Canvas fresh-context redraw with zero commands;
-   // it does NOT model native compositor behavior or prove this fixes an iPhone.
-   // Both full screenshots retain their actual source markers (baseline W, cover N).
-   // The simulated native cover sits above W, just like the real sibling Canvas.
-   // This exercises pixel composition, not Scripting's native layer compositor.
-   for(const background of ['#f2f2f7','#1c1c1e','#2c2c2e']){
-    const coverPage=await browser.newPage({viewport:{width:145,height:76},deviceScaleFactor:3});await coverPage.route('**/*',r=>r.abort())
+   // Web-only output for home/detail dimensions and light/dark panel backgrounds.
+   // No simulated native cover: production no longer mounts one. Keep real pixel checks.
+   for(const background of ['#f2f2f7','#1c1c1e','#2c2c2e'])for(const height of [66,76,96]){
+    const webPage=await browser.newPage({viewport:{width:145,height},deviceScaleFactor:3});await webPage.route('**/*',r=>r.abort())
     const initial={seq:1,samples:[10,20,40,15],tone:'#3485eb',running:false,percent:true,background}
-    await coverPage.setContent(mod.exports.plotCanvasHTML(initial));await coverPage.waitForFunction(()=>window.plotCanvas?.painted())
-    const baseline=await coverPage.screenshot()
-    await coverPage.evaluate(({grid,cover,background})=>{
-     const drawPlotGrid=eval('('+grid+')'),drawPlotCover=eval('('+cover+')')
-     const c=document.createElement('canvas');c.id='native-cover';Object.assign(c.style,{position:'fixed',left:'0',top:'0',width:'100%',height:'100%',pointerEvents:'none',zIndex:'2'});document.body.appendChild(c)
-     const d=devicePixelRatio;c.width=innerWidth*d;c.height=innerHeight*d;const ctx=c.getContext('2d');ctx.scale(d,d)
-     // Scripting Canvas accepts numeric point-size fonts; adapt only that API to browser CSS fonts.
-     const nativeCtx=new Proxy(ctx,{get:(target,key)=>typeof target[key]==='function'?target[key].bind(target):target[key],set:(target,key,value)=>{target[key]=key==='font'&&typeof value==='number'?value+'px sans-serif':value;return true}})
-     drawPlotCover(nativeCtx,{width:innerWidth,height:innerHeight},background)
-    },{grid:viewMod.exports.drawPlotGrid.toString(),cover:viewMod.exports.drawPlotCover.toString(),background})
-    assert.equal(await coverPage.evaluate(()=>{const c=document.querySelector('#native-cover'),d=c.getContext('2d').getImageData(0,0,c.width,c.height).data;return d.every((v,i)=>i%4!==3||v===255)}),true,'cover fills every pixel; no underlay grid bleeds through')
-    const covered=await coverPage.screenshot()
-    await coverPage.evaluate(()=>{document.querySelector('canvas').style.visibility='hidden';document.body.style.background='white';document.documentElement.style.background='white'})
-    assert.deepEqual(await coverPage.screenshot(),covered,'white initial backing and web grid give identical covered pixels')
-    await coverPage.evaluate(background=>{document.querySelector('canvas').style.visibility='visible';document.body.style.background=background;document.documentElement.style.background=background;const c=document.querySelector('#native-cover');c.width=c.width},background)
-    assert.equal(await coverPage.evaluate(()=>{const c=document.querySelector('#native-cover'),d=c.getContext('2d').getImageData(0,0,c.width,c.height).data;return getComputedStyle(c).opacity==='1'&&d.every(v=>v===0)}),true,'fresh context with no commands is empty at unchanged layer opacity')
-    await assertWebMarker(coverPage)
-    assert.deepEqual(await coverPage.screenshot(),baseline,'empty cover leaves exactly the original W and single web grid/curve')
-    await coverPage.close()
+    await webPage.setContent(mod.exports.plotCanvasHTML(initial));await webPage.waitForFunction(()=>window.plotCanvas?.painted())
+    await assertWebMarker(webPage)
+    const raster=await webPage.evaluate(()=>{
+     const c=document.querySelector('canvas'),d=c.getContext('2d').getImageData(0,0,c.width,c.height).data
+     let grid=0,curve=0;for(let i=0;i<d.length;i+=4){if(d[i+3]>0&&d[i]===146&&Math.abs(d[i+1]-149)<=1)grid++;if(d[i+3]>0&&d[i+2]>180&&d[i]<100)curve++}
+     return {grid,curve,canvases:document.querySelectorAll('canvas').length,background:getComputedStyle(document.body).backgroundColor}
+    })
+    assert.equal(raster.canvases,1);assert.ok(raster.grid>50,'real Web grid pixels');assert.ok(raster.curve>50,'real blue curve pixels')
+    assert.ok(raster.background.startsWith('rgb('))
+    const baseline=await webPage.screenshot()
+    await webPage.evaluate(()=>{const c=document.querySelector('canvas');c.getContext('2d').clearRect(0,0,c.width,c.height)})
+    await assertWebMarker(webPage)
+    assert.notDeepEqual(await webPage.screenshot(),baseline,'pixel comparison detects lost Web grid/curve even while W remains')
+    await webPage.evaluate(()=>window.dispatchEvent(new Event('pageshow')))
+    assert.deepEqual(await webPage.screenshot(),baseline,'restore exact single Web grid/curve/W without native cover')
+    await webPage.close()
    }
    console.log(JSON.stringify({browser:name,readyHandshake:1,framesIn400ms:mid.stats.frames-base.stats.frames,visiblePixels:pixels,coreDocuments:32,networkRequests:requests.length,errors:errors.length}))
   }finally{await browser.close()}

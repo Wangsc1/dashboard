@@ -1,5 +1,5 @@
 import { TimingToken, timingToken, timing, timingSpan, plotLifecycle, createPlotTrace, PlotRole } from "./cadence-diagnostics"
-import { AppEvents, VStack, ZStack, Canvas, Text, WebView, useState, useEffect, useColorScheme } from 'scripting'
+import { AppEvents, VStack, ZStack, Text, WebView, useState, useEffect, useColorScheme } from 'scripting'
 import { plotCanvasHTML } from './plot-canvas'
 type PlotMessage={seq:number;samples:number[];tone:string;area:boolean;running:boolean;percent:boolean;background:string;sampleAt:number;timingEpoch?:number;resume?:boolean}
 export interface CanvasPlotProps {samples:number[];tone:string;plotHeight?:number;area?:boolean;running?:boolean;percent?:boolean;plotWidth?:number;elevated?:boolean;role?:PlotRole;sheetTrace?:number}
@@ -193,9 +193,9 @@ export function MountedCanvasPlot({samples,tone,plotHeight=96,area=false,running
     host.latest=host.pending={timingEpoch:host.token?.epoch,sampleAt:host.sampleAt,seq:++host.seq,samples:samples.filter(Number.isFinite).slice(-60),tone,area,running,percent,background:plotBackground(theme,elevated)}
     host.flush()
   },[samples,tone,area,running,percent,theme,elevated,host])
-  // Keep both native layer opacities fixed, including reloads. Canvas gets a fresh
-  // context on redraw (documented API): after painted, record no cover commands.
-  // This isolates sibling opacity/compositing from WebView presentation; it is not
-  // proof of a framework defect. Native appearance callbacks remain diagnostics.
-  return error?<Text font={11} foregroundStyle="secondaryLabel" frame={{height:plotHeight}}>{error}</Text>:<ZStack onAppear={()=>record("host-appear")} onDisappear={()=>record("host-disappear")} frame={{minHeight:plotHeight,maxHeight:plotHeight,minWidth:0,maxWidth:'infinity'}}><WebView key={`plot-web-${host.trace.id}`} onAppear={()=>record("web-appear")} onDisappear={()=>record("web-disappear")} controller={host.controller} disabled opacity={1} frame={{minHeight:plotHeight,maxHeight:plotHeight,minWidth:0,maxWidth:'infinity'}}/><Canvas key={`plot-grid-${host.trace.id}`} opaque={false} opacity={1} draw={(ctx,size)=>{if(!shown)drawPlotCover(ctx,size,plotBackground(theme,elevated))}} frame={{minHeight:plotHeight,maxHeight:plotHeight,minWidth:0,maxWidth:'infinity'}}/></ZStack>
+  // Temporary isolation: no native Canvas at any lifecycle stage. Keep the single
+  // WebView at the same parent/position/key/controller before and after painted.
+  // HTML W remains the visibility marker; initial native placeholder grid is absent.
+  // This tests native Canvas/WebView stacking, not a proven root-cause fix.
+  return error?<Text font={11} foregroundStyle="secondaryLabel" frame={{height:plotHeight}}>{error}</Text>:<ZStack onAppear={()=>record("host-appear")} onDisappear={()=>record("host-disappear")} frame={{minHeight:plotHeight,maxHeight:plotHeight,minWidth:0,maxWidth:'infinity'}}><WebView key={`plot-web-${host.trace.id}`} onAppear={()=>record("web-appear")} onDisappear={()=>record("web-disappear")} controller={host.controller} disabled opacity={1} frame={{minHeight:plotHeight,maxHeight:plotHeight,minWidth:0,maxWidth:'infinity'}}/></ZStack>
 }

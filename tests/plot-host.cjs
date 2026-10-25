@@ -14,22 +14,34 @@ context.WebViewController=class {
 }
 const plot=load('plot-view')
 const props={samples:[10,20],tone:'#3485eb',percent:true,running:true}
-// Inspect actual cover drawing, not opacity as a proxy for visibility.
-function coverVisible(canvas){assert.equal(canvas.props.opacity,1);const calls=[],ctx=new Proxy({}, {get:(_,name)=>(...args)=>calls.push([name,...args]),set:()=>true});canvas.props.draw(ctx,{width:145,height:76});if(!calls.length)return false;assert.ok(calls.some(c=>c[0]==='fillRect'));assert.ok(calls.some(c=>c[0]==='fillText'&&c[1]==='N'));return true}
+// Assert the actual normal-path native tree on EVERY render, across all states below.
+const identities=new WeakMap()
+function singleWeb(tree){
+ assert.equal(tree.type,'ZStack');assert.equal(nodes(tree,'Canvas').length,0,'no native Canvas from first render onward')
+ const children=(Array.isArray(tree.props.children)?tree.props.children:[tree.props.children]).filter(Boolean)
+ assert.deepEqual(children.map(n=>n.type),['WebView'],'only one child; no cover sibling')
+ const w=children[0];assert.equal(w.props.opacity,1);assert.equal(w.props.disabled,true)
+ const signature=JSON.stringify([tree.type,tree.props.key,tree.props.frame,0,w.props.key,w.props.frame])
+ if(identities.has(w.props.controller))assert.equal(signature,identities.get(w.props.controller),'parent/position/key/frame stable for controller')
+ else identities.set(w.props.controller,signature)
+ return w
+}
+const originalRender=render
+render=(fn,p,reset=false)=>{const tree=originalRender(fn,p,reset);if(fn===plot.MountedCanvasPlot&&tree.type!=='Text')singleWeb(tree);return tree}
 async function mount(){const node=render(plot.MountedCanvasPlot,props,true);await flush();return node}
 ;(async()=>{
- await test('临时N只由原生cover绘制，painted后原cover停止绘制且opacity不变，W仅在HTML画布外',async()=>{
+ await test('保留未挂载cover helper，但生产树无Canvas/N；HTML画布外W常驻',async()=>{
   const calls=[],ctx=new Proxy({}, {get:(_,name)=>(...args)=>calls.push([name,...args]),set:()=>true})
   plot.drawPlotGrid(ctx,{width:145,height:76});assert.equal(calls.some(c=>c[0]==='fillText'),false)
   calls.length=0;plot.drawPlotCover(ctx,{width:145,height:76},'#f2f2f7');assert.deepEqual(calls.filter(c=>c[0]==='fillText'),[['fillText','N',9,4]])
   let t=render(plot.MountedCanvasPlot,props,true);await flush();const h=hosts.at(-1)
-  assert.equal(coverVisible(nodes(t,'Canvas')[0]),true);assert.equal(nodes(t,'WebView')[0].props.opacity,1)
+  singleWeb(t);assert.equal(nodes(t,'WebView')[0].props.opacity,1)
   assert.ok(h.html.includes('<canvas></canvas><span id="plot-web-source" aria-hidden="true">W</span>'))
   assert.ok(!h.html.includes('>N<'));assert.equal(nodes(t,'Text').length,0,'N adds no native sibling/layout node')
   h.handlers.plotPainted({generation:1,w:145,h:76});await flush();t=render(plot.MountedCanvasPlot,props)
-  assert.equal(coverVisible(nodes(t,'Canvas')[0]),false);assert.equal(nodes(t,'WebView')[0].props.opacity,1);unmount()
+  singleWeb(t);assert.equal(nodes(t,'WebView')[0].props.opacity,1);unmount()
  })
- await test('注册等待与native appear两种先后：同一controller绑定、最新inline样本、仅painted撤销cover命令',async()=>{
+ await test('注册等待与native appear两种先后：同一controller绑定、最新inline样本、ready/painted不改变唯一WebView结构',async()=>{
   const Original=context.WebViewController
   try{for(const appearFirst of [true,false]){
    let release;const gate=new Promise(r=>release=r)
@@ -41,27 +53,32 @@ async function mount(){const node=render(plot.MountedCanvasPlot,props,true);awai
    release();for(let i=0;i<100&&h.html===undefined;i++)await Promise.resolve()
    assert.equal(typeof h.html,'string','registration must finish before loading');assert.ok(h.html.includes('"samples":[11,22,33]'),'load takes the latest inline frame after registration')
    h.handlers.plotReady({generation:1});await flush();t=render(plot.MountedCanvasPlot,{...props,samples:[11,22,33]})
-   assert.equal(coverVisible(nodes(t,'Canvas')[0]),true,'ready is not a visibility gate')
+   singleWeb(t)
    if(!appearFirst){t.props.onAppear();nodes(t,'WebView')[0].props.onAppear()}
-   assert.equal(coverVisible(nodes(t,'Canvas')[0]),true,'appear does not retire the cover or swap controller')
+   singleWeb(t)
    h.handlers.plotPainted({generation:1,w:145,h:96});await flush();t=render(plot.MountedCanvasPlot,{...props,samples:[11,22,33]})
    assert.equal(nodes(t,'WebView')[0].props.controller,h);assert.equal(nodes(t,'WebView')[0].props.key,key);assert.equal(nodes(t,'WebView')[0].props.opacity,1)
-   assert.equal(coverVisible(nodes(t,'Canvas')[0]),false);unmount()
+   singleWeb(t);unmount()
   }}finally{context.WebViewController=Original}
  })
- await test('reveal保留Canvas/WebView两兄弟身份、位置、frame和controller：首次/详情尺寸/重复painted/恢复/重载',async()=>{
+ await test('全生命周期仅WebView：保留父级、位置、frame和controller：首次/详情尺寸/重复painted/恢复/重载',async()=>{
   for(const plotHeight of [66,76,96]){
    timeouts.clear();const p={...props,plotHeight};let out=render(plot.MountedCanvasPlot,p,true);await flush();const h=hosts.at(-1)
    const layers=t=>(t.props.children??[]).filter(Boolean)
-   const initial=layers(out);assert.deepEqual(initial.map(n=>n.type),['WebView','Canvas'])
+   const initial=layers(out);assert.deepEqual(initial.map(n=>n.type),['WebView'])
    const stable=()=>{out=render(plot.MountedCanvasPlot,p);const next=layers(out);assert.deepEqual(next.map(n=>[n.type,n.props.key,n.props.frame]),initial.map(n=>[n.type,n.props.key,n.props.frame]));assert.equal(next[0].props.controller,h);return next}
-   assert.equal(initial[0].props.opacity,1);assert.equal(coverVisible(initial[1]),true)
+   assert.equal(initial[0].props.opacity,1);singleWeb(out)
+   // Poll/feed metadata and running changes cannot introduce a placeholder or move WebView.
+   p.running=false;p.tone='#2dbf82';p.area=true;stable();await flush()
+   p.running=true;p.samples=[30,40,50];p.percent=false;stable();await flush()
+   for(let i=0;i<2;i++){out.props.onAppear();nodes(out,'WebView')[0].props.onAppear();stable()}
+
    h.handlers.plotReady({generation:1});h.handlers.plotPainted({generation:1,w:145,h:plotHeight});await flush()
-   let next=stable();assert.deepEqual(next.map(n=>n.props.key),initial.map(n=>n.props.key));assert.equal(next[0].props.opacity,1);assert.equal(coverVisible(next[1]),false);assert.equal(timeouts.size,0)
+   let next=stable();assert.deepEqual(next.map(n=>n.props.key),initial.map(n=>n.props.key));assert.equal(next[0].props.opacity,1);singleWeb(out);assert.equal(timeouts.size,0)
    h.handlers.plotPainted({generation:1,w:145,h:plotHeight});await flush();stable();assert.equal(timeouts.size,0)
    plot.requestPlotKick('selected');for(const fn of [...timeouts.values()])fn();timeouts.clear();await flush();next=stable();assert.equal(next[0].props.opacity,1,'selected repaint never nudges opacity');h.resolve(true);await flush()
    emitScene('background');emitScene('active');await flush();stable();h.resolve('missing');await flush();assert.equal(h.loads,2)
-   next=stable();assert.equal(next[0].props.opacity,1);assert.equal(coverVisible(next[1]),true)
+   next=stable();assert.equal(next[0].props.opacity,1);singleWeb(out)
    h.handlers.plotReady({generation:2});h.handlers.plotPainted({generation:2,w:145,h:plotHeight});await flush();stable();unmount();assert.equal(timeouts.size,0)
   }
  })
@@ -72,7 +89,7 @@ async function mount(){const node=render(plot.MountedCanvasPlot,props,true);awai
    const state={hooks:[],cleanups:new Map()}
    return {draw(){
     const saved={hooks,cleanups,effects,hookIndex};hooks=state.hooks;cleanups=state.cleanups;effects=[];hookIndex=0
-    const out=plot.MountedCanvasPlot(p),queued=effects;effects=[];queued.forEach(f=>f())
+    const out=plot.MountedCanvasPlot(p),queued=effects;singleWeb(out);effects=[];queued.forEach(f=>f())
     hooks=saved.hooks;cleanups=saved.cleanups;effects=saved.effects;hookIndex=saved.hookIndex;return out
    },close(){for(const f of state.cleanups.values())f();state.cleanups.clear()}}
   }
@@ -86,17 +103,17 @@ async function mount(){const node=render(plot.MountedCanvasPlot,props,true);awai
    trees[i].props.onAppear();nodes(trees[i],'WebView')[0].props.onAppear()
   }
   await flush()
-  assert.equal(ctrls.length,36);assert.equal(new Set(ctrls).size,36);assert.equal(new Set(trees.flatMap(t=>t.props.children.map(n=>n.props.key))).size,72)
+  assert.equal(ctrls.length,36);assert.equal(new Set(ctrls).size,36);assert.equal(new Set(trees.flatMap(t=>t.props.children.map(n=>n.props.key))).size,36)
   for(let i=0;i<36;i++){
-   const layers=trees[i].props.children;assert.match(layers[0].props.key,/^plot-web-\d+$/);assert.equal(layers[1].props.key,layers[0].props.key.replace('plot-web-','plot-grid-'));assert.equal(layers[0].props.controller,ctrls[i]);assert.equal(ctrls[i].loads,1)
+   const layers=trees[i].props.children;assert.match(layers[0].props.key,/^plot-web-\d+$/);singleWeb(trees[i]);assert.equal(layers[0].props.controller,ctrls[i]);assert.equal(ctrls[i].loads,1)
   }
-  // One detail's ready/painted must reveal only that instance, not a home or sibling host.
+  // One detail ready/painted must not change any host tree or bind another controller.
   ctrls[3].handlers.plotReady({generation:1});ctrls[3].handlers.plotPainted({generation:1,w:338,h:96});await flush()
-  for(let i=0;i<36;i++){const t=owners[i].draw();assert.equal(nodes(t,'WebView')[0].props.opacity,1);assert.equal(coverVisible(nodes(t,'Canvas')[0]),i!==3)}
+  for(let i=0;i<36;i++){const t=owners[i].draw();assert.equal(nodes(t,'WebView')[0].props.opacity,1);singleWeb(t)}
   for(let i=0;i<36;i++)if(i!==3){ctrls[i].handlers.plotReady({generation:1});ctrls[i].handlers.plotPainted({generation:1,w:i<3?145:145,h:i<3?(i===0?96:66):76})}
   await flush()
   for(let i=0;i<36;i++){
-   const t=owners[i].draw();assert.deepEqual(t.props.children.map(n=>n.props.key),trees[i].props.children.map(n=>n.props.key));assert.equal(coverVisible(nodes(t,'Canvas')[0]),false);assert.equal(nodes(t,'WebView')[0].props.opacity,1)
+   const t=owners[i].draw();assert.deepEqual(t.props.children.map(n=>n.props.key),trees[i].props.children.map(n=>n.props.key));singleWeb(t);assert.equal(nodes(t,'WebView')[0].props.opacity,1)
    assert.equal(nodes(t,'WebView')[0].props.controller,ctrls[i]);assert.equal(nodes(t,'WebView')[0].props.disabled,true)
    assert.ok(ctrls[i].html.includes('\"background\":\"'+(i<3?'#1c1c1e':'#2c2c2e')+'\"'),'home/detail background payload')
   }
@@ -142,24 +159,21 @@ async function mount(){const node=render(plot.MountedCanvasPlot,props,true);awai
   assert.equal(front.props.role,'home');assert.equal(detail.props.role,'detail')
   const summary=home.CpuCard({history:[10,20],running:true,detail:true,sheetTrace:71});assert.equal(nodes(summary,home.GridPlot)[0].props.role,'detail');assert.equal(nodes(summary,home.GridPlot)[0].props.sheetTrace,71)
  })
- await test('WebView始终可见，初载用不透底的单网格覆盖；仅确认painted后隐藏覆盖',async()=>{
+ await test('WebView从初载始终独占宿主，ready/painted/探针不增删原生兄弟',async()=>{
   let node=render(plot.MountedCanvasPlot,props,true);await flush();let host=hosts.at(-1)
-  assert.equal(coverVisible(nodes(node,'Canvas')[0]),true)
-  const grid=nodes(node,'Canvas')[0];assert.ok(grid,'native grid shown before the WebView is ready');assert.equal(grid.props.opaque,false,'opaque Canvas paints black')
-  const ops=[],ctx={fillRect:(...v)=>ops.push(['fill',...v]),setLineDash:a=>ops.push(['dash',a]),beginPath(){},moveTo:(x,y)=>ops.push(['m',x,y]),lineTo:(x,y)=>ops.push(['l',x,y]),stroke:()=>ops.push(['s']),save(){this.savedFill=this.fillStyle},restore(){this.fillStyle=this.savedFill},fillText:(...v)=>ops.push(['text',...v])}
-  grid.props.draw(ctx,{width:70,height:40});assert.equal(ctx.strokeStyle,'rgba(146,149,163,0.22)');assert.equal(ops.filter(o=>o[0]==='m').length,13);assert.equal(ops.filter(o=>o[0]==='l').length,13);assert.equal(ctx.fillStyle,'#f2f2f7');assert.equal(JSON.stringify(ops[0]),'["fill",0,0,70,40]');assert.equal(JSON.stringify(ops[1]),'["dash",[3,3]]');assert.equal(JSON.stringify(ops.filter(o=>o[0]==='l')[7]),'["l",70,40]');assert.equal(JSON.stringify(ops.filter(o=>o[0]==='l')[12]),'["l",70,40]')
+  singleWeb(node)
   assert.equal(typeof host.handlers.plotPainted,'function')
   host.handlers.plotReady();await flush();node=render(plot.MountedCanvasPlot,props)
-  assert.equal(coverVisible(nodes(node,'Canvas')[0]),true,'ready alone must not remove cover');assert.equal(nodes(node,'Canvas').length,1)
+  singleWeb(node)
   host.handlers.plotPainted();await flush();node=render(plot.MountedCanvasPlot,props)
-  assert.equal(nodes(node,'WebView')[0].props.opacity,1);assert.equal(nodes(node,'Canvas').length,1);assert.equal(coverVisible(nodes(node,'Canvas')[0]),false)
+  assert.equal(nodes(node,'WebView')[0].props.opacity,1);singleWeb(node)
   node=render(plot.MountedCanvasPlot,props,true);await flush();host=hosts.at(-1);host.handlers.plotReady();await flush()
   for(const fn of [...timeouts.values()])fn();await flush();node=render(plot.MountedCanvasPlot,props)
-  assert.equal(coverVisible(nodes(node,'Canvas')[0]),true,'timer alone never removes cover; document must confirm paint')
+  singleWeb(node)
   assert.ok(host.sent.at(-1).includes('plotCanvas?.painted'));host.resolve(true);await flush();node=render(plot.MountedCanvasPlot,props)
-  assert.equal(nodes(node,'WebView')[0].props.opacity,1,'lost painted message is recovered only after confirmed paint')
+  assert.equal(nodes(node,'WebView')[0].props.opacity,1,'lost painted message is recovered without swapping the native node')
  })
- await test('首次挂载/非启动页首次切入：ready后尺寸未稳定(未绘制)不揭示空WebView，保留原生网格，尺寸到达后painted才揭示',async()=>{
+ await test('首次挂载/非启动页切入：未painted期间及painted后均无原生Canvas',async()=>{
   for(const label of ['启动页首次打开','非启动页首次切入']){
    timeouts.clear();let node=render(plot.MountedCanvasPlot,props,true);await flush();const host=hosts.at(-1)
    host.handlers.plotReady({generation:1});await flush()
@@ -167,14 +181,14 @@ async function mount(){const node=render(plot.MountedCanvasPlot,props,true);awai
     const fns=[...timeouts.values()];timeouts.clear();fns.forEach(fn=>fn());await flush()
     if(host.resolve){const r=host.resolve;host.resolve=null;r(false);await flush()}
     node=render(plot.MountedCanvasPlot,props)
-    assert.equal(coverVisible(nodes(node,'Canvas')[0]),true,label+': zero-size document remains covered');assert.equal(nodes(node,'Canvas').length,1,label+': native grid remains')
+    singleWeb(node)
    }
    host.handlers.plotPainted({generation:1});await flush();node=render(plot.MountedCanvasPlot,props)
-   assert.equal(nodes(node,'WebView')[0].props.opacity,1);assert.equal(nodes(node,'Canvas').length,1);assert.equal(coverVisible(nodes(node,'Canvas')[0]),false);unmount()
+   assert.equal(nodes(node,'WebView')[0].props.opacity,1);singleWeb(node);unmount()
   }
  })
  await test('已painted显示后不得被隐藏：loadHTML迟到false/reject、普通桥接单次失败、过期update、首载期间inactive→active均不重载不撤下',async()=>{
-  const shownNow=()=>{const o=render(plot.MountedCanvasPlot,props);return nodes(o,'WebView')[0]?.props.opacity===1&&!coverVisible(nodes(o,'Canvas')[0])&&!text(o).includes('失败')}
+  const shownNow=()=>{const o=render(plot.MountedCanvasPlot,props);return nodes(o,'WebView')[0]?.props.opacity===1&&nodes(o,'Canvas').length===0&&!text(o).includes('失败')}
   for(const how of ['loadFalse','loadReject','bridgeReject','staleFalse','sceneDuringLoad']){
    timeouts.clear();const holdLoad=how.startsWith('load');let finish
    const orig=context.WebViewController.prototype.loadHTML
@@ -209,12 +223,12 @@ async function mount(){const node=render(plot.MountedCanvasPlot,props,true);awai
    assert.equal(host.loads,1);assert.ok(shownNow());unmount()
   }
  })
- await test('3.3兼容：消息通道缺失时由文档自检确认就绪(不依赖plotReady)，且仍只在确认painted后揭示',async()=>{
+ await test('3.3兼容：消息通道缺失时由文档自检确认就绪(不依赖plotReady)，且自检不改变唯一WebView结构',async()=>{
   timeouts.clear();let node=render(plot.MountedCanvasPlot,props,true);await flush();const host=hosts.at(-1)
-  assert.equal(coverVisible(nodes(node,'Canvas')[0]),true)
+  singleWeb(node)
   ;[...timeouts.values()].at(-1)();await flush();assert.ok(host.sent.at(-1).includes('plotCanvas.alive'));host.resolve(1);await flush()
   assert.ok(timeouts.size>=1,'ready-by-probe schedules the painted confirmation check')
-  node=render(plot.MountedCanvasPlot,props);assert.equal(coverVisible(nodes(node,'Canvas')[0]),true,'ready-by-probe alone does not reveal')
+  node=render(plot.MountedCanvasPlot,props);singleWeb(node)
   assert.ok(load('cadence-diagnostics').cadenceSummary().includes('ready-by-probe'));unmount()
  })
  await test('3.3兼容：恢复探针返回值不明时由plotAck确认，不重载；无ack才在超时后重载',async()=>{
@@ -332,7 +346,7 @@ async function mount(){const node=render(plot.MountedCanvasPlot,props,true);awai
   emitScene('inactive');emitScene('active');await flush();host.resolve('missing');await flush()
   assert.equal(host.loads,2);assert.ok(host.html.includes('"samples":[10,20]'));assert.ok(host.html.includes('"resume":true'))
   assert.equal(host.handlers.plotReady({generation:1}),false);assert.equal(host.handlers.plotPainted({generation:1}),false)
-  let out=render(plot.MountedCanvasPlot,props);assert.equal(coverVisible(nodes(out,'Canvas')[0]),true);assert.equal(nodes(out,'Canvas').length,1)
+  let out=render(plot.MountedCanvasPlot,props);singleWeb(out)
   host.handlers.plotReady({generation:2});host.handlers.plotPainted({generation:2});await flush();out=render(plot.MountedCanvasPlot,props)
   assert.equal(nodes(out,'WebView')[0].props.opacity,1);assert.equal(host.loads,2)
   unmount();assert.equal(host.disposed,1);assert.equal(sceneListeners.size,0);assert.equal(timeouts.size,0)
