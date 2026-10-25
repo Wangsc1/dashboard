@@ -109,7 +109,7 @@ function drawMetric(){return {n:0,total:0,max:0,buckets:[0,0,0,0],ring:new Array
 function drawTotals(){return {frames:0,restarts:0,backsteps:0,maxProgressStep:0,maxGeometryStep:0,stationary:0,native:drawMetric(),js:drawMetric(),cost:drawMetric()}}
 const drawRoles={home:drawTotals(),detail:drawTotals()}
 // v2 records entry and exclusion conditions BEFORE v1 filtering. No sample values.
-const stateKeys=['updates','newRefs','runningTrue','runningFalse','animStarts','updateNotAnimating','updateStopped','raw','rawAnimating','timeMissing','timeInvalid','notAnimating','notRunning','notTicking','notForeground','notVisible','zeroSize','wake','park','setPausedTrue','setPausedFalse','restoreScene','restoreDisappear','restoreReturnAppear','restoreKick','restoreRunningFalse','startsWithoutDraw'] as const
+const stateKeys=['updates','newRefs','runningTrue','runningFalse','animStarts','updateNotAnimating','updateStopped','raw','rawAnimating','timeMissing','timeInvalid','notAnimating','notRunning','notTicking','notForeground','zeroSize','wake','park','setPausedTrue','setPausedFalse','restoreScene','restoreKick','restoreRunningFalse','startsWithoutDraw'] as const
 type StateKey=typeof stateKeys[number]
 function stateCounts(){const out={} as Record<StateKey,number>;for(const k of stateKeys)out[k]=0;return out}
 const stateRoles={home:stateCounts(),detail:stateCounts()}
@@ -123,7 +123,7 @@ function makePlotState(owner:PlotTrace):PlotStateTrack{
 }
 function countState(s:PlotStateTrack,key:StateKey){s.counts[key]++;stateRoles[s.role][key]++}
 function stateBoundary(s:PlotStateTrack,event:string){s.events[s.cursor]=event;s.times[s.cursor]=Date.now();s.cursor=(s.cursor+1)%8;s.eventCount=Math.min(8,s.eventCount+1)}
-export function nativePlotStateEvent(t:NativeDrawTrack,event:'wake'|'park'|'setPausedTrue'|'setPausedFalse'|'restoreScene'|'restoreDisappear'|'restoreReturnAppear'|'restoreKick'|'restoreRunningFalse'){
+export function nativePlotStateEvent(t:NativeDrawTrack,event:'wake'|'park'|'setPausedTrue'|'setPausedFalse'|'restoreScene'|'restoreKick'|'restoreRunningFalse'){
   const s=t.state;countState(s,event)
   if(event==='setPausedTrue'||event==='setPausedFalse')s.expectedPause=event==='setPausedTrue'
   if(event==='park'||event.startsWith('restore'))stateBoundary(s,event)
@@ -138,22 +138,22 @@ export function nativePlotUpdate(t:NativeDrawTrack,newRef:boolean,running:boolea
     countState(s,'animStarts');s.pendingStart=true;stateBoundary(s,'sample-start')
   }
 }
-// flags: model.animating=1 running=2 ticking=4 foreground=8 visible=16 positive-size=32.
+// flags: model.animating=1 running=2 ticking=4 foreground=8 positive-size=16.
 export function nativePlotRawDraw(t:NativeDrawTrack,time:number,at:number,flags:number){
   const s=t.state;countState(s,'raw');s.drawAt=at;s.flags=flags
   if(time===undefined||time===null)countState(s,'timeMissing')
   else if(!Number.isFinite(time))countState(s,'timeInvalid')
   if(flags&1){countState(s,'rawAnimating');s.pendingStart=false}else countState(s,'notAnimating')
-  if(!(flags&2))countState(s,'notRunning');if(!(flags&4))countState(s,'notTicking');if(!(flags&8))countState(s,'notForeground');if(!(flags&16))countState(s,'notVisible');if(!(flags&32))countState(s,'zeroSize')
+  if(!(flags&2))countState(s,'notRunning');if(!(flags&4))countState(s,'notTicking');if(!(flags&8))countState(s,'notForeground');if(!(flags&16))countState(s,'zeroSize')
   // JS-only continuous animation gap survives missing native time, not lifecycle/static gaps.
-  if(flags===63){if(s.rawContinuous&&at>=s.rawAt)addDrawMetric(rawJsRoles[s.role],at-s.rawAt);s.rawContinuous=true;s.rawAt=at}else s.rawContinuous=false
+  if(flags===31){if(s.rawContinuous&&at>=s.rawAt)addDrawMetric(rawJsRoles[s.role],at-s.rawAt);s.rawContinuous=true;s.rawAt=at}else s.rawContinuous=false
 }
 export function nativePlotStateSummary(){
   const now=Date.now(),format=(c:ReturnType<typeof stateCounts>)=>stateKeys.map(k=>`${k}=${c[k]}`).join(' ')
   const lines=['原生绘制状态 v2（进程累计；raw为alive draw入口，无time/动画过滤；拒绝条件非互斥）',
     'A: newRefs不增长→宿主未收到新samples引用；B: newRefs增长但animStarts不增长→未启动，updateStopped/restore*辅助定位；C: animStarts增长但raw/rawAnimating不增长→动画已启但缺draw；D: raw存在，对照not*/zeroSize/timeMissing/timeInvalid与v1。不同阶段可并存，不凭累计值自动定根因。',
     'updates=宿主数据/style effect次数；newRefs=其中samples引用变化次数（含首帧）；runningTrue/False为effect传入值；updateNotAnimating/Stopped为更新后未动画/从动画变停止；wake/park为调用次数，setPaused*才是setter次数。',
-    'flags位: animating=1 running=2 ticking=4 foreground=8 visible=16 positive-size=32；63才通过v1门控，还需有效time。expectedPause=最近setter期望，renderedPause=最近JS props，不代表原生已应用。',
+    'flags位: animating=1 running=2 ticking=4 foreground=8 positive-size=16；31才通过v1门控，还需有效time。expectedPause=最近setter期望，renderedPause=最近JS props，不代表原生已应用。',
     'restoreRunningFalse为running=false更新触发的归位路径标记，非额外restore调用；animStarts按更新前后animating/start比较。startsWithoutDraw为前次启动未见animating draw又启动的次数，pendingStart表示最近启动尚未见animating draw。']
   for(const role of ['home','detail'] as const){lines.push(`${role}.state: ${format(stateRoles[role])}`);const m=rawJsRoles[role];lines.push(`${role}.raw-js-active-gap: n=${m.n} total=${m.total.toFixed(1)}ms max=${m.max.toFixed(1)}ms buckets=${m.buckets.join('/')}（不依赖time，仍只计连续动画门控通过帧）`)}
   lines.push('逐宿主最近状态/8个边界（最多64宿主，含已卸载；无样本值）：')

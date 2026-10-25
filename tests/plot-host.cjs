@@ -37,8 +37,9 @@ function native(tree){assert.equal(tree.type,'TimelineCanvas');assert.equal(tree
   emitScene('inactive');emitScene('background');assert.equal(o.render().props.paused,true);assert.equal(timers.size,0)
   o.props.samples=[60,90];o.render();assert.equal(o.render().props.paused,true);assert.equal(model.animating,false)
   emitScene('active');t=o.render();assert.equal(t.props.paused,false);assert.equal(model.shown.at(-1).y,90);assert.equal(model.animating,false);draw(t);drain();assert.equal(o.render().props.paused,true)
-  t.props.onDisappear();o.props.samples=[70,100];o.render();plot.requestPlotKick('selected');assert.equal(o.render().props.paused,true)
-  t.props.onAppear();t=o.render();assert.equal(model.shown.at(-1).y,100);draw(t);drain();assert.equal(o.render().props.paused,true)
+  // Native callbacks are diagnostic only; page/sheet/tab invisibility arrives as running=false.
+  o.props.running=false;o.props.samples=[70,100];t=o.render();plot.requestPlotKick('selected');draw(t);drain();assert.equal(o.render().props.paused,true,'running=false draws its static final state then parks')
+  t.props.onDisappear();t.props.onAppear();o.props.running=true;t=o.render();assert.equal(model.shown.at(-1).y,100);draw(t);drain();assert.equal(o.render().props.paused,true)
   o.props.running=false;o.render();draw(o.render());drain();plot.requestPlotKick('appear');t=o.render();assert.equal(model.animating,false);draw(t);drain()
   assert.equal(o.host().model,model);o.close();assert.equal(timers.size,0);assert.equal(sceneListeners.size,0);plot.requestPlotKick('selected');assert.equal(timers.size,0)
  })
@@ -49,7 +50,7 @@ function native(tree){assert.equal(tree.type,'TimelineCanvas');assert.equal(tree
    now+=1000;o.props.samples=history.map(x=>x+1);t=o.render();now+=400;draw(t);now+=600;draw(t);drain()
    if(order){
     emitScene('inactive');emitScene('background');if(order!=='retained-running'){o.props.running=false;o.render()}now+=120000
-    if(order==='appear-first')t.props.onDisappear(),t.props.onAppear()
+    if(order==='appear-first')t.props.onDisappear(),t.props.onAppear() // diagnostics only
     if(order==='props-first'){o.props.running=true;o.render()}
     emitScene('inactive');emitScene('active')
     if(order==='active-first')t.props.onDisappear(),t.props.onAppear()
@@ -109,6 +110,16 @@ function native(tree){assert.equal(tree.type,'TimelineCanvas');assert.equal(tree
   now+=1000;o.props.samples=[40,50];t=o.render();draw(t);assert.equal(track.continuous,true)
   o.props.running=false;o.render();assert.equal(track.continuous,false);o.close();assert.equal(timers.size,0);assert.equal(sceneListeners.size,0)
   assert.ok(load('cadence-diagnostics').cadenceSummary().includes('原生连续绘制 v1'))
+ })
+ await test('native appear/appear/disappear is diagnostic only: later real samples still animate while running; running=false parks',async()=>{
+  const o=instance({samples:[10,20,30,40,50,60,70,80],tone:'#2dbf82',running:true,percent:true,role:'detail',sheetTrace:9});let t=o.render();t.props.onAppear();t.props.onAppear();draw(t);drain()
+  t.props.onDisappear();const host=o.host(),model=host.model,counts=host.drawTrack.state.counts
+  now+=1000;o.props.samples=[10,20,30,40,50,60,70,80,90];t=o.render();assert.equal(model.animating,true,'native disappear cannot disable animation');assert.equal(t.props.paused,false);assert.equal(host.ticking,true);assert.equal(counts.animStarts,1)
+  const before=JSON.stringify(model.shown);now+=500;draw(t);assert.notEqual(JSON.stringify(model.shown),before);assert.ok(model.animating);assert.ok(counts.rawAnimating>0);assert.equal(counts.notVisible,undefined);assert.equal(host.drawTrack.state.flags,31)
+  now+=500;draw(t);assert.equal(model.shown.at(-1).y,90);drain();assert.equal(o.render().props.paused,true)
+  now+=1000;o.props.samples=[10,20,30,40,50,60,70,80,95];t=o.render();assert.equal(t.props.paused,false);now+=300;draw(t)
+  o.props.running=false;t=o.render();assert.equal(model.animating,false,'running=false stops interpolation');draw(t);drain();assert.equal(o.render().props.paused,true,'closed sheet/page final static draw then parks');assert.equal(host.ticking,false)
+  o.close();assert.equal(timers.size,0)
  })
  await test('unmount before completion cancels queue, stale draw cannot set state; diagnostic is native, not document ready/painted',async()=>{
   const o=instance({samples:[1,2],tone:'#3485eb',running:true});const t=o.render();t.props.onAppear();draw(t,0,0);assert.equal(timers.size,0,'data is not parked before a measurable final draw');draw(t);assert.equal(timers.size,1);o.close();const n=writes;drain();t.props.onAppear();t.props.onDisappear();draw(t);assert.equal(writes,n);assert.equal(timers.size,0)

@@ -106,7 +106,7 @@ function instance(fn){const state={hooks:[],cleanups:new Map()};return {state,as
   // Native render may call appear/draw BEFORE passive effects; old tests always
   // flushed all effects before pretending a native frame happened.
   const appeared=new Set(),ctx=new Proxy({}, {get:()=>()=>{},set:()=>true})
-  function nativeBeforeEffects(n,path){if(n.type!=='TimelineCanvas')return;if(!appeared.has(path)){appeared.add(path);n.props.onAppear();n.props.onAppear()}n.props.draw(ctx,{width:145,height:76},now/1000)}
+  function nativeBeforeEffects(n,path){if(n.type!=='TimelineCanvas')return;if(!appeared.has(path)){appeared.add(path);n.props.onAppear();n.props.onAppear();n.props.onDisappear()}n.props.draw(ctx,{width:145,height:76},now/1000)}
   function finish(){const fs=[...timers.values()];timers.clear();fs.forEach(f=>f())}
   function drawPlots(snapshot){for(const p of snapshot.plots)p.tree.props.draw(ctx,{width:145,height:76},now/1000)}
   let baseline=await tree();assert.equal(baseline.plots.length,17);assert.equal(new Set(baseline.plots.map(p=>p.model)).size,17);assert.equal(listeners.size,1)
@@ -121,7 +121,7 @@ function instance(fn){const state={hooks:[],cleanups:new Map()};return {state,as
    if(n>1){
     next.plots.forEach(p=>{assert.equal(p.model.animating,true,'growing real feed history must enter animation');assert.equal(p.tree.props.paused,false);assert.equal(p.host.ticking,true)})
     const starts=next.plots.map(p=>JSON.stringify(p.model.shown));now+=500;drawPlots(next)
-    next.plots.forEach((p,i)=>{assert.equal(p.host.drawTrack.continuous,true);assert.ok(p.host.drawTrack.state.counts.rawAnimating>0);assert.ok(p.host.drawTrack.state.counts.animStarts>0);assert.notEqual(JSON.stringify(p.model.shown),starts[i],'actual middle draw advances geometry');assert.notDeepEqual(JSON.parse(JSON.stringify(p.model.shown)),JSON.parse(JSON.stringify(p.model.to)),'middle draw is not final target')})
+    next.plots.forEach((p,i)=>{assert.equal(p.host.drawTrack.continuous,true);assert.ok(p.host.drawTrack.state.counts.rawAnimating>0);assert.equal(p.host.drawTrack.state.flags,31);assert.equal(p.tree.props.paused,false);assert.ok(p.host.drawTrack.state.counts.animStarts>0);assert.notEqual(JSON.stringify(p.model.shown),starts[i],'actual middle draw advances geometry');assert.notDeepEqual(JSON.parse(JSON.stringify(p.model.shown)),JSON.parse(JSON.stringify(p.model.to)),'middle draw is not final target')})
     now+=500;drawPlots(next);finish()
    }else{drawPlots(next);finish()}
   }

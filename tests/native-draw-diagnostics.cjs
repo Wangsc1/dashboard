@@ -48,7 +48,7 @@ console.log('PASS stable 30ms / independent 200ms native+JS gaps / slow draw / s
 function stateRow(owner){return d.nativePlotStateSummary().split('\n').find(l=>l.startsWith('id='+owner.id+' '))}
 function makeState(){const o=d.createPlotTrace('detail');return [o,d.createNativeDrawTrack(o)]}
 const [a,at]=makeState();d.nativePlotUpdate(at,true,true,false,0,false,0,8)
-for(let i=0;i<5;i++)d.nativePlotRawDraw(at,undefined,20000+i*30,62)
+for(let i=0;i<5;i++)d.nativePlotRawDraw(at,undefined,20000+i*30,30)
 assert.match(stateRow(a),/updates=1 newRefs=1/);assert.match(stateRow(a),/animStarts=0/);assert.match(stateRow(a),/raw=5 rawAnimating=0 timeMissing=5/)
 const [b,bt]=makeState();for(let i=0;i<3;i++)d.nativePlotUpdate(bt,true,true,false,0,false,0,8+i)
 assert.match(stateRow(b),/updates=3 newRefs=3 runningTrue=3 runningFalse=0 animStarts=0 updateNotAnimating=3/)
@@ -59,18 +59,18 @@ const [e,et]=makeState();d.nativePlotUpdate(et,true,true,false,0,true,1000,8)
 const gapBefore=Number(d.nativePlotStateSummary().match(/detail.raw-js-active-gap: n=(\d+)/)[1])
 for(let i=0;i<3;i++){
  const time=i===1?NaN:undefined,js=30000+i*30
- d.nativePlotRawDraw(et,time,js,63);d.recordNativeDraw(et,time,js,js+1,true,1000,.1+i*.03)
+ d.nativePlotRawDraw(et,time,js,31);d.recordNativeDraw(et,time,js,js+1,true,1000,.1+i*.03)
 }
 assert.match(stateRow(e),/raw=3 rawAnimating=3 timeMissing=2 timeInvalid=1/);assert.match(stateRow(e),/pendingStart=0/)
 assert.equal(Number(d.nativePlotStateSummary().match(/detail.raw-js-active-gap: n=(\d+)/)[1]),gapBefore+2,'v1 invalid time cannot erase JS-only gap')
 d.nativePlotRawDraw(et,undefined,30100,0)
-assert.match(stateRow(e),/notAnimating=1 notRunning=1 notTicking=1 notForeground=1 notVisible=1 zeroSize=1/)
+assert.match(stateRow(e),/notAnimating=1 notRunning=1 notTicking=1 notForeground=1 zeroSize=1/)
 // Lifecycle reset/static waiting creates no false cross-segment JS gap.
-d.resetNativeDrawTrack(et);d.nativePlotRawDraw(et,undefined,90000,63)
+d.resetNativeDrawTrack(et);d.nativePlotRawDraw(et,undefined,90000,31)
 assert.equal(Number(d.nativePlotStateSummary().match(/detail.raw-js-active-gap: n=(\d+)/)[1]),gapBefore+2)
-for(let i=0;i<20;i++){d.nativePlotStateEvent(et,'restoreDisappear');d.nativePlotStateEvent(et,'park')}
+for(let i=0;i<20;i++){d.nativePlotStateEvent(et,'restoreKick');d.nativePlotStateEvent(et,'park')}
 d.nativePlotStateEvent(et,'setPausedTrue');d.nativePlotRenderedPause(et,false)
-assert.match(stateRow(e),/park=20/);assert.match(stateRow(e),/restoreDisappear=20/);assert.match(stateRow(e),/expectedPause=1 renderedPause=0/)
+assert.match(stateRow(e),/park=20/);assert.match(stateRow(e),/restoreKick=20/);assert.match(stateRow(e),/expectedPause=1 renderedPause=0/)
 const lines=d.nativePlotStateSummary().split('\n'),rowIndex=lines.findIndex(l=>l.startsWith('id='+e.id+' '));assert.equal(lines[rowIndex+1].split(' ').length,8,'only last eight state boundaries')
 for(const [o,h] of [[a,at],[b,bt],[c,ct],[e,et]])d.disposeNativeDrawTrack(o,h)
 assert.ok(d.cadenceSummary().includes('原生绘制状态 v2'));assert.ok(d.nativePlotStateSummary().split('\n').filter(l=>l.startsWith('id=')).length<=64)
