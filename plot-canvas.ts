@@ -1,3 +1,4 @@
+// Legacy Web renderer retained ONLY as a test oracle for native-plot.ts; not imported by production hosts.
 // Inline-only chart runtime. No fetch, URLs, credentials or per-frame native bridge calls.
 export function plotCanvasHTML(initial?:{seq:number;samples:number[];tone:string;area?:boolean;running:boolean;percent:boolean;background?:string;sampleAt?:number;timingEpoch?:number;resume?:boolean},diagnostics=false,generation=0) {
   // TEMP display-source probe: W is persistent DOM, independent of canvas/data/running; remove with native N after diagnosis.

@@ -48,8 +48,8 @@ export function connectionLifecycleSummary(){
     'root-*为JS读取的标签；render为连接正文已构建，appear/disappear为视图回调；不代表原生像素已绘制。',
     ...connectionEvents.map(e=>`-${Math.max(0,now-e.at)}ms ${e.event} ×${e.n}`)].join('\n')
 }
-// Chart document lifecycle: closed vocabulary plus small integers only (no source, samples, URLs or errors).
-type PlotEvent='host-appear'|'host-disappear'|'web-appear'|'web-disappear'|'mount'|'dispose'|'load'|'kick-selected'|'kick-appear'|'kick-shown'|'kick-skipped'|'ready'|'ready-by-probe'|'painted'|'shown'|'reveal-check'|'reload-scene-unready'|'reload-probe-failed'|'reload-probe-timeout'|'reload-load-timeout'|'reload-bridge-failures'|'fail-load-timeout'|'fail-bridge'|'ignored-load-result'|'ignored-bridge-error'|'ignored-stale-update'|'scene-active'|'scene-inactive'|'scene-background'
+// Native chart lifecycle: closed vocabulary and small integers only. Legacy event names remain type-compatible for old test oracles.
+type PlotEvent='native-draw'|'host-appear'|'host-disappear'|'web-appear'|'web-disappear'|'mount'|'dispose'|'load'|'kick-selected'|'kick-appear'|'kick-shown'|'kick-skipped'|'ready'|'ready-by-probe'|'painted'|'shown'|'reveal-check'|'reload-scene-unready'|'reload-probe-failed'|'reload-probe-timeout'|'reload-load-timeout'|'reload-bridge-failures'|'fail-load-timeout'|'fail-bridge'|'ignored-load-result'|'ignored-bridge-error'|'ignored-stale-update'|'scene-active'|'scene-inactive'|'scene-background'
 export type PlotRole='home'|'detail'
 export interface PlotTrace {id:number;role:PlotRole;sheet?:number}
 let nextPlotId=0,nextSheetId=0
@@ -82,7 +82,7 @@ export function plotLifecycle(event:PlotEvent,gen=0,size?:{w:number;h:number},ow
     }
     if(h.gen!==gen&&event==='load'){delete h.times.ready;delete h.times.painted;delete h.times.shown;delete h.w;delete h.h}
     h.gen=gen
-    if(['mount','dispose','load','ready','painted','shown','host-appear','host-disappear','web-appear','web-disappear'].includes(event))h.times[event]=Date.now()
+    if(['mount','dispose','native-draw','load','ready','painted','shown','host-appear','host-disappear','web-appear','web-disappear'].includes(event))h.times[event]=Date.now()
     if(size){h.w=size.w;h.h=size.h}
   }
   if(event==='mount'){plotMounts++;plotLive++}else if(event==='dispose')plotLive=Math.max(0,plotLive-1)
@@ -92,12 +92,12 @@ export function plotLifecycle(event:PlotEvent,gen=0,size?:{w:number;h:number},ow
 }
 export function plotLifecycleSummary(){
   const now=Date.now()
-  return ['图表文档生命周期（仅本次运行，最多40项；gen=文档代次，w/h=页面报告的绘制尺寸；无来源/样本/错误文本）',
+  return ['原生图表生命周期（仅本次运行，最多40项；gen=0为原生宿主，w/h=draw实际尺寸；无来源/样本/错误文本）',
     `累计挂载=${plotMounts} 当前存活=${plotLive}`,
-    'host/web appear/disappear为原生视图回调，不代表屏幕像素合成；尺寸仍仅由网页报告。',
+    'host appear/disappear为原生视图回调；native-draw表示已发出原生绘制命令，不代表屏幕像素合成。原生宿主无Web文档、加载或消息就绪阶段。',
     ...plotEvents.map(e=>`-${Math.max(0,now-e.at)}ms ${e.event} gen=${e.gen} ×${e.n}${e.owner?` id=${e.owner.id} role=${e.owner.role}${e.owner.sheet!==undefined?` sheet=${e.owner.sheet}`:''}`:''}${e.w!==undefined?` ${e.w}x${e.h}`:''}`),
     '宿主最近里程碑（最多64个；firstAppear不覆盖，appearanceCount为回调次数；其余同事件保留最近一次）',
-    ...[...plotHosts.values()].map(h=>`id=${h.owner.id} role=${h.owner.role}${h.owner.sheet!==undefined?` sheet=${h.owner.sheet}`:''} gen=${h.gen} ${(['host','web'] as const).map(k=>`${k}.firstAppear=${h.firstAppear[k]===undefined?'none':`-${Math.max(0,now-h.firstAppear[k]!)}ms`} ${k}.appearanceCount=${h.appearanceCount[k]}`).join(' ')}${h.w!==undefined?` ${h.w}x${h.h}`:''} ${Object.entries(h.times).map(([k,at])=>`${k}=-${Math.max(0,now-at!)}ms`).join(' ')}`),
+    ...[...plotHosts.values()].map(h=>`id=${h.owner.id} role=${h.owner.role}${h.owner.sheet!==undefined?` sheet=${h.owner.sheet}`:''} gen=${h.gen} ${(['host'] as const).map(k=>`${k}.firstAppear=${h.firstAppear[k]===undefined?'none':`-${Math.max(0,now-h.firstAppear[k]!)}ms`} ${k}.appearanceCount=${h.appearanceCount[k]}`).join(' ')}${h.w!==undefined?` ${h.w}x${h.h}`:''} ${Object.entries(h.times).map(([k,at])=>`${k}=-${Math.max(0,now-at!)}ms`).join(' ')}`),
     'sheet首次信号（最多16个；content-create=首次JS构建，content-mount/state=effect执行；appear不等于像素已合成）',
     ...[...sheetFirst.entries()].map(([id,s])=>`sheet=${id} appearanceCount=${s.appearances} ${Object.entries(s.times).map(([k,at])=>`first.${k}=-${Math.max(0,now-at!)}ms`).join(' ')}`),
     'CPU sheet生命周期（最多24项；state为JS effect，content-mount为订阅effect；appear/disappear为原生回调）',
@@ -105,7 +105,7 @@ export function plotLifecycleSummary(){
 }
 export function cadenceSummary(){
   const lines=['采样/绘图计时摘要 v1（仅本次运行；无地址、认证、配置或响应正文）',`会话=${session} 前台采样=${active?'是':'否'} 异常阈值=1500ms 记录上限=32`,
-    '读法：read/headers/body慢且js-gap不高→请求/服务端尾延迟线索；js-gap高→JS调度/宿主暂停线索；仅bridge高→绘图桥接线索；canvas-gap高→画布rAF长间隔。它们是耗时观察，不是单凭摘要确认根因。',
+    '读法：read/headers/body慢且js-gap不高→请求/服务端尾延迟线索；js-gap高→JS调度/宿主暂停线索；仅bridge高→绘图桥接线索；canvas-gap为旧Web参考指标，原生TimelineCanvas不产生rAF/bridge计时。它们是耗时观察，不是单凭摘要确认根因。',
     'slowInfo=1表示该轮含60秒系统资料；zones是温度区数量；cpu-info为异步CPU元信息。后台及切源在途计时丢弃。']
   for(const [stage,s]of totals)lines.push(`${stage}: 次数=${s.n} 最大=${s.max}ms 慢=${s.slow}`)
   for(const p of pending.values())if(p.token.epoch===epoch&&Date.now()-p.at>=1500)lines.push(`${p.stage}: 尚未完成 已等待=${Date.now()-p.at}ms`)

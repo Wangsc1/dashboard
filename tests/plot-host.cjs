@@ -1,374 +1,52 @@
-// Native hook/controller contract tests. No claim about iPhone appearance/FPS.
+// Real native TSX host contract. Mock TimelineCanvas draw calls are NOT iPhone pixel proof.
 const fs=require('node:fs'),vm=require('node:vm')
 const harness=fs.readFileSync(__dirname+'/run.cjs','utf8').split(';(async () => {')[0]
 const checks=String.raw`
-scripting.useState=function(v){const slots=hooks,i=hookIndex++;if(!(i in slots))slots[i]=typeof v==='function'?v():v;return [slots[i],v=>{slots[i]=typeof v==='function'?v(slots[i]):v}]}
-let hosts=[],timeouts=new Map(),nextTimeout=0
-context.setTimeout=(fn)=>{const n=++nextTimeout;timeouts.set(n,fn);return n};context.clearTimeout=n=>timeouts.delete(n)
-context.WebViewController=class {
- constructor(){this.handlers={};this.sent=[];this.disposed=0;this.loads=0;hosts.push(this)}
- async addScriptMessageHandler(name,fn){this.handlers[name]=fn}
- async loadHTML(html){this.loads++;this.html=html;return true}
- evaluateJavaScript(code){this.sent.push(code);return new Promise((resolve,reject)=>{this.resolve=resolve;this.reject=reject})}
- dispose(){this.disposed++}
-}
-const plot=load('plot-view')
-const props={samples:[10,20],tone:'#3485eb',percent:true,running:true}
-// Assert the actual normal-path native tree on EVERY render, across all states below.
-const identities=new WeakMap()
-function singleWeb(tree){
- assert.equal(tree.type,'ZStack');assert.equal(nodes(tree,'Canvas').length,0,'no native Canvas from first render onward')
- const children=(Array.isArray(tree.props.children)?tree.props.children:[tree.props.children]).filter(Boolean)
- assert.deepEqual(children.map(n=>n.type),['WebView'],'only one child; no cover sibling')
- const w=children[0];assert.equal(w.props.opacity,1);assert.equal(w.props.disabled,true)
- const signature=JSON.stringify([tree.type,tree.props.key,tree.props.frame,0,w.props.key,w.props.frame])
- if(identities.has(w.props.controller))assert.equal(signature,identities.get(w.props.controller),'parent/position/key/frame stable for controller')
- else identities.set(w.props.controller,signature)
- return w
-}
-const originalRender=render
-render=(fn,p,reset=false)=>{const tree=originalRender(fn,p,reset);if(fn===plot.MountedCanvasPlot&&tree.type!=='Text')singleWeb(tree);return tree}
-async function mount(){const node=render(plot.MountedCanvasPlot,props,true);await flush();return node}
+let insideDraw=false,writes=0,timers=new Map(),timerId=0
+context.setTimeout=f=>{const id=++timerId;timers.set(id,f);return id};context.clearTimeout=id=>timers.delete(id)
+context.WebViewController=class{constructor(){throw Error('native charts must never construct WebView')}}
+scripting.useState=function(v){const slots=hooks,i=hookIndex++;if(!(i in slots))slots[i]=typeof v==='function'?v():v;return [slots[i],v=>{assert.equal(insideDraw,false,'no React setters in native draw');writes++;slots[i]=typeof v==='function'?v(slots[i]):v}]}
+const plot=load('plot-view'),geometry=load('native-plot')
+function instance(initial){const state={hooks:[],cleanups:new Map()},p={...initial};return {props:p,render(){const saved={hooks,cleanups,effects,hookIndex};hooks=state.hooks;cleanups=state.cleanups;effects=[];hookIndex=0;let tree=plot.MountedCanvasPlot(p);const queued=effects;queued.forEach(f=>f());hookIndex=0;effects=[];tree=plot.MountedCanvasPlot(p);hooks=saved.hooks;cleanups=saved.cleanups;effects=saved.effects;hookIndex=saved.hookIndex;return tree},host(){return state.hooks[0].current},close(){for(const f of state.cleanups.values())f();state.cleanups.clear()}}}
+function draw(tree,width=145,height=76){const ops=[],ctx=new Proxy({}, {get:(_,k)=>(...args)=>ops.push([k,...args]),set:(_,k,v)=>{ops.push([k,v]);return true}});const before=writes;insideDraw=true;try{tree.props.draw(ctx,{width,height},now/1000)}finally{insideDraw=false};assert.equal(writes,before);return ops}
+function drain(){const callbacks=[...timers.values()];timers.clear();callbacks.forEach(f=>f())}
+function native(tree){assert.equal(tree.type,'TimelineCanvas');assert.equal(tree.props.schedule,'animation');assert.equal(tree.props.opaque,false);assert.equal(nodes(tree,'WebView').length,0);assert.equal(nodes(tree,'ZStack').length,0);assert.ok(!('opacity' in tree.props));return tree}
 ;(async()=>{
- await test('保留未挂载cover helper，但生产树无Canvas/N；HTML画布外W常驻',async()=>{
-  const calls=[],ctx=new Proxy({}, {get:(_,name)=>(...args)=>calls.push([name,...args]),set:()=>true})
-  plot.drawPlotGrid(ctx,{width:145,height:76});assert.equal(calls.some(c=>c[0]==='fillText'),false)
-  calls.length=0;plot.drawPlotCover(ctx,{width:145,height:76},'#f2f2f7');assert.deepEqual(calls.filter(c=>c[0]==='fillText'),[['fillText','N',9,4]])
-  let t=render(plot.MountedCanvasPlot,props,true);await flush();const h=hosts.at(-1)
-  singleWeb(t);assert.equal(nodes(t,'WebView')[0].props.opacity,1)
-  assert.ok(h.html.includes('<canvas></canvas><span id="plot-web-source" aria-hidden="true">W</span>'))
-  assert.ok(!h.html.includes('>N<'));assert.equal(nodes(t,'Text').length,0,'N adds no native sibling/layout node')
-  h.handlers.plotPainted({generation:1,w:145,h:76});await flush();t=render(plot.MountedCanvasPlot,props)
-  singleWeb(t);assert.equal(nodes(t,'WebView')[0].props.opacity,1);unmount()
+ await test('20 native hosts: stable models/frames, one completion queue, final drawn geometry before pause, no per-frame React renders',async()=>{
+  const os=Array.from({length:20},(_,i)=>instance({samples:[10,20,30],tone:'#3485eb',percent:true,running:true,plotHeight:i<3?96:76,role:i<3?'home':'detail',sheetTrace:i<3?undefined:7}))
+  const first=os.map(o=>native(o.render())),models=os.map(o=>o.host().model);assert.equal(new Set(models).size,20)
+  first.forEach(t=>draw(t));assert.equal(timers.size,1,'20 completions use ONE process timer');drain()
+  os.forEach((o,i)=>{assert.equal(o.render().props.paused,true);assert.equal(o.host().model,models[i])})
+  now+=1000;os.forEach(o=>{o.props.samples=[10,20,50]});let trees=os.map(o=>native(o.render()));assert.ok(trees.every(t=>t.props.paused===false));assert.ok(os.every(o=>o.host().model.animating))
+  const before=writes;now+=500;trees.forEach(t=>draw(t));const mid=os[0].host().model.shown.at(-1).y;trees[0].props.onAppear();assert.equal(os[0].host().model.shown.at(-1).y,mid,'duplicate appear does not snap interpolation');emitScene('active');assert.equal(os[0].host().model.shown.at(-1).y,mid,'duplicate active does not snap');assert.equal(writes,before+1);assert.equal(timers.size,0);assert.ok(os.every(o=>o.host().model.shown.at(-1).y===40))
+  now+=500;trees.forEach(t=>draw(t));assert.equal(timers.size,1);assert.ok(os.every(o=>o.host().model.shown.at(-1).y===50),'target actually drawn before park');assert.ok(os.every(o=>o.render().props.paused===false))
+  // A new sample invalidates that host's pending completion, without canceling siblings.
+  os[0].props.samples=[10,20,70];os[0].render();drain();assert.equal(os[0].render().props.paused,false);assert.ok(os.slice(1).every(o=>o.render().props.paused===true))
+  os.forEach(o=>o.close());assert.equal(timers.size,0);assert.equal(sceneListeners.size,0);assert.equal(intervals.size,0)
  })
- await test('注册等待与native appear两种先后：同一controller绑定、最新inline样本、ready/painted不改变唯一WebView结构',async()=>{
-  const Original=context.WebViewController
-  try{for(const appearFirst of [true,false]){
-   let release;const gate=new Promise(r=>release=r)
-   context.WebViewController=class extends Original{async addScriptMessageHandler(name,fn){await gate;return super.addScriptMessageHandler(name,fn)}}
-   let t=render(plot.MountedCanvasPlot,props,true);await flush();const h=hosts.at(-1),web=nodes(t,'WebView')[0],key=web.props.key
-   assert.equal(web.props.controller,h);assert.equal(h.html,undefined,'registration gate precedes loading, not binding')
-   if(appearFirst){t.props.onAppear();web.props.onAppear()}
-   t=render(plot.MountedCanvasPlot,{...props,samples:[11,22,33]});await flush();assert.equal(nodes(t,'WebView')[0].props.controller,h)
-   release();for(let i=0;i<100&&h.html===undefined;i++)await Promise.resolve()
-   assert.equal(typeof h.html,'string','registration must finish before loading');assert.ok(h.html.includes('"samples":[11,22,33]'),'load takes the latest inline frame after registration')
-   h.handlers.plotReady({generation:1});await flush();t=render(plot.MountedCanvasPlot,{...props,samples:[11,22,33]})
-   singleWeb(t)
-   if(!appearFirst){t.props.onAppear();nodes(t,'WebView')[0].props.onAppear()}
-   singleWeb(t)
-   h.handlers.plotPainted({generation:1,w:145,h:96});await flush();t=render(plot.MountedCanvasPlot,{...props,samples:[11,22,33]})
-   assert.equal(nodes(t,'WebView')[0].props.controller,h);assert.equal(nodes(t,'WebView')[0].props.key,key);assert.equal(nodes(t,'WebView')[0].props.opacity,1)
-   singleWeb(t);unmount()
-  }}finally{context.WebViewController=Original}
+ await test('pause/static samples/style/size/empty grid redraw once; retain same native node/model; no idle full-speed loop',async()=>{
+  const o=instance({samples:[],tone:'#3485eb',percent:true,running:false,plotHeight:66});let t=native(o.render());const model=o.host().model
+  let ops=draw(t);assert.equal(ops.filter(x=>x[0]==='lineTo').length,13);assert.equal(o.host().model.animating,false);drain();assert.equal(o.render().props.paused,true)
+  o.props.samples=[10,80];t=o.render();assert.equal(t.props.paused,false);ops=draw(t);assert.ok(ops.some(x=>x[0]==='bezierCurveTo'));drain();assert.equal(o.render().props.paused,true)
+  mockColorScheme='dark';o.props.elevated=true;o.props.plotHeight=96;o.props.plotWidth=329;t=o.render();ops=draw(t,329,96);assert.equal(o.host().model,model);assert.ok(ops.some(x=>x[0]==='fillStyle'&&x[1]==='#2c2c2e'));assert.equal(t.props.frame.minHeight,96);drain();assert.equal(o.render().props.paused,true)
+  mockColorScheme='light';o.close();assert.equal(timers.size,0);assert.equal(sceneListeners.size,0)
  })
- await test('全生命周期仅WebView：保留父级、位置、frame和controller：首次/详情尺寸/重复painted/恢复/重载',async()=>{
-  for(const plotHeight of [66,76,96]){
-   timeouts.clear();const p={...props,plotHeight};let out=render(plot.MountedCanvasPlot,p,true);await flush();const h=hosts.at(-1)
-   const layers=t=>(t.props.children??[]).filter(Boolean)
-   const initial=layers(out);assert.deepEqual(initial.map(n=>n.type),['WebView'])
-   const stable=()=>{out=render(plot.MountedCanvasPlot,p);const next=layers(out);assert.deepEqual(next.map(n=>[n.type,n.props.key,n.props.frame]),initial.map(n=>[n.type,n.props.key,n.props.frame]));assert.equal(next[0].props.controller,h);return next}
-   assert.equal(initial[0].props.opacity,1);singleWeb(out)
-   // Poll/feed metadata and running changes cannot introduce a placeholder or move WebView.
-   p.running=false;p.tone='#2dbf82';p.area=true;stable();await flush()
-   p.running=true;p.samples=[30,40,50];p.percent=false;stable();await flush()
-   for(let i=0;i<2;i++){out.props.onAppear();nodes(out,'WebView')[0].props.onAppear();stable()}
-
-   h.handlers.plotReady({generation:1});h.handlers.plotPainted({generation:1,w:145,h:plotHeight});await flush()
-   let next=stable();assert.deepEqual(next.map(n=>n.props.key),initial.map(n=>n.props.key));assert.equal(next[0].props.opacity,1);singleWeb(out);assert.equal(timeouts.size,0)
-   h.handlers.plotPainted({generation:1,w:145,h:plotHeight});await flush();stable();assert.equal(timeouts.size,0)
-   plot.requestPlotKick('selected');for(const fn of [...timeouts.values()])fn();timeouts.clear();await flush();next=stable();assert.equal(next[0].props.opacity,1,'selected repaint never nudges opacity');h.resolve(true);await flush()
-   emitScene('background');emitScene('active');await flush();stable();h.resolve('missing');await flush();assert.equal(h.loads,2)
-   next=stable();assert.equal(next[0].props.opacity,1);singleWeb(out)
-   h.handlers.plotReady({generation:2});h.handlers.plotPainted({generation:2,w:145,h:plotHeight});await flush();stable();unmount();assert.equal(timeouts.size,0)
-  }
+ await test('scene/tab/offscreen stops timeline and queue; newest background samples snap on restore without catch-up; retained identity',async()=>{
+  const o=instance({samples:[10,20],tone:'#2dbf82',running:true,percent:true});let t=o.render();draw(t);drain();const model=o.host().model
+  now+=1000;o.props.samples=[30,80];t=o.render();now+=300;draw(t);assert.ok(model.animating)
+  emitScene('inactive');emitScene('background');assert.equal(o.render().props.paused,true);assert.equal(timers.size,0)
+  o.props.samples=[60,90];o.render();assert.equal(o.render().props.paused,true);assert.equal(model.animating,false)
+  emitScene('active');t=o.render();assert.equal(t.props.paused,false);assert.equal(model.shown.at(-1).y,90);assert.equal(model.animating,false);draw(t);drain();assert.equal(o.render().props.paused,true)
+  t.props.onDisappear();o.props.samples=[70,100];o.render();plot.requestPlotKick('selected');assert.equal(o.render().props.paused,true)
+  t.props.onAppear();t=o.render();assert.equal(model.shown.at(-1).y,100);draw(t);drain();assert.equal(o.render().props.paused,true)
+  o.props.running=false;o.render();draw(o.render());drain();plot.requestPlotKick('appear');t=o.render();assert.equal(model.animating,false);draw(t);drain()
+  assert.equal(o.host().model,model);o.close();assert.equal(timers.size,0);assert.equal(sceneListeners.size,0);plot.requestPlotKick('selected');assert.equal(timers.size,0)
  })
-
- await test('主页保留+详情摘要/32核同时挂载：层key跨宿主唯一且终生稳定，controller及消息独立',async()=>{
-  unmount();timeouts.clear();const oldTheme=mockColorScheme;mockColorScheme="dark"
-  function owner(p){
-   const state={hooks:[],cleanups:new Map()}
-   return {draw(){
-    const saved={hooks,cleanups,effects,hookIndex};hooks=state.hooks;cleanups=state.cleanups;effects=[];hookIndex=0
-    const out=plot.MountedCanvasPlot(p),queued=effects;singleWeb(out);effects=[];queued.forEach(f=>f())
-    hooks=saved.hooks;cleanups=saved.cleanups;effects=saved.effects;hookIndex=saved.hookIndex;return out
-   },close(){for(const f of state.cleanups.values())f();state.cleanups.clear()}}
-  }
-  const main=[96,66,66].map(plotHeight=>owner({...props,plotHeight,elevated:false})),details=[96,...Array(32).fill(76)].map(plotHeight=>owner({...props,plotHeight,elevated:true}))
-  const owners=[...main,...details],start=hosts.length
-  const trees=owners.map(o=>o.draw()),ctrls=hosts.slice(start)
-  // First sheet batch appears before async handler registration/load, then repeats on parent running refresh.
-  for(let i=0;i<trees.length;i++){
-   assert.equal(ctrls[i].loads,0);assert.equal(nodes(trees[i],'WebView')[0].props.opacity,1)
-   trees[i].props.onAppear();nodes(trees[i],'WebView')[0].props.onAppear()
-   trees[i].props.onAppear();nodes(trees[i],'WebView')[0].props.onAppear()
-  }
-  await flush()
-  assert.equal(ctrls.length,36);assert.equal(new Set(ctrls).size,36);assert.equal(new Set(trees.flatMap(t=>t.props.children.map(n=>n.props.key))).size,36)
-  for(let i=0;i<36;i++){
-   const layers=trees[i].props.children;assert.match(layers[0].props.key,/^plot-web-\d+$/);singleWeb(trees[i]);assert.equal(layers[0].props.controller,ctrls[i]);assert.equal(ctrls[i].loads,1)
-  }
-  // One detail ready/painted must not change any host tree or bind another controller.
-  ctrls[3].handlers.plotReady({generation:1});ctrls[3].handlers.plotPainted({generation:1,w:338,h:96});await flush()
-  for(let i=0;i<36;i++){const t=owners[i].draw();assert.equal(nodes(t,'WebView')[0].props.opacity,1);singleWeb(t)}
-  for(let i=0;i<36;i++)if(i!==3){ctrls[i].handlers.plotReady({generation:1});ctrls[i].handlers.plotPainted({generation:1,w:i<3?145:145,h:i<3?(i===0?96:66):76})}
-  await flush()
-  for(let i=0;i<36;i++){
-   const t=owners[i].draw();assert.deepEqual(t.props.children.map(n=>n.props.key),trees[i].props.children.map(n=>n.props.key));singleWeb(t);assert.equal(nodes(t,'WebView')[0].props.opacity,1)
-   assert.equal(nodes(t,'WebView')[0].props.controller,ctrls[i]);assert.equal(nodes(t,'WebView')[0].props.disabled,true)
-   assert.ok(ctrls[i].html.includes('\"background\":\"'+(i<3?'#1c1c1e':'#2c2c2e')+'\"'),'home/detail background payload')
-  }
-  assert.equal(timeouts.size,0,'no shown-kick timers even with sheet + 32 cores')
-  details.forEach(o=>o.close());for(let i=0;i<36;i++)assert.equal(ctrls[i].disposed,i<3?0:1)
-  main.forEach(o=>{assert.equal(nodes(o.draw(),'WebView')[0].props.opacity,1);o.close()});assert.equal(timeouts.size,0);mockColorScheme=oldTheme
+ await test('unmount before completion cancels queue, stale draw cannot set state; diagnostic is native, not document ready/painted',async()=>{
+  const o=instance({samples:[1,2],tone:'#3485eb',running:true});const t=o.render();t.props.onAppear();draw(t,0,0);assert.equal(timers.size,0,'data is not parked before a measurable final draw');draw(t);assert.equal(timers.size,1);o.close();const n=writes;drain();t.props.onAppear();t.props.onDisappear();draw(t);assert.equal(writes,n);assert.equal(timers.size,0)
+  const summary=load('cadence-diagnostics').plotLifecycleSummary();assert.ok(summary.includes('原生图表生命周期'));assert.ok(summary.includes('native-draw'));assert.ok(summary.includes('当前存活=0'));assert.ok(summary.includes('不代表屏幕像素合成'))
  })
- await test('详情首次在native appear前已load/painted、关闭切tab再开：id/role/sheet关联生命周期，不改变宿主行为',async()=>{
-  const diag=load('cadence-diagnostics'),sheet=diag.createSheetTrace()
-  for(let attempt=0;attempt<2;attempt++){
-   const p={...props,role:'detail',sheetTrace:sheet,elevated:true};let t=render(plot.MountedCanvasPlot,p,true);await flush();const h=hosts.at(-1)
-   assert.equal(h.loads,1,'load does not wait for native attachment')
-   h.handlers.plotReady({generation:1});h.handlers.plotPainted({generation:1,w:145,h:76});await flush();t=render(plot.MountedCanvasPlot,p)
-   assert.equal(nodes(t,'WebView')[0].props.opacity,1)
-   let summary=diag.plotLifecycleSummary(),rows=summary.split('宿主最近里程碑')[1].split('CPU sheet')[0].split('\n').filter(x=>x.includes('role=detail')&&x.includes('sheet='+sheet+' ')),row=rows.at(-1)
-   const id=/id=(\d+)/.exec(row)[1];assert.ok(row.includes('load=')&&row.includes('painted=')&&!row.includes('web-appear='),'document paint is distinguishable from native appear')
-   const before=h.sent.length;t.props.onAppear();nodes(t,'WebView')[0].props.onAppear();await flush();assert.equal(h.sent.length,before,'diagnostics never trigger bridge/reload')
-   t.props.onDisappear();nodes(t,'WebView')[0].props.onDisappear();t.props.onAppear();nodes(t,'WebView')[0].props.onAppear();await flush()
-   unmount();summary=diag.plotLifecycleSummary();row=summary.split('\n').find(x=>x.startsWith('id='+id+' '));for(const e of ['host-appear=','host-disappear=','web-appear=','web-disappear=','dispose='])assert.ok(row.includes(e),e)
-   assert.equal(timeouts.size,0)
-  }
-  // Bounded records; different ids must never be merged merely because generation/event match.
-  for(let i=0;i<100;i++){const o=diag.createPlotTrace('detail',sheet);diag.plotLifecycle('web-appear',1,undefined,o);diag.sheetLifecycle('appear',sheet);diag.sheetLifecycle('disappear',sheet)}
-  const summary=diag.plotLifecycleSummary();assert.ok(summary.split('宿主最近里程碑')[1].split('CPU sheet')[0].split('\n').filter(x=>x.startsWith('id=')).length<=64)
-  assert.ok(summary.split('CPU sheet')[1].split('\n').length<=26);assert.ok(!summary.includes('10,20')&&!summary.includes('http'))
- })
- await test('首次appear与计数不被第二次appear/40项timeline淘汰覆盖；文档先painted也不伪造native出现',async()=>{
-  const diag=load('cadence-diagnostics'),owner=diag.createPlotTrace('detail',diag.createSheetTrace())
-  diag.plotLifecycle('painted',1,{w:145,h:76},owner)
-  const line=()=>diag.plotLifecycleSummary().split('\n').find(l=>l.startsWith('id='+owner.id+' '))
-  assert.ok(line().includes('web.firstAppear=none web.appearanceCount=0'))
-  diag.plotLifecycle('host-appear',1,undefined,owner);diag.plotLifecycle('web-appear',1,undefined,owner)
-  now+=1000;diag.plotLifecycle('host-disappear',1,undefined,owner);diag.plotLifecycle('web-disappear',1,undefined,owner)
-  now+=1000;diag.plotLifecycle('host-appear',1,undefined,owner);diag.plotLifecycle('web-appear',1,undefined,owner)
-  for(let i=0;i<50;i++)diag.plotLifecycle('painted',1,{w:145,h:76},owner)
-  const row=line();for(const k of ['host.firstAppear=-2000ms','web.firstAppear=-2000ms','host.appearanceCount=2','web.appearanceCount=2','web-appear=-0ms'])assert.ok(row.includes(k),k)
-  const timeline=diag.plotLifecycleSummary().split('宿主最近里程碑')[0];assert.ok(!timeline.includes(' web-appear gen='),'timeline evicted appear but snapshot still remembers first')
- })
- await test('主页和每核共用绘制组件，不存在详情专用动画实现',()=>{
-  const front=nodes(home.CpuCard({history:[10,20],running:true}),home.GridPlot)[0]
-  const detail=home.SampledCpuPlot({samples:[10,20],running:true})
-  assert.equal(detail.type,home.GridPlot);assert.equal(home.GridPlot(front.props).type,plot.InlineCanvasPlot);assert.equal(home.GridPlot(detail.props).type,plot.InlineCanvasPlot)
-  assert.equal(front.props.role,'home');assert.equal(detail.props.role,'detail')
-  const summary=home.CpuCard({history:[10,20],running:true,detail:true,sheetTrace:71});assert.equal(nodes(summary,home.GridPlot)[0].props.role,'detail');assert.equal(nodes(summary,home.GridPlot)[0].props.sheetTrace,71)
- })
- await test('WebView从初载始终独占宿主，ready/painted/探针不增删原生兄弟',async()=>{
-  let node=render(plot.MountedCanvasPlot,props,true);await flush();let host=hosts.at(-1)
-  singleWeb(node)
-  assert.equal(typeof host.handlers.plotPainted,'function')
-  host.handlers.plotReady();await flush();node=render(plot.MountedCanvasPlot,props)
-  singleWeb(node)
-  host.handlers.plotPainted();await flush();node=render(plot.MountedCanvasPlot,props)
-  assert.equal(nodes(node,'WebView')[0].props.opacity,1);singleWeb(node)
-  node=render(plot.MountedCanvasPlot,props,true);await flush();host=hosts.at(-1);host.handlers.plotReady();await flush()
-  for(const fn of [...timeouts.values()])fn();await flush();node=render(plot.MountedCanvasPlot,props)
-  singleWeb(node)
-  assert.ok(host.sent.at(-1).includes('plotCanvas?.painted'));host.resolve(true);await flush();node=render(plot.MountedCanvasPlot,props)
-  assert.equal(nodes(node,'WebView')[0].props.opacity,1,'lost painted message is recovered without swapping the native node')
- })
- await test('首次挂载/非启动页切入：未painted期间及painted后均无原生Canvas',async()=>{
-  for(const label of ['启动页首次打开','非启动页首次切入']){
-   timeouts.clear();let node=render(plot.MountedCanvasPlot,props,true);await flush();const host=hosts.at(-1)
-   host.handlers.plotReady({generation:1});await flush()
-   for(let round=0;round<8;round++){
-    const fns=[...timeouts.values()];timeouts.clear();fns.forEach(fn=>fn());await flush()
-    if(host.resolve){const r=host.resolve;host.resolve=null;r(false);await flush()}
-    node=render(plot.MountedCanvasPlot,props)
-    singleWeb(node)
-   }
-   host.handlers.plotPainted({generation:1});await flush();node=render(plot.MountedCanvasPlot,props)
-   assert.equal(nodes(node,'WebView')[0].props.opacity,1);singleWeb(node);unmount()
-  }
- })
- await test('已painted显示后不得被隐藏：loadHTML迟到false/reject、普通桥接单次失败、过期update、首载期间inactive→active均不重载不撤下',async()=>{
-  const shownNow=()=>{const o=render(plot.MountedCanvasPlot,props);return nodes(o,'WebView')[0]?.props.opacity===1&&nodes(o,'Canvas').length===0&&!text(o).includes('失败')}
-  for(const how of ['loadFalse','loadReject','bridgeReject','staleFalse','sceneDuringLoad']){
-   timeouts.clear();const holdLoad=how.startsWith('load');let finish
-   const orig=context.WebViewController.prototype.loadHTML
-   if(holdLoad)context.WebViewController.prototype.loadHTML=function(h){this.loads++;this.html=h;return new Promise((res,rej)=>{finish=()=>how==='loadFalse'?res(false):rej(Error('x'))})}
-   render(plot.MountedCanvasPlot,props,true);await flush();const host=hosts.at(-1)
-   if(how==='sceneDuringLoad'){emitScene('inactive');emitScene('active');await flush();assert.equal(host.loads,1,'in-flight first load is not restarted by scene churn')}
-   host.handlers.plotReady({generation:1});host.handlers.plotPainted({generation:1,w:329,h:96});await flush()
-   if(holdLoad){finish();await flush()}
-   if(how==='bridgeReject'||how==='staleFalse'){render(plot.MountedCanvasPlot,{...props,samples:[1,2,3]});await flush();how==='bridgeReject'?host.reject(Error('transient')):host.resolve(false);await flush()}
-   assert.equal(host.loads,1,how+': no reload');assert.ok(shownNow(),how+': painted chart stays visible');
-   if(holdLoad)context.WebViewController.prototype.loadHTML=orig
-   unmount()
-  }
-  // Unpainted/failed first load is bounded: one retry, then a visible error (never an endless reload loop).
-  timeouts.clear();render(plot.MountedCanvasPlot,props,true);await flush();const h2=hosts.at(-1)
-  for(let i=0;i<4;i++){const fns=[...timeouts.values()];timeouts.clear();fns.forEach(f=>f());await flush()}
-  assert.ok(h2.loads<=2,'at most one automatic reload');unmount()
- })
- await test('图表生命周期诊断：挂载计数/代次/尺寸/显示进入“复制停顿诊断”，且不含来源或样本',async()=>{
-  const diag=load('cadence-diagnostics');render(plot.MountedCanvasPlot,{...props,samples:[11,22,33]},true);await flush();const host=hosts.at(-1)
-  host.handlers.plotReady({generation:1});host.handlers.plotPainted({generation:1,w:329,h:96});await flush()
-  const t=diag.cadenceSummary();for(const k of ['mount gen=0','load gen=1','ready gen=1','painted gen=1','329x96','shown gen=1','累计挂载=','当前存活='])assert.ok(t.includes(k),k)
-  assert.ok(!t.includes('11,22,33')&&!t.includes('http'));unmount();assert.ok(diag.cadenceSummary().includes('dispose gen=1'))
- })
- await test('3.3兼容：脚本消息参数被包装(JSON串/数组/body)仍按代次接受；evaluate返回1/"true"/undefined不触发失败或撤下',async()=>{
-  const shownNow=()=>{const o=render(plot.MountedCanvasPlot,props);return nodes(o,'WebView')[0]?.props.opacity===1&&!text(o).includes('失败')}
-  for(const wrap of [v=>v,v=>JSON.stringify(v),v=>[v],v=>({body:v})]){
-   timeouts.clear();render(plot.MountedCanvasPlot,props,true);await flush();const host=hosts.at(-1)
-   assert.equal(host.handlers.plotReady(wrap({generation:99})),false,'wrong generation still rejected')
-   assert.equal(host.handlers.plotReady(wrap({generation:1})),true);assert.equal(host.handlers.plotPainted(wrap({generation:1,w:300,h:96})),true);await flush()
-   for(const r of [1,'true',undefined]){render(plot.MountedCanvasPlot,{...props,samples:[Math.random()*50,2]});await flush();host.resolve(r);await flush()}
-   assert.equal(host.loads,1);assert.ok(shownNow());unmount()
-  }
- })
- await test('3.3兼容：消息通道缺失时由文档自检确认就绪(不依赖plotReady)，且自检不改变唯一WebView结构',async()=>{
-  timeouts.clear();let node=render(plot.MountedCanvasPlot,props,true);await flush();const host=hosts.at(-1)
-  singleWeb(node)
-  ;[...timeouts.values()].at(-1)();await flush();assert.ok(host.sent.at(-1).includes('plotCanvas.alive'));host.resolve(1);await flush()
-  assert.ok(timeouts.size>=1,'ready-by-probe schedules the painted confirmation check')
-  node=render(plot.MountedCanvasPlot,props);singleWeb(node)
-  assert.ok(load('cadence-diagnostics').cadenceSummary().includes('ready-by-probe'));unmount()
- })
- await test('3.3兼容：恢复探针返回值不明时由plotAck确认，不重载；无ack才在超时后重载',async()=>{
-  for(const acked of [true,false]){
-   timeouts.clear();await mount();const host=hosts.at(-1);host.handlers.plotReady({generation:1});host.handlers.plotPainted({generation:1});await flush();const baseTimers=timeouts.size
-   emitScene('inactive');emitScene('active');await flush();const seq=Number(/"seq":(\d+)/.exec(host.sent.at(-1))[1]);host.resolve(undefined);await flush()
-   assert.equal(host.loads,1)
-   if(acked){host.handlers.plotAck({generation:1,seq});await flush();assert.equal(timeouts.size,baseTimers,'ack clears the probe');assert.equal(host.loads,1)}
-   else{const probe=[...timeouts.values()].at(-1);probe();await flush();assert.equal(host.loads,2,'no ack: bounded reload')}
-   unmount()
-  }
- })
- await test('稳定宿主：shown无额外kick；选中/出现请求合并，保持原生opacity，与后台恢复协同',async()=>{
-  const diag=load('cadence-diagnostics'),fire=()=>{const fns=[...timeouts.values()];timeouts.clear();fns.forEach(f=>f())}
-  const sentUpdates=h=>h.sent.filter(c=>c.includes('plotCanvas.update')).length
-  timeouts.clear();render(plot.MountedCanvasPlot,props,true);await flush();const host=hosts.at(-1)
-  assert.equal(sentUpdates(host),0)
-  host.handlers.plotReady({generation:1});host.handlers.plotPainted({generation:1,w:329,h:96});await flush()
-  // A painted document no longer receives ineffective delayed shown-kicks or native opacity nudges.
-  assert.equal(timeouts.size,0,'painted leaves no shown-kick timers')
-  assert.equal(sentUpdates(host),0)
-  let node=render(plot.MountedCanvasPlot,props);assert.equal(nodes(node,'WebView')[0].props.opacity,1)
-  // selected/appear: duplicates coalesce into a single timer and a single update
-  const before=sentUpdates(host),t0=timeouts.size
-  plot.requestPlotKick('selected');plot.requestPlotKick('appear');plot.requestPlotKick('selected');assert.equal(timeouts.size,t0+1,'duplicate events do not stack timers')
-  fire();await flush();assert.equal(sentUpdates(host),before+1);host.resolve(true);await flush()
-  // background/resume cooperation: a kick during background is skipped; resume path still owns the repaint
-  emitScene('background');plot.requestPlotKick('appear');fire();await flush();assert.equal(sentUpdates(host),before+1,'no bridge while backgrounded')
-  now+=7200000;emitScene('active');await flush();assert.equal(sentUpdates(host),before+2);assert.equal(host.loads,1);host.resolve(true);await flush()
-  const t=diag.cadenceSummary();assert.ok(t.includes('kick-selected')&&t.includes('kick-skipped'));assert.ok(!t.includes('http'))
-  plot.requestPlotKick('selected');unmount();assert.equal(timeouts.size,0,'dispose clears kick timers');plot.requestPlotKick('selected');assert.equal(timeouts.size,0,'unmounted charts unsubscribe')
- })
- await test('reload后仍保持固定宿主，新文档shown无额外定时器',async()=>{
-  timeouts.clear();render(plot.MountedCanvasPlot,props,true);await flush();const host=hosts.at(-1)
-  host.handlers.plotReady({generation:1});host.handlers.plotPainted({generation:1,w:300,h:96});await flush()
-  emitScene('inactive');emitScene('active');await flush();host.resolve('missing');await flush();assert.equal(host.loads,2)
-  host.handlers.plotReady({generation:2});host.handlers.plotPainted({generation:2,w:300,h:96});await flush()
-  assert.equal(timeouts.size,0);unmount();assert.equal(timeouts.size,0)
- })
- await test('完全不发送原生出现事件：首屏仍创建并加载且只加载一次，首帧携带样本',async()=>{
-  const slot=render(plot.InlineCanvasPlot,props,true)
-  assert.equal(nodes(slot,plot.MountedCanvasPlot).length,1)
-  assert.equal(slot.props.onAppear,undefined);assert.equal(slot.props.onDisappear,undefined)
-  const node=render(plot.MountedCanvasPlot,props,true),host=hosts.at(-1)
-  assert.equal(nodes(node,'WebView').length,1)
-  await flush()
-  assert.equal(host.loads,1);assert.ok(host.html.includes('const initial={'));assert.ok(host.html.includes('"samples":[10,20]'))
-  render(plot.MountedCanvasPlot,props);await flush();assert.equal(host.loads,1)
-  host.handlers.plotReady();await flush();assert.equal(host.sent.length,0,'initial paint needs no evaluateJavaScript round trip')
-  unmount();assert.equal(host.disposed,1);assert.equal(timeouts.size,0)
- })
- await test('临时诊断默认可见但不增加图槽高度，仅启用安全绘制状态报告',async()=>{
-  for(const height of [66,76,96]){
-   const slot=render(plot.InlineCanvasPlot,{...props,plotHeight:height},true);assert.equal(slot.props.frame.height,height)
-   const out=render(plot.MountedCanvasPlot,{...props,plotHeight:height},true);assert.equal(out.type,'ZStack');assert.equal(out.props.frame.minHeight,height);assert.equal(out.props.frame.maxHeight,height);const web=nodes(out,'WebView')[0];assert.equal(web.props.frame.minHeight,height);assert.equal(web.props.frame.maxHeight,height)
-   assert.equal(out.props.overlay,undefined);assert.equal(typeof out.props.onAppear,'function');assert.equal(typeof nodes(out,'WebView')[0].props.onAppear,'function')
-   await flush();const host=hosts.at(-1);assert.equal(host.handlers.plotDiagnostic,undefined);assert.ok(host.html.includes('diagnosticEnabled=false'));assert.ok(!host.html.includes('traceEnabled=true'));assert.ok(!text(out).includes('图诊断 '));unmount()
-  }
- })
- await test('详情sheet图表背景：dark用抬升卡片色#2c2c2e，主页保持#1c1c1e，light一致',async()=>{
-  const pv=plot.plotBackground
-  assert.equal(pv('dark',false),'#1c1c1e');assert.equal(pv('dark',true),'#2c2c2e');assert.equal(pv('light',false),'#f2f2f7');assert.equal(pv('light',true),'#f2f2f7')
-  const grid=(tree)=>nodes(tree,home.GridPlot)[0]
-  assert.equal(grid(home.CpuCard({history:[],running:false})).props.elevated,false)
-  assert.equal(grid(home.CpuCard({history:[],running:false,detail:true})).props.elevated,true)
-  assert.equal(home.SampledCpuPlot({samples:[1,2],running:false}).props.elevated,true)
-  for(const [theme,elevated,want] of [['dark',false,'#1c1c1e'],['dark',true,'#2c2c2e'],['light',true,'#f2f2f7']]){
-   mockColorScheme=theme;const node=render(plot.MountedCanvasPlot,{...props,elevated},true);await flush();const host=hosts.at(-1)
-   assert.ok(host.html.includes('"background":"'+want+'"'),theme+' '+elevated);host.handlers.plotReady();await flush();unmount()
-  }
-  mockColorScheme='light'
- })
- await test('准备好前合并采样；桥接串行；最新值接续；running=false同步',async()=>{
-  await mount();const host=hosts.at(-1);assert.ok(host.html.includes('requestAnimationFrame'));assert.equal(host.sent.length,0)
-  render(plot.MountedCanvasPlot,{...props,samples:[10,20,30]});await flush();host.handlers.plotReady();await flush();assert.equal(host.sent.length,1);assert.ok(host.sent[0].includes('[10,20,30]'))
-  render(plot.MountedCanvasPlot,{...props,samples:[10,20,30,40]});await flush();render(plot.MountedCanvasPlot,{...props,samples:[10,20,30,40,50]});await flush();assert.equal(host.sent.length,1)
-  host.resolve(true);await flush();assert.equal(host.sent.length,2);assert.ok(host.sent[1].includes('[10,20,30,40,50]'));host.resolve(true);await flush()
-  render(plot.MountedCanvasPlot,{...props,running:false});await flush();assert.ok(host.sent.at(-1).includes('"running":false'));host.resolve(true);await flush();unmount();assert.equal(host.disposed,1);assert.equal(timeouts.size,0)
- })
- await test('卸载拒绝迟到ready、挂起调用完成与后续采样；错误可见',async()=>{
-  render(plot.MountedCanvasPlot,props,true);await flush();let host=hosts.at(-1);unmount();host.handlers.plotReady();await flush();assert.equal(host.sent.length,0);assert.equal(host.disposed,1)
-  await mount();host=hosts.at(-1);host.handlers.plotReady();await flush();render(plot.MountedCanvasPlot,{...props,samples:[1,2,3]});await flush();unmount();host.resolve(true);await flush();assert.equal(host.sent.length,1);assert.equal(host.disposed,1)
-  await mount();host=hosts.at(-1);host.handlers.plotReady();await flush();render(plot.MountedCanvasPlot,{...props,samples:[10,30]});await flush();host.reject(Error('bridge failed'));await flush();const out=render(plot.MountedCanvasPlot,props);assert.ok(text(out).includes('曲线绘制层加载失败'));unmount()
- })
- await test('停顿摘要接收真实桥接/rAF异常，暂停前迟到消息不能污染新代次',async()=>{
-  const diag=load('cadence-diagnostics'),session=diag.beginCadenceDiagnostics('private-source-canary');session.resume()
-  await mount();const host=hosts.at(-1);host.handlers.plotReady();await flush()
-  render(plot.MountedCanvasPlot,{...props,samples:[10,20,30]});await flush();const old=diag.timingToken()
-  assert.ok(host.sent[0].includes('"timingEpoch":'+old.epoch))
-  session.pause();session.resume();const cut=t=>t.split('图表文档生命周期')[0],before=cut(diag.cadenceSummary())
-  host.handlers.plotLag({ms:3000,epoch:old.epoch});now+=3000;host.resolve(true);await flush()
-  assert.equal(cut(diag.cadenceSummary()),before,'old span and old rAF message are dropped')
-  render(plot.MountedCanvasPlot,{...props,samples:[10,20,30,40]});await flush()
-  host.handlers.plotLag({ms:2100,epoch:diag.timingToken().epoch});now+=2200;host.resolve(true);await flush()
-  const summary=diag.cadenceSummary();assert.ok(summary.includes('图表文档生命周期'));assert.ok(summary.includes('canvas-gap'));assert.ok(summary.includes('bridge'));assert.ok(!summary.includes('private-source-canary'))
-  unmount();session.close();assert.equal(intervals.size,0);assert.equal(timeouts.size,0)
- })
- await test('长后台恢复不依赖父memo/新样本：同一文档重放完整历史且只占一个有效桥接slot',async()=>{
-  await mount();const host=hosts.at(-1);host.handlers.plotReady();await flush();host.handlers.plotPainted()
-  render(plot.MountedCanvasPlot,{...props,samples:[10,20,30]});await flush();const oldResolve=host.resolve
-  const oldSent=host.sent.length
-  emitScene('background');now+=7200000
-  // No component render between lifecycle events: parent memo can stay identical.
-  emitScene('active');await flush();assert.equal(host.loads,1);assert.equal(host.sent.length,oldSent+1)
-  assert.ok(host.sent.at(-1).includes('"resume":true'));assert.ok(host.sent.at(-1).includes('[10,20,30]'))
-  const resumedResolve=host.resolve
-  emitScene('active');await flush();assert.equal(host.sent.length,oldSent+1,'duplicate active creates no second probe')
-  oldResolve(false);await flush();assert.equal(host.loads,1,'stale failed evaluate cannot reload the healthy document')
-  render(plot.MountedCanvasPlot,{...props,samples:[10,20,30,40]});await flush();assert.equal(host.sent.length,oldSent+1,'new sample waits for current bridge')
-  resumedResolve(true);await flush();assert.equal(host.sent.length,oldSent+2);assert.ok(host.sent.at(-1).includes('[10,20,30,40]'))
-  host.resolve(true);await flush();unmount();assert.equal(sceneListeners.size,0);assert.equal(intervals.size,0);assert.equal(timeouts.size,0)
- })
- await test('恢复探针发现文档不可用时仅重载图表，旧ready/painted不能揭示新文档',async()=>{
-  await mount();const host=hosts.at(-1);host.handlers.plotReady();await flush();host.handlers.plotPainted()
-  emitScene('inactive');emitScene('active');await flush();host.resolve('missing');await flush()
-  assert.equal(host.loads,2);assert.ok(host.html.includes('"samples":[10,20]'));assert.ok(host.html.includes('"resume":true'))
-  assert.equal(host.handlers.plotReady({generation:1}),false);assert.equal(host.handlers.plotPainted({generation:1}),false)
-  let out=render(plot.MountedCanvasPlot,props);singleWeb(out)
-  host.handlers.plotReady({generation:2});host.handlers.plotPainted({generation:2});await flush();out=render(plot.MountedCanvasPlot,props)
-  assert.equal(nodes(out,'WebView')[0].props.opacity,1);assert.equal(host.loads,2)
-  unmount();assert.equal(host.disposed,1);assert.equal(sceneListeners.size,0);assert.equal(timeouts.size,0)
- })
- await test('恢复探针本身悬挂时只重载一次当前图表文档并清理超时owner',async()=>{
-  await mount();const host=hosts.at(-1);host.handlers.plotReady();host.handlers.plotPainted();await flush()
-  emitScene('background');now+=86400000;emitScene('active');await flush();const staleResolve=host.resolve
-  assert.equal(timeouts.size,1,'only resume probe');[...timeouts.values()].at(-1)();await flush();assert.equal(host.loads,2);assert.equal(timeouts.size,2,'reload cancels old kicks; only new load deadline and ready-poll remain')
-  staleResolve(false);await flush();assert.equal(host.loads,2)
-  host.handlers.plotReady({generation:2});const timersAfterReady=timeouts.size;host.handlers.plotReady({generation:2});assert.equal(timeouts.size,timersAfterReady,'ready is idempotent');host.handlers.plotPainted({generation:2});await flush();assert.equal(timeouts.size,0,'painted cancels reveal check; no shown-kick timers')
-  unmount();assert.equal(sceneListeners.size,0);assert.equal(timeouts.size,0)
- })
- await test('后台合并样本不发送桥接，恢复保持显式running=false且卸载后无恢复动作',async()=>{
-  await mount();const host=hosts.at(-1);host.handlers.plotReady();await flush()
-  emitScene('background');render(plot.MountedCanvasPlot,{...props,samples:[30,40],running:false});await flush();assert.equal(host.sent.length,0)
-  now+=3600000;emitScene('active');await flush();assert.equal(host.sent.length,1);assert.ok(host.sent[0].includes('"running":false'));assert.ok(host.sent[0].includes('[30,40]'))
-  const resolve=host.resolve;unmount();emitScene('background');emitScene('active');resolve(true);await flush();assert.equal(host.sent.length,1);assert.equal(timeouts.size,0)
- })
- await test('组件卸载销毁控制器而非等待消失事件，不启动原生逐帧timer',async()=>{
-  const tree=render(plot.InlineCanvasPlot,props,true);assert.equal(nodes(tree,plot.MountedCanvasPlot).length,1)
-  await mount();const host=hosts.at(-1);unmount();assert.equal(host.disposed,1);assert.equal(intervals.size,0);assert.equal(timeouts.size,0)
- })
+ console.log(count+' native TimelineCanvas lifecycle groups passed; no native performance/pixel claim')
 })().catch(e=>{console.error(e);process.exitCode=1})
 `
-vm.runInNewContext(harness+checks,{require,__dirname,console,process})
+vm.runInNewContext(harness+checks,{require,__dirname,console,process},{filename:__filename})

@@ -1,14 +1,13 @@
 // Real API -> CpuSampler -> OverviewPage -> CPU card -> Canvas host regression.
-// RPC, scene/navigation events and native WebView are mocked. No router/device IO.
+// RPC, scene/navigation events and native TimelineCanvas are mocked. No router/device IO.
 const fs=require('node:fs'),vm=require('node:vm')
 const harness=fs.readFileSync(__dirname+'/run.cjs','utf8').split(';(async () => {')[0]
 const checks=String.raw`
 scripting.useState=function(v){const slots=hooks,i=hookIndex++;if(!(i in slots))slots[i]=typeof v==='function'?v():v;return [slots[i],v=>{slots[i]=typeof v==='function'?v(slots[i]):v}]}
-function owner(fn){const state={hooks:[],cleanups:new Map()};return {render(props){const saved={hooks,cleanups,effects,hookIndex};hooks=state.hooks;cleanups=state.cleanups;effects=[];hookIndex=0;const tree=fn(props),queued=effects;hooks=saved.hooks;cleanups=saved.cleanups;effects=saved.effects;hookIndex=saved.hookIndex;queued.forEach(f=>{const previous=cleanups;cleanups=state.cleanups;f();cleanups=previous});return tree},close(){for(const f of state.cleanups.values())f();state.cleanups.clear()}}}
+function owner(fn){const state={hooks:[],cleanups:new Map()};return {state,render(props){const saved={hooks,cleanups,effects,hookIndex};hooks=state.hooks;cleanups=state.cleanups;effects=[];hookIndex=0;const tree=fn(props),queued=effects;hooks=saved.hooks;cleanups=saved.cleanups;effects=saved.effects;hookIndex=saved.hookIndex;queued.forEach(f=>{const previous=cleanups;cleanups=state.cleanups;f();cleanups=previous});return tree},close(){for(const f of state.cleanups.values())f();state.cleanups.clear()}}}
 const timeouts=new Map();let timerID=0
 context.setTimeout=(fn,ms)=>{const id=++timerID;timeouts.set(id,{fn,ms});return id};context.clearTimeout=id=>timeouts.delete(id)
-let hosts=[]
-context.WebViewController=class{constructor(){this.handlers={};this.loads=0;this.messages=[];this.disposed=0;hosts.push(this)}async addScriptMessageHandler(name,fn){this.handlers[name]=fn}async loadHTML(html){this.loads++;this.html=html;return true}async evaluateJavaScript(code){const payload=JSON.parse(code.match(/update\((.*)\)/)[1]);this.messages.push(payload);return true}dispose(){this.disposed++}}
+context.WebViewController=class{constructor(){throw Error('charts must not use WebView')}}
 for(const name of ['prefetchProxies','prefetchRules','prefetchConnections','prefetchMoreVersions'])pages[name]=()=>{}
 const plot=load('plot-view')
 async function settle(){for(let i=0;i<100;i++)await Promise.resolve()}
@@ -49,15 +48,14 @@ async function scenario(kind,negative){
   assert.equal(cpuValue(tree),undefined,'first-ever baseline is not a sample')
   await tick(20);await tick(40);await tick(60)
   assert.equal(cpuValue(tree),60);equal(frame(tree).histories.cpu.cpu,[20,40,60])
-  canvas.render(hostProps(tree));await settle();const host=hosts.at(-1);host.handlers.plotReady();await settle()
+  canvas.render(hostProps(tree));await settle();const host=canvas.state.hooks[0].current,model=host.model
   const before=frame(tree),history=before.histories.cpu.cpu,cpus=before.overview.wrt.cpus,priorReads=batches
-  const sentBeforePause=host.messages.length
   if(kind==='background')emitScene('background')
   if(kind==='tab')props={...props,selected:false}
   if(kind==='settings')tree.props.onDisappear()
   await draw();assert.equal(poll().length,0);assert.equal(frame(tree).running,false);equal(frame(tree).histories.cpu.cpu,history);assert.equal(cpuValue(tree),60)
-  if(kind==='background')assert.equal(host.messages.length,sentBeforePause,'background queues latest props without evaluating the suspended document')
-  else assert.equal(host.messages.at(-1).running,false)
+  assert.equal(host.model.active,false,'hidden/background native animation pauses')
+  assert.equal(host.ticking,false,'background has no native timeline work')
   // A long gap and changed counters must not become a fabricated live point.
   uptime+=120;user+=9000;idle+=1000;now+=120000
   await settle();assert.equal(batches,priorReads,'no hidden/background RPC polling')
@@ -78,16 +76,16 @@ async function scenario(kind,negative){
   }else{
     assert.equal(cpuValue(tree),60,'baseline on resume must not erase latest displayed CPU')
     equal(frame(tree).overview.wrt.cpus,cpus);assert.equal(frame(tree).histories.cpu.cpu,history,'resume baseline neither appends nor clears CPU history')
-    equal(host.messages.at(-1).samples,history);assert.equal(host.messages.at(-1).running,true)
+    equal(host.model.history,history);assert.equal(host.running,true)
     await tick(30)
-    assert.equal(cpuValue(tree),30);equal(frame(tree).histories.cpu.cpu,[20,40,60,30]);equal(host.messages.at(-1).samples,[20,40,60,30])
+    assert.equal(cpuValue(tree),30);equal(frame(tree).histories.cpu.cpu,[20,40,60,30]);equal(host.model.history,[20,40,60,30])
     for(const c of frame(tree).overview.wrt.cpus)assert.equal(c.usage,30,'new delta excludes paused interval')
     // A genuine later counter rollback still breaks history; preservation is
     // strictly one resume-baseline frame, not a blanket last-value fallback.
     user=0;idle=0;uptime++;now+=1000;poll()[0].fn();await settle();await draw()
     assert.equal(cpuValue(tree),undefined);equal(frame(tree).histories.cpu.cpu,[])
   }
-  assert.equal(host.loads,1,'retained Canvas host must not reload its document');assert.equal(host.disposed,0)
+  assert.equal(host.model,model,'retained native model stays bound');assert.equal(host.alive,true)
  }finally{page.close();canvas.close();rootOwner.close();await settle();assert.equal(intervals.size,0);assert.equal(sceneListeners.size,0);assert.equal(timeouts.size,0)}
 }
 ;(async()=>{

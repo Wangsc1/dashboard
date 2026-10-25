@@ -1,8 +1,9 @@
-// Real browser Canvas/rAF verification, not iPhone WKWebView FPS certification.
+// Legacy Web oracle plus native-algorithm raster differential in browsers, NOT native Canvas/FPS proof.
 const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path')
 const ts=require('/tmp/chk/node_modules/typescript'),vm=require('node:vm')
 const js=ts.transpileModule(fs.readFileSync(path.join(__dirname,'../plot-canvas.ts'),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS}}).outputText
 const mod={exports:{}};vm.runInNewContext(js,{exports:mod.exports});const html=mod.exports.plotCanvasHTML()
+const nativeJS=ts.transpileModule(fs.readFileSync(path.join(__dirname,'../native-plot.ts'),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2020}}).outputText
 const {chromium,webkit}=require(process.env.PLAYWRIGHT_PATH||'/tmp/neko-editor-build/node_modules/playwright')
 ;(async()=>{
  for(const [name,type] of [['chromium',chromium],['webkit',webkit]]){
@@ -129,11 +130,31 @@ const {chromium,webkit}=require(process.env.PLAYWRIGHT_PATH||'/tmp/neko-editor-b
     })
     assert.equal(raster.canvases,1);assert.ok(raster.grid>50,'real Web grid pixels');assert.ok(raster.curve>50,'real blue curve pixels')
     assert.ok(raster.background.startsWith('rgb('))
+    // Native Canvas has a fresh context per draw. Reset oracle bitmap too, so old
+    // lineCap/global state from prior Web paints does not contaminate algorithm parity.
+    // Normalize Web clearing to the same opaque background fill required by native Canvas;
+    // otherwise browser body-compositing alpha rounding differs from in-canvas background blending.
+    await webPage.evaluate(()=>{const c=document.querySelector('canvas'),ctx=c.getContext('2d');ctx.clearRect=function(x,y,w,h){this.fillStyle=getComputedStyle(document.body).backgroundColor;this.fillRect(x,y,w,h)};c.width=c.width;window.dispatchEvent(new Event('pageshow'))})
     const baseline=await webPage.screenshot()
+    // Execute the actual pure native draw function on a browser context at matching DPR.
+    // Exact screenshot comparison proves raster algorithm parity here, not SwiftUI rendering.
+    await webPage.addScriptTag({content:'var exports=window.nativeReference={};'+nativeJS})
+    await webPage.evaluate(input=>{const n=window.nativeReference,s=n.createNativePlot();n.updateNativePlot(s,{...input,area:false,sampleAt:0},0);const c=document.querySelector('canvas');c.width=c.width;c.getContext('2d').setTransform(3,0,0,3,0,0);n.drawNativePlot(c.getContext('2d'),{width:145,height:input.height},s,input.background)}, {...initial,height})
+    assert.deepEqual(await webPage.screenshot(),baseline,'native drawing algorithm matches Web grid/curve/W screenshot exactly')
+    for(const area of [true,false]){
+      await webPage.evaluate(input=>{const c=document.querySelector('canvas');c.width=c.width;window.plotCanvas.update(input)},{...initial,seq:area?2:3,area,tone:'#2dbf82'})
+      const areaBaseline=await webPage.screenshot()
+      await webPage.evaluate(input=>{const n=window.nativeReference,s=n.createNativePlot();n.updateNativePlot(s,{...input,sampleAt:0},0);const c=document.querySelector('canvas');c.width=c.width;c.getContext('2d').setTransform(3,0,0,3,0,0);n.drawNativePlot(c.getContext('2d'),{width:145,height:input.height},s,input.background)}, {...initial,area,tone:'#2dbf82',height})
+      assert.deepEqual(await webPage.screenshot(),areaBaseline,'native area .1 and green stroke match Web raster')
+    }
+    // Restore the original blue input for the existing missing-pixel/restoration checks.
+    await webPage.evaluate(input=>{const c=document.querySelector('canvas');c.width=c.width;window.plotCanvas.update(input)},{...initial,seq:4})
+    assert.deepEqual(await webPage.screenshot(),baseline)
+
     await webPage.evaluate(()=>{const c=document.querySelector('canvas');c.getContext('2d').clearRect(0,0,c.width,c.height)})
     await assertWebMarker(webPage)
     assert.notDeepEqual(await webPage.screenshot(),baseline,'pixel comparison detects lost Web grid/curve even while W remains')
-    await webPage.evaluate(()=>window.dispatchEvent(new Event('pageshow')))
+    await webPage.evaluate(()=>{const c=document.querySelector('canvas');c.width=c.width;window.dispatchEvent(new Event('pageshow'))})
     assert.deepEqual(await webPage.screenshot(),baseline,'restore exact single Web grid/curve/W without native cover')
     await webPage.close()
    }

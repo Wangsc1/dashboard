@@ -1,5 +1,5 @@
 import { PlotRole, sheetLifecycle } from "./cadence-diagnostics"
-import { WebView, Button, Navigation, HStack, VStack, Text, Image, RoundedRectangle, Spacer, ScrollView, ZStack, Device, NavigationStack, modifiers, useState, useEffect, useMemo, GeometryReader, useColorScheme } from "scripting"
+import { Button, Navigation, HStack, VStack, Text, Image, RoundedRectangle, Spacer, ScrollView, ZStack, Device, NavigationStack, modifiers, useState, useEffect, useMemo, GeometryReader, useColorScheme } from "scripting"
 import { Overview, WrtInfo, fmtBytes, fmtSpeed, fmtUptime } from "./api"
 import { CpuUsage, OverviewHistory } from "./openwrt-metrics"
 import { InlineCanvasPlot } from "./plot-view"
@@ -29,24 +29,8 @@ export function GridPlot(props:{samples:number[];tone:string;plotHeight?:number;
 export function CpuBreakdown({cpu,running}:{cpu?:CpuUsage;running:boolean}) {
   return <HStack spacing={0} alignment="bottom"><HStack spacing={22}>{([['SYS',cpu?.system],['USER',cpu?.user],['STEAL',cpu?.steal]] as const).map(([title,value])=><VStack key={title} alignment="leading" spacing={3}><Text font={10} fontWeight="semibold" foregroundStyle="secondaryLabel" lineLimit={1}>{title}</Text><MetricNumber value={value} digits={1} pointSize={14} running={running}/></VStack>)}</HStack><Spacer/><HStack alignment="lastTextBaseline" spacing={2}><MetricNumber running={running} value={cpu?.usage} digits={1} pointSize={22} tone="#3485eb"/><Text font={11} foregroundStyle="#3485eb">%</Text></HStack></HStack>
 }
-// TEMP same-card native presentation control; remove after diagnosis. No chart/runtime hooks.
-export const STATIC_WEB_CONTROL_HTML=`<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'"><style>html,body{margin:0;background:white}body{height:40px;display:flex;align-items:center;gap:12px;font:bold 18px sans-serif;color:#d00000}.block{width:24px;height:24px;background:#008f50;flex-shrink:0}</style></head><body>静态网页对照<span class="block"></span></body></html>`
-export function StaticWebControl() {
-  const [controller]=useState(()=>new WebViewController())
-  const [error,setError]=useState('')
-  useEffect(()=>{
-    let alive=true
-    async function load(){try{const ok=await controller.loadHTML(STATIC_WEB_CONTROL_HTML);if(alive&&ok===false)setError('loadHTML返回false')}catch(error){if(alive)setError(String(error))}}
-    void load()
-    return()=>{alive=false;controller.dispose()}
-  },[controller])
-  return <VStack spacing={3}>
-    <Text font={11}>临时对照：应看到红字和绿色块{error?`；加载异常：${error}`:''}</Text>
-    <WebView controller={controller} frame={PLOT_FULL_W!==undefined?{width:PLOT_FULL_W,height:40}:{minWidth:0,maxWidth:'infinity',minHeight:40,maxHeight:40}}/>
-  </VStack>
-}
 export function CpuCard({w,history,running,onOpen,detail=false,sheetTrace}:{w?:WrtInfo;history:number[];running:boolean;onOpen?:()=>void;detail?:boolean;sheetTrace?:number}) {
-  return <HomeCard onOpen={onOpen}><HStack><Text font={detail?15:16} fontWeight="semibold">{detail?w?.cpuModel||"CPU 型号未提供":"CPU"}</Text><Spacer/>{!detail?<Text font={11} fontWeight="bold" foregroundStyle="#3485eb" padding={{horizontal:8,vertical:4}} background={<RoundedRectangle cornerRadius={8} fill={{light:"#d6e8ff",dark:"#24374d"}}/>}>{w?.temperature===undefined?"-- °C":`${w.temperature.toFixed(1)} °C`}</Text>:null}</HStack><StaticWebControl/><GridPlot samples={history} tone="#3485eb" percent running={running} plotWidth={PLOT_FULL_W} elevated={detail} role={detail?"detail":"home"} sheetTrace={sheetTrace}/><CpuBreakdown cpu={w?.cpus?.find(c=>c.id==='cpu')} running={running&&!detail}/></HomeCard>
+  return <HomeCard onOpen={onOpen}><HStack><Text font={detail?15:16} fontWeight="semibold">{detail?w?.cpuModel||"CPU 型号未提供":"CPU"}</Text><Spacer/>{!detail?<Text font={11} fontWeight="bold" foregroundStyle="#3485eb" padding={{horizontal:8,vertical:4}} background={<RoundedRectangle cornerRadius={8} fill={{light:"#d6e8ff",dark:"#24374d"}}/>}>{w?.temperature===undefined?"-- °C":`${w.temperature.toFixed(1)} °C`}</Text>:null}</HStack><GridPlot samples={history} tone="#3485eb" percent running={running} plotWidth={PLOT_FULL_W} elevated={detail} role={detail?"detail":"home"} sheetTrace={sheetTrace}/><CpuBreakdown cpu={w?.cpus?.find(c=>c.id==='cpu')} running={running&&!detail}/></HomeCard>
 }
 export function TrafficCard({heading,rate,total,history,tone,running}:{heading:string;rate?:number;total?:number;history:number[];tone:string;running:boolean}) {
   const parts=rate===undefined?undefined:fmtSpeed(rate).split(' '),value=parts?Number(parts[0]):undefined,unit=parts?" "+parts.slice(1).join(' '):""

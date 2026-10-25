@@ -3,52 +3,12 @@ const fs=require('node:fs'),vm=require('node:vm')
 const harness=fs.readFileSync(__dirname+'/run.cjs','utf8').split(';(async () => {')[0]
 const checks=String.raw`
 scripting.useState=function(v){const slots=hooks,i=hookIndex++;if(!(i in slots))slots[i]=typeof v==='function'?v():v;return [slots[i],v=>{slots[i]=typeof v==='function'?v(slots[i]):v}]}
-function instance(fn){const state={hooks:[],cleanups:new Map()};return {async draw(props){
+function instance(fn){const state={hooks:[],cleanups:new Map()};return {state,async draw(props){
  const saved={hooks,cleanups,effects,hookIndex};hooks=state.hooks;cleanups=state.cleanups;effects=[];hookIndex=0
  let out=fn(props);await flush();hookIndex=0;effects=[];out=fn(props);await flush()
  hooks=saved.hooks;cleanups=saved.cleanups;effects=saved.effects;hookIndex=saved.hookIndex;return out
 },close(){for(const c of state.cleanups.values())c();state.cleanups.clear()}}}
 ;(async()=>{
- await test('同卡静态对照只在两个CpuCard，controller一次加载且无业务修饰/桥接/重试',async()=>{
-  const Original=context.WebViewController,controls=[]
-  context.WebViewController=class{constructor(options){assert.equal(options,undefined);this.loads=0;this.disposed=0;controls.push(this)}async loadHTML(html){this.loads++;this.html=html;return true}dispose(){this.disposed++}}
-  try{
-   for(const detail of [false,true]){
-    const card=home.CpuCard({history:[],running:false,detail});const kids=card.props.children
-    assert.deepEqual(kids.map(n=>typeof n.type==='function'?n.type.name:n.type),['HStack','StaticWebControl','GridPlot','CpuBreakdown'])
-    assert.equal(nodes(card,home.StaticWebControl).length,1);assert.equal(nodes(card,home.GridPlot).length,1)
-    const sceneCount=sceneListeners.size
-    let out=render(home.StaticWebControl,{},true);await flush();const c=controls.at(-1),web=nodes(out,'WebView')[0]
-    assert.equal(sceneListeners.size,sceneCount,'control has no scene lifecycle subscription')
-    emitScene('inactive');emitScene('background');emitScene('active');await flush();assert.equal(c.loads,1,'scene changes never reload the control')
-    assert.deepEqual(Object.keys(web.props).sort(),['children','controller','frame']);assert.equal(web.props.frame.width,home.PLOT_FULL_W);assert.equal(web.props.frame.height,40)
-    assert.ok(text(out).includes('临时对照：应看到红字和绿色块'));assert.ok(c.html.includes('静态网页对照'));assert.ok(!/<script|<canvas|https?:/.test(c.html))
-    for(let i=0;i<6;i++){out=render(home.StaticWebControl,{});await flush();assert.equal(nodes(out,'WebView')[0].props.controller,c);assert.equal(c.loads,1)}
-    unmount();assert.equal(c.disposed,1)
-   }
-   assert.equal(controls.length,2)
-   const oldWidth=scripting.Device.screen.width
-   try{
-    scripting.Device.screen.width=undefined;cache.delete('home-ui');const fallback=load('home-ui')
-    let out=render(fallback.StaticWebControl,{},true);await flush();const frame=nodes(out,'WebView')[0].props.frame
-    assert.deepEqual(Object.keys(frame).sort(),['maxHeight','maxWidth','minHeight','minWidth']);assert.equal(frame.maxWidth,'infinity');assert.equal(frame.minHeight,40);assert.equal(frame.maxHeight,40);unmount()
-   }finally{scripting.Device.screen.width=oldWidth;cache.set('home-ui',home)}
-   const histories={cpu:{},up:[],down:[]},w={cpus:[{id:'cpu0',usage:10}]}
-   assert.equal(nodes(home.CoreCard({cpu:w.cpus[0],w,history:[],running:true}),home.StaticWebControl).length,0)
-   assert.equal(nodes(home.TrafficCard({heading:'上传',history:[],tone:'#123456',running:true}),home.StaticWebControl).length,0)
-  }finally{context.WebViewController=Original;unmount()}
- })
- await test('静态对照加载异常用原生Text显示，未卸载WebView，卸载后晚到结果无写入',async()=>{
-  const Original=context.WebViewController
-  try{for(const mode of ['false','reject','late']){
-   let reject,resolve,disposed=0
-   context.WebViewController=class{loadHTML(){return new Promise((r,j)=>{resolve=r;reject=j})}dispose(){disposed++}}
-   let out=render(home.StaticWebControl,{},true);await flush();const c=nodes(out,'WebView')[0].props.controller
-   if(mode==='late'){const slots=hooks;unmount();reject(Error('late'));await flush();assert.equal(slots[1],'');assert.equal(disposed,1);continue}
-   if(mode==='false')resolve(false);else reject(Error('local failure'));await flush();out=render(home.StaticWebControl,{});await flush()
-   assert.ok(text(out).includes(mode==='false'?'loadHTML返回false':'local failure'));assert.equal(nodes(out,'WebView')[0].props.controller,c);unmount();assert.equal(disposed,1)
-  }}finally{context.WebViewController=Original;unmount()}
- })
  await test('生产普通feed同步/引用相等/快照发布/实例隔离，不调用Observable或隐式setter',async()=>{
   const original=scripting.useObservable;scripting.useObservable=()=>{throw Error('no Observable allowed')}
   try{
@@ -112,10 +72,10 @@ function instance(fn){const state={hooks:[],cleanups:new Map()};return {async dr
   assert.equal(summary.split('\n').filter(l=>l.includes('sheet='+trace+' content-mount')).length,1)
   unmount();assert.equal(listeners.size,0)
  })
- await test('完整LiveCpuDetails展开到原生树：首帧/running/连续采样/元信息/关闭再显示不移动或复用WebView',async()=>{
-  const controllers=[],timers=new Map();let nextTimer=0
+ await test('完整LiveCpuDetails展开到原生树：首帧/running/连续采样/元信息/关闭再显示保留原生模型和TimelineCanvas',async()=>{
+  const timers=new Map();let nextTimer=0
   context.setTimeout=fn=>{const id=++nextTimer;timers.set(id,fn);return id};context.clearTimeout=id=>timers.delete(id)
-  context.WebViewController=class{constructor(){this.handlers={};this.loads=0;this.disposed=false;controllers.push(this)}async addScriptMessageHandler(n,f){this.handlers[n]=f}async loadHTML(){this.loads++;return true}async evaluateJavaScript(){return true}dispose(){this.disposed=true}}
+  context.WebViewController=class{constructor(){throw Error('unexpected WebView')}}
   const instances=new Map(),listeners=new Set(),trace=load('cadence-diagnostics').createSheetTrace()
   const frame=(n,running=true,count=16)=>{
    const cpus=Array.from({length:count},(_,i)=>({id:'cpu'+i,usage:n+i}));cpus.unshift({id:'cpu',usage:n})
@@ -124,7 +84,7 @@ function instance(fn){const state={hooks:[],cleanups:new Map()};return {async dr
   const feed=home.createCpuDetailFeed(frame(0,false)),sub=feed.subscribe,unsub=feed.unsubscribe;feed.subscribe=f=>{listeners.add(f);sub(f)};feed.unsubscribe=f=>{listeners.delete(f);unsub(f)}
   const publish=f=>feed.setValue(f)
   async function tree(){
-   const seen=new WeakSet(),plots=[],controls=[],skeleton=[]
+   const seen=new WeakSet(),plots=[],skeleton=[]
    async function walk(n,path){
     if(!n||typeof n!=='object')return
     assert.ok(!seen.has(n),'VirtualNode reused across tree: '+path);seen.add(n)
@@ -134,29 +94,26 @@ function instance(fn){const state={hooks:[],cleanups:new Map()};return {async dr
      return walk(await own.draw(n.props),where)
     }
     skeleton.push([where,n.props.frame??null])
-    if(n.type==='WebView')(where.includes('/StaticWebControl/')?controls:plots).push({path:where,controller:n.props.controller,opacity:n.props.opacity})
+    assert.notEqual(n.type,'WebView');if(n.type==='TimelineCanvas'){const parent=[...instances.entries()].find(([key])=>where.startsWith(key+'/TimelineCanvas'));plots.push({path:where,model:parent[1].state.hooks[0].current.model});assert.equal(n.props.schedule,'animation')}
     // Assert key uniqueness at the actual sibling scope, not globally across distinct parents.
     const kids=(n.props?.children??[]).filter(x=>x&&typeof x==='object'),keys=kids.map(x=>x.props?.key).filter(x=>x!==undefined)
     assert.equal(new Set(keys).size,keys.length,'duplicate sibling key '+where)
     for(let i=0;i<kids.length;i++)await walk(kids[i],where+'/'+i)
    }
    await walk({type:home.LiveCpuDetails,props:{feed,trace}},'sheet')
-   return {plots,controls,skeleton}
+   return {plots,skeleton}
   }
-  let baseline=await tree();assert.equal(baseline.plots.length,17);assert.equal(controllers.length,18);assert.equal(listeners.size,1)
-  assert.equal(baseline.controls.length,1);const control=baseline.controls[0];assert.equal(control.controller.loads,1);assert.equal(Object.keys(control.controller.handlers).length,0)
-  const signature=x=>JSON.stringify(x.plots.map(p=>[p.path,p.opacity]))
-  for(const {controller:c} of baseline.plots){assert.equal(c.loads,1);c.handlers.plotReady({generation:1});c.handlers.plotPainted({generation:1,w:145,h:76})}
+  let baseline=await tree();assert.equal(baseline.plots.length,17);assert.equal(new Set(baseline.plots.map(p=>p.model)).size,17);assert.equal(listeners.size,1)
+  const signature=x=>JSON.stringify(x.plots.map(p=>p.path))
   await flush()
   for(const n of [1,2,3,4,5]){
    publish(frame(n));const next=await tree();assert.equal(signature(next),signature(baseline));assert.equal(JSON.stringify(next.skeleton),JSON.stringify(baseline.skeleton),'all native paths/frames remain stable')
-   assert.equal(next.controls.length,1);assert.equal(next.controls[0].path,control.path);assert.equal(next.controls[0].controller,control.controller);assert.equal(control.controller.loads,1)
-   next.plots.forEach((p,i)=>assert.equal(p.controller,baseline.plots[i].controller));assert.equal(controllers.length,18)
+   next.plots.forEach((p,i)=>assert.equal(p.model,baseline.plots[i].model));assert.equal(next.plots.length,17)
   }
   publish(frame(6,false));await tree();publish(frame(7,true));assert.equal(signature(await tree()),signature(baseline),'retained second sheet uses same tree')
   // Empty-data prompt -> populated cores only inserts rows after the existing summary; summary path stays fixed.
   publish(frame(8,true,0));const empty=await tree();assert.equal(empty.plots.length,1);assert.equal(empty.plots[0].path,baseline.plots[0].path)
-  for(const own of instances.values())own.close();assert.equal(listeners.size,0);assert.ok(controllers.every(c=>c.disposed));assert.equal(intervals.size,0);assert.equal(timers.size,0)
+  for(const own of instances.values())own.close();assert.equal(listeners.size,0);assert.equal(intervals.size,0);assert.equal(timers.size,0)
  })
  await test('CPU详情恢复滚动容器，保留内容/导航/关闭/原生生命周期',async()=>{
   const trace=load('cadence-diagnostics').createSheetTrace(),histories={cpu:{cpu:[12],cpu0:[23]},up:[],down:[]},w={cpus:[{id:'cpu',usage:12},{id:'cpu0',usage:23}]}
