@@ -28,15 +28,15 @@ const homeRunning=t=>nodes(t,home.HomeDashboard)[0].props.running
   page.render({...props,selected:false});emitScene('background');emitScene('active');view=page.render({...props,selected:false});await settle();assert.equal(homeRunning(view),false,'hidden tab does not wake on scene active')
   page.close();await settle()
  })
- await test('connections lock return without onAppear polls again; detail hide and user pause remain gated',async()=>{
+ await test('connections lock return without onAppear polls again; detail hide stays gated, no user pause',async()=>{
   const owner1={...device,kind:'clash',id:'lock-connections'},props={active:owner1,version:0,selected:true};let reads=0
   responder=()=>{reads++;return {body:{connections:[{id:'a',metadata:{host:'a.invalid'},upload:1,download:1}]}}}
   const page=owner(pages.ConnectionsPage);let tree=page.render(props);await settle();tree=page.render(props);assert.ok(text(tree).includes('a.invalid'))
   tree.props.onDisappear();emitScene('inactive');emitScene('background');page.render(props);await settle();assert.equal(intervals.size,0)
   now+=7200000;const before=reads;emitScene('active');page.render(props);await settle();tree=page.render(props);assert.equal(reads,before+1);assert.ok([...intervals.values()].some(x=>x.ms===1500))
   now+=9000;tree.props.onDisappear();now+=9000;emitScene('inactive');emitScene('active');page.render(props);await settle();assert.equal(intervals.size,0,'detail/push hide stays paused')
-  tree.props.onAppear();page.render(props);await settle();tree=page.render(props);button(trailing(tree.props.toolbar),'暂停监控').props.action();page.render(props);await settle()
-  emitScene('background');emitScene('active');page.render(props);await settle();assert.equal(intervals.size,0,'user pause survives')
+  tree.props.onAppear();page.render(props);await settle();tree=page.render(props);assert.ok(!nodes(trailing(tree.props.toolbar),'Button').some(b=>/暂停监控|恢复监控/.test(b.props.title)))
+  emitScene('background');emitScene('active');page.render(props);await settle();assert.ok([...intervals.values()].some(x=>x.ms===1500),'monitoring always resumes')
   page.close()
  })
  await test('proxies and more lock return refresh without onAppear',async()=>{

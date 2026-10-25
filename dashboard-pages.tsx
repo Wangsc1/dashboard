@@ -2,9 +2,9 @@ import { NikkiManagement, NikkiSubscription, NikkiRule, NikkiFile, NikkiManageme
 import { rootToolbar } from "./root-toolbar"
 import { connectionLifecycle } from "./cadence-diagnostics"
 import { AppEvents, Button, Divider, HStack, VStack, Text, Image, Circle, RoundedRectangle, Spacer, ScrollView, LazyVStack, NavigationLink, Menu, Picker, TextField, Toggle, Form, Section, ProgressView, WebView, ZStack, modifiers, Safari, useState, useEffect, useMemo } from "scripting"
-import { Controller, Group, Conn, Rule, Provider, loadGroups, testGroup, selectProxy, loadProviders, updateProvider, loadRules, loadConnections, closeConnection, closeAllConnections, fmtBytes, fmtSpeed, fmtUptime, delayColor, loadRuntimeVersions, checkCoreUpdate, loadNikkiRuntime, NikkiRuntime, verifyCoreRestart, upgradeCoreAndVerify, lastControllerMode, loadConfig, setMode as setControllerMode, nikkiService, nikkiServiceStatus, coreAction, CoreAction, queryDNS, webpage } from "./api"
+import { Controller, Group, Conn, Rule, Provider, setRuleDisabled, closeRuleConnections, ruleToggleSupported, loadGroups, testGroup, selectProxy, loadProviders, updateProvider, loadRules, loadConnections, closeConnection, closeAllConnections, fmtBytes, fmtSpeed, fmtUptime, delayColor, loadRuntimeVersions, checkCoreUpdate, loadNikkiRuntime, NikkiRuntime, verifyCoreRestart, upgradeCoreAndVerify, lastControllerMode, loadConfig, setMode as setControllerMode, nikkiService, nikkiServiceStatus, coreAction, CoreAction, queryDNS, webpage } from "./api"
 import { usePreferences, KernelConfigPage, updatePreference, Choice, ThresholdRange, Range, TestURLField } from "./settings-ui"
-import { NODE_SORT_OPTIONS, savePreferences, cachedIcon, readCachedIcon, traceIconPreference, feedback } from "./preferences"
+import { NODE_SORT_OPTIONS, savePreferences, getPreferences, cachedIcon, readCachedIcon, traceIconPreference, feedback } from "./preferences"
 import { selectable, sortedNodes, historyFor, SceneVisibility, filterConnections, clientLabels, saveClientLabel, sourceKey, confirmed } from "./dashboard-model"
 // BEGIN GENERATED NIKKI EDITOR
 // CodeMirror/Lezer/YAML licenses: editor/THIRD_PARTY_NOTICES.txt; source SHA256 e86883dc2f3903f6e26b2b673919b7d6e80421f7cfd8a6addeaaa87c2c07bc07
@@ -243,15 +243,17 @@ export function prefetchConnections(active:Controller|null){
   void loadConnections(active).then(xs=>{connPrefetched.add(key);setConnCache(key,xs)}).catch(()=>{}).finally(()=>{connPrefetch.delete(key)})
 }
 export function RulesPage({active,version,onClose,selected=true}:{active:Controller|null;version:number;onClose?:()=>void;selected?:boolean}) {
-  const rulesKey=active?sourceKey(active):"",rulesCached=hydrateRules(rulesKey),[rules,setRules]=useState<Rule[]>(rulesCached?.rules??[]),[providers,setProviders]=useState<Provider[]>(rulesCached?.providers??[]),[tab,setTab]=useState("rules"),[q,setQ]=useState(""),[search,setSearch]=useState(false),[limit,setLimit]=useState(80),[tick,setTick]=useState(0),[err,setErr]=useState(""),[visible,setVisible]=useState(selected)
+  const prefs=usePreferences()
+  const rulesKey=active?sourceKey(active):"",rulesCached=hydrateRules(rulesKey),[rules,setRules]=useState<Rule[]>(rulesCached?.rules??[]),[providers,setProviders]=useState<Provider[]>(rulesCached?.providers??[]),[tab,setTab]=useState("rules"),[qRules,setQRules]=useState(""),[qProv,setQProv]=useState(""),[limit,setLimit]=useState(80),[pendingRules,setPendingRules]=useState<number[]>([]),[tick,setTick]=useState(0),[err,setErr]=useState(""),[visible,setVisible]=useState(selected)
   useEffect(()=>{const c=hydrateRules(rulesKey);setRules(c?.rules??[]);setProviders(c?.providers??[])},[rulesKey])
   // Pull-to-refresh and effect reads share one reader. Results are published only while their
   // owner (source/version/mount generation) is current; a stale read can never overwrite newer data.
-  const [pullBox]=useState({gen:0,pull:undefined as undefined|Promise<void>,mounted:true})
+  const [pullBox]=useState({gen:0,pull:undefined as undefined|Promise<void>,mounted:true,rev:0,busy:new Set<string>()})
   const reloadRules=(current:()=>boolean):Promise<void>=>{
     if(!active)return Promise.resolve()
     setErr("")
-    const a=loadRules(active).then(xs=>{if(current()){setRules(xs);setRulesCache(rulesKey,{rules:xs,providers:rulesCache.get(rulesKey)?.providers??[]})}}).catch(()=>{if(current())setErr(safeError())})
+    const rev=pullBox.rev
+    const a=loadRules(active).then(xs=>{if(current()&&rev===pullBox.rev){setRules(xs);setRulesCache(rulesKey,{rules:xs,providers:rulesCache.get(rulesKey)?.providers??[]})}}).catch(()=>{if(current())setErr(safeError())})
     const b=loadProviders(active,"rules").then(xs=>{if(current()){setProviders(xs);setRulesCache(rulesKey,{rules:rulesCache.get(rulesKey)?.rules??[],providers:xs})}}).catch(()=>{if(current())setErr("规则提供者数量未提供：内核未支持或权限不足；分段显示的是已加载数量。规则列表独立读取。")})
     return Promise.all([a,b]).then(()=>{})
   }
@@ -267,13 +269,45 @@ export function RulesPage({active,version,onClose,selected=true}:{active:Control
     const p:Promise<void>=updateAllProviders(active,"rules",providers,()=>{}).then(()=>current()?reloadRules(current):undefined).then(()=>{if(pullBox.pull===p)pullBox.pull=undefined})
     pullBox.pull=p;return p
   }
+  // Optimistic toggle -> PATCH -> read back. Busy per (source,index) so repeats never run concurrently.
+  const toggleRule=async(r:Rule,disabled:boolean)=>{
+    if(!active||!ruleToggleSupported(r))return
+    const idx=r.index as number,key=rulesKey+"#"+idx
+    if(pullBox.busy.has(key))return
+    pullBox.busy.add(key);setPendingRules(xs=>[...xs,idx])
+    const gen=pullBox.gen,current=()=>pullBox.mounted&&pullBox.gen===gen,src=active
+    const put=(value:boolean)=>{
+      const map=(xs:Rule[])=>xs.map(x=>x.index===idx?{...x,disabled:value}:x)
+      pullBox.rev++;setRulesCache(rulesKey,{rules:map(rulesCache.get(rulesKey)?.rules??rules),providers:rulesCache.get(rulesKey)?.providers??[]})
+      if(current())setRules(map)
+    }
+    try{
+      put(disabled);if(current())setErr("")
+      try{await setRuleDisabled(src,idx,disabled)}catch{put(!disabled);if(current())setErr(safeError());return}
+      let verified=false
+      try{
+        const xs=await loadRules(src),got=xs.find(x=>x.index===idx)
+        pullBox.rev++;setRulesCache(rulesKey,{rules:xs,providers:rulesCache.get(rulesKey)?.providers??[]});if(current())setRules(xs)
+        verified=got?.disabled===disabled
+        if(!verified&&current())setErr("规则状态未生效，已按内核当前状态显示")
+      }catch{verified=true;if(current())setErr("已发送开关请求，但回读规则失败；显示的是未经确认的状态")}
+      if(disabled&&verified&&getPreferences().interruptOnRuleDisable){
+        const res=await closeRuleConnections(src,r.type,r.payload)
+        if(current()){
+          if(res.readFailed)setErr("已禁用规则，但读取连接失败，未能打断相关连接")
+          else if(res.failed>0)setErr(`已禁用规则，但有 ${res.failed} 条连接未能关闭`)
+        }
+      }
+    }finally{pullBox.busy.delete(key);if(current())setPendingRules(xs=>xs.filter(x=>x!==idx))}
+  }
   const shown=useMemo(()=>{
-    const needle=q.toLowerCase(),matches:(Rule&{index:number})[]=[]
+    const needle=qRules.toLowerCase(),matches:(Rule&{no:number})[]=[]
     // Keep original rule numbers, but allocate indexed copies only for matches.
-    for(let i=0;i<rules.length;i++){const r=rules[i];if([r.type,r.payload,r.proxy].join(" ").toLowerCase().includes(needle))matches.push({...r,index:i+1})}
+    for(let i=0;i<rules.length;i++){const r=rules[i];if([r.type,r.payload,r.proxy].join(" ").toLowerCase().includes(needle))matches.push({...r,no:i+1})}
     return matches
-  },[rules,q])
-  return Shell({title:active?.name??"规则",refresh:pullRules,onAppear:()=>setVisible(true),onDisappear:()=>setVisible(false),toolbar:rootToolbar("rules",onClose,<Menu label={<Image systemName="ellipsis.circle"/>}><Button title="搜索规则" action={()=>setSearch(!search)}/></Menu>),children:<>{!active?<Empty/>:<><Picker title="规则与提供者" pickerStyle="segmented" value={tab} onChanged={setTab}><Text tag="rules">{`规则 ${rules.length}`}</Text><Text tag="providers">{`提供者 ${providers.length}`}</Text></Picker>{search?<TextField title="搜索规则" value={q} onChanged={(v:string)=>{setQ(v);setLimit(80)}}/>:null}{err?<Hint>{err}</Hint>:null}{tab==="providers"?<>{providers.slice(0,limit).map(p=><ProviderCard key={p.name} c={active} p={p} kind="rules" onChanged={()=>setTick(t=>t+1)}/>)}<Pages hideCount limit={limit} total={providers.length} more={()=>setLimit(limit+80)}/></>:<>{shown.slice(0,limit).map(r=><Card key={String(r.index)}><HStack spacing={8}><Hint>{`#${r.index}`}</Hint><Chip title={r.type} color={ruleColor(r.type)}/><Text font={13}>{r.payload||"—"}</Text><Spacer/><Text font={12} foregroundStyle="secondaryLabel">{r.proxy}</Text></HStack></Card>)}<Pages hideCount limit={limit} total={shown.length} more={()=>setLimit(limit+80)}/></>}</>}</>})
+  },[rules,qRules])
+  const shownProviders=useMemo(()=>{const needle=qProv.toLowerCase();return needle?providers.filter(p=>[p.name,p.type,p.vehicleType].join(" ").toLowerCase().includes(needle)):providers},[providers,qProv])
+  return Shell({title:active?.name??"规则",refresh:pullRules,onAppear:()=>setVisible(true),onDisappear:()=>setVisible(false),toolbar:rootToolbar("rules",onClose,<Menu label={<Image systemName="ellipsis.circle"/>}><Toggle title="禁用规则时打断连接" value={prefs.interruptOnRuleDisable} onChanged={(v:boolean)=>savePreferences({interruptOnRuleDisable:v})}/></Menu>),children:<>{!active?<Empty/>:<><Picker title="规则与提供者" pickerStyle="segmented" value={tab} onChanged={(v:string)=>{setTab(v);setLimit(80)}}><Text tag="rules">{`规则 ${rules.length}`}</Text><Text tag="providers">{`提供者 ${providers.length}`}</Text></Picker><TextField title={tab==="providers"?"搜索提供者":"搜索规则"} value={tab==="providers"?qProv:qRules} onChanged={(v:string)=>{if(tab==="providers")setQProv(v);else setQRules(v);setLimit(80)}}/>{err?<Hint>{err}</Hint>:null}{tab==="providers"?<>{shownProviders.slice(0,limit).map(p=><ProviderCard key={p.name} c={active} p={p} kind="rules" onChanged={()=>setTick(t=>t+1)}/>)}<Pages hideCount limit={limit} total={shownProviders.length} more={()=>setLimit(limit+80)}/></>:<>{shown.slice(0,limit).map(r=><Card key={String(r.no)}><HStack spacing={8}><Hint>{`#${r.no}`}</Hint><Chip title={r.type} color={ruleColor(r.type)}/><Text font={13} opacity={r.disabled?0.45:1}>{r.payload||"—"}</Text><Spacer/><Text font={12} foregroundStyle="secondaryLabel" opacity={r.disabled?0.45:1}>{r.proxy}</Text>{ruleToggleSupported(r)?<Toggle title="启用规则" labelsHidden value={!r.disabled} disabled={pendingRules.includes(r.index as number)} scaleEffect={0.75} frame={{width:46}} onChanged={(v:boolean)=>{void toggleRule(r,!v)}}/>:null}</HStack></Card>)}<Pages hideCount limit={limit} total={shown.length} more={()=>setLimit(limit+80)}/></>}</>}</>})
 }
 const pad2=(n:number)=>String(n).padStart(2,"0")
 const fmtClock=(t:number)=>{const d=new Date(t);return `${pad2(d.getMonth()+1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}.${String(d.getMilliseconds()).padStart(3,"0")}`}
@@ -290,20 +324,19 @@ export function ConnectionDetailPage({x,onDisconnect}:{x:Conn;onDisconnect:(x:Co
   </Form>
 }
 export function ConnectionsPage({active,version,onClose,selected=true}:{active:Controller|null;version:number;onClose?:()=>void;selected?:boolean}) {
-  const prefs=usePreferences(),[conns,setConns]=useState<Conn[]>(()=>active?hydrateConns(sourceKey(active))??[]:[]),[closed,setClosed]=useState<Conn[]>([]),[paused,setPaused]=useState(false),[visible,setVisible]=useState(selected),[tab,setTab]=useState("active"),[err,setErr]=useState(""),[q,setQ]=useState(""),[search,setSearch]=useState(false),[client,setClient]=useState(""),[labelsOpen,setLabelsOpen]=useState(false),[labels,setLabels]=useState<Record<string,string>>({}),[labelIP,setLabelIP]=useState(""),[label,setLabel]=useState(""),[limit,setLimit]=useState(60),[tick,setTick]=useState(0),[fresh,setFresh]=useState<Record<string,number>>({}),[sort,setSort]=useState("new"),[seenBox]=useState({seen:new Set<string>(),init:false}),[foreground,setForeground]=useState(true),[resume,setResume]=useState(0),[scene]=useState({active:true,epoch:0,stop:undefined as undefined|(()=>void),vis:new SceneVisibility(),selected:selected,gen:0,pull:undefined as undefined|(()=>Promise<void>),oneShot:undefined as undefined|Promise<void>})
+  const prefs=usePreferences(),[conns,setConns]=useState<Conn[]>(()=>active?hydrateConns(sourceKey(active))??[]:[]),[closed,setClosed]=useState<Conn[]>([]),[visible,setVisible]=useState(selected),[tab,setTab]=useState("active"),[err,setErr]=useState(""),[q,setQ]=useState(""),[search,setSearch]=useState(false),[client,setClient]=useState(""),[labelsOpen,setLabelsOpen]=useState(false),[labels,setLabels]=useState<Record<string,string>>({}),[labelIP,setLabelIP]=useState(""),[label,setLabel]=useState(""),[limit,setLimit]=useState(60),[tick,setTick]=useState(0),[fresh,setFresh]=useState<Record<string,number>>({}),[sort,setSort]=useState("new"),[seenBox]=useState({seen:new Set<string>(),init:false}),[foreground,setForeground]=useState(true),[resume,setResume]=useState(0),[scene]=useState({active:true,epoch:0,stop:undefined as undefined|(()=>void),vis:new SceneVisibility(),selected:selected,pull:undefined as undefined|(()=>Promise<void>)})
   // A boolean alone misses background -> active batched into one render (or a
   // repeated active). Every resume needs a new owner after epoch invalidation.
-  useEffect(()=>{const changed=(phase:"active"|"inactive"|"background")=>{if(scene.vis.scene(phase==="active",Date.now())&&scene.selected)setVisible(true);scene.active=phase==="active";scene.epoch++;scene.stop?.();setForeground(scene.active);connectionLifecycle(phase);if(scene.active){setResume(n=>n+1);setErr("");setFresh({})}};AppEvents.scenePhase.addListener(changed);return()=>{scene.gen++;scene.oneShot=undefined;scene.stop?.();AppEvents.scenePhase.removeListener(changed)}},[])
+  useEffect(()=>{const changed=(phase:"active"|"inactive"|"background")=>{if(scene.vis.scene(phase==="active",Date.now())&&scene.selected)setVisible(true);scene.active=phase==="active";scene.epoch++;scene.stop?.();setForeground(scene.active);connectionLifecycle(phase);if(scene.active){setResume(n=>n+1);setErr("");setFresh({})}};AppEvents.scenePhase.addListener(changed);return()=>{scene.stop?.();AppEvents.scenePhase.removeListener(changed)}},[])
   scene.selected=selected
   useEffect(()=>{setVisible(selected)},[selected])
-  useEffect(()=>{scene.gen++;scene.oneShot=undefined},[active&&sourceKey(active)])
   useEffect(()=>{if(!active)return;seenBox.seen.clear();seenBox.init=false;setFresh({});setLabels(clientLabels(active));setConns(hydrateConns(sourceKey(active))??[]);setClosed(historyFor(active).closed);setClient("")},[active&&sourceKey(active)])
-  useEffect(()=>{if(active&&!paused&&selected&&visible&&foreground)historyFor(active).resume()},[active&&sourceKey(active),paused,selected,visible,foreground,resume])
+  useEffect(()=>{if(active&&selected&&visible&&foreground)historyFor(active).resume()},[active&&sourceKey(active),selected,visible,foreground,resume])
   useEffect(()=>{
     // Delays belong to this poll owner, not to the retained page. A restart must
     // reveal rows whose previous owner's callbacks can no longer complete.
     setFresh({})
-    if(!active||paused||!selected||!visible||!foreground)return
+    if(!active||!selected||!visible||!foreground)return
     let alive=true,request: {abort:AbortController;at:number}|undefined
     const timers=new Set<ReturnType<typeof setTimeout>>()
     const epoch=scene.epoch,current=()=>alive&&scene.active&&epoch===scene.epoch
@@ -355,35 +388,17 @@ export function ConnectionsPage({active,version,onClose,selected=true}:{active:C
     const stop=()=>{if(!alive)return;alive=false;if(scene.pull===refresh)scene.pull=undefined;request?.abort.abort();request=undefined;clearInterval(t);for(const timer of timers)clearTimeout(timer);timers.clear();connectionLifecycle("poll-stop")}
     scene.stop=stop
     return()=>{stop();if(scene.stop===stop)scene.stop=undefined}
-  },[active&&sourceKey(active),version,paused,selected,visible,tick,foreground,resume,prefs.requestTimeout])
+  },[active&&sourceKey(active),version,selected,visible,tick,foreground,resume,prefs.requestTimeout])
   const sortFns:Record<string,(a:Conn,b:Conn)=>number>={new:(a,b)=>(b.start||0)-(a.start||0),old:(a,b)=>(a.start||0)-(b.start||0),down:(a,b)=>(b.downSpeed??0)-(a.downSpeed??0),up:(a,b)=>(b.upSpeed??0)-(a.upSpeed??0),traffic:(a,b)=>(b.up+b.down)-(a.up+a.down)}
   const shown=[...filterConnections((tab==="active"?conns:closed).filter(x=>!fresh[(tab==="active"?"a:":"c:")+x.id]),q,client,labels)].sort(sortFns[sort]),clients=Array.from(new Set([...conns,...closed].map(x=>x.sourceIP??"").filter(Boolean)))
   async function close(x?:Conn){if(!active)return;await attempt(async()=>{if(await confirmed(active.name,x?`断开到 ${x.host} 的连接（${x.src}）。应用可能重新建立连接。`:`断开此Mihomo内核的全部活动连接（当前观察 ${conns.length} 条）。应用可能重新建立连接。`,()=>x?closeConnection(active,x.id):closeAllConnections(active)))setTick(t=>t+1)})}
-  // Pull-to-refresh. Polling active: join the poll owner's read (no duplicate publish).
-  // Paused: one bounded snapshot read that keeps monitoring paused and never restarts polling.
+  // Pull-to-refresh joins the poll owner's read (no duplicate request or publish). Hidden/background: nothing to refresh.
   const pullConnections=():Promise<void>=>{
     if(!active||!selected||!visible||!foreground||!scene.active)return Promise.resolve()
-    if(!paused)return scene.pull?scene.pull():Promise.resolve()
-    if(scene.oneShot)return scene.oneShot
-    const gen=scene.gen,epoch=scene.epoch,key=sourceKey(active),ac=new AbortController(),at=Date.now(),maxAge=Math.max(1500,prefs.requestTimeout*1000)
-    const ok=()=>gen===scene.gen&&epoch===scene.epoch&&scene.active&&Date.now()-at<maxAge
-    const timer=setTimeout(()=>ac.abort(),maxAge)
-    let p:Promise<void>|undefined
-    p=(async()=>{
-      try{
-        const xs=await loadConnections(active,ac.signal)
-        if(ok()){
-          // Snapshot while paused: no closures inferred across the pause, closed history untouched.
-          const h=historyFor(active);h.resume();h.sample(xs,Date.now());setConns([...h.active]);setConnCache(key,h.active);setClosed([...h.closed]);setErr("")
-          seenBox.seen=new Set([...h.active.map(x=>"a:"+x.id),...h.closed.map(x=>"c:"+x.id)]);seenBox.init=true
-        }
-      }catch{if(ok())setErr(safeError())}
-      finally{clearTimeout(timer);if(scene.oneShot===p)scene.oneShot=undefined}
-    })()
-    scene.oneShot=p;return p
+    return scene.pull?scene.pull():Promise.resolve()
   }
   connectionLifecycle("render")
-  return Shell({title:active?.name??"连接",refresh:pullConnections,onAppear:()=>{connectionLifecycle("appear");scene.vis.appear();setVisible(true);setResume(n=>n+1)},onDisappear:()=>{connectionLifecycle("disappear");if(scene.vis.disappear(Date.now())){scene.stop?.();setVisible(false)}}, toolbar:rootToolbar("connections",onClose,<Menu label={<Image systemName="ellipsis.circle"/>}><Button title={paused?"恢复监控":"暂停监控"} action={()=>setPaused(!paused)}/><Button title="客户端标签" action={()=>setLabelsOpen(!labelsOpen)}/><Button title="清理已断开连接" action={async()=>{if(active&&await confirmed(`${active.name} · 本地历史`,"清理本脚本已观察到的已断开历史，不操作远端连接。",async()=>{historyFor(active).clear();setClosed([])}))feedback()}}/><Button title="打断全部连接" action={()=>close()}/></Menu>),children:<>{!active?<Empty/>:<><VStack spacing={6} padding={6} background={<RoundedRectangle cornerRadius={16} fill="secondarySystemBackground"/>}>
+  return Shell({title:active?.name??"连接",refresh:pullConnections,onAppear:()=>{connectionLifecycle("appear");scene.vis.appear();setVisible(true);setResume(n=>n+1)},onDisappear:()=>{connectionLifecycle("disappear");if(scene.vis.disappear(Date.now())){scene.stop?.();setVisible(false)}}, toolbar:rootToolbar("connections",onClose,<Menu label={<Image systemName="ellipsis.circle"/>}><Button title="客户端标签" action={()=>setLabelsOpen(!labelsOpen)}/><Button title="清理已断开连接" action={async()=>{if(active&&await confirmed(`${active.name} · 本地历史`,"清理本脚本已观察到的已断开历史，不操作远端连接。",async()=>{historyFor(active).clear();setClosed([])}))feedback()}}/><Button title="打断全部连接" action={()=>close()}/></Menu>),children:<>{!active?<Empty/>:<><VStack spacing={6} padding={6} background={<RoundedRectangle cornerRadius={16} fill="secondarySystemBackground"/>}>
       <HStack spacing={6}>
         {(["active","closed"] as const).map(k=><Button key={k} buttonStyle="plain" action={()=>{setTab(k);setLimit(60)}}><HStack spacing={6} padding={{horizontal:8,vertical:6}} background={<RoundedRectangle cornerRadius={12} fill={tab===k?"systemBackground":"clear"}/>}><Circle fill={k==="active"?(tab===k?"systemGreen":"tertiaryLabel"):"tertiaryLabel"} frame={{width:6,height:6}}/><Text font={13} fontWeight={tab===k?"semibold":"regular"} foregroundStyle={tab===k?"label":"secondaryLabel"}>{k==="active"?"活动中":"已关闭"}</Text><Text font={11} foregroundStyle={tab===k?"systemGreen":"secondaryLabel"} padding={{horizontal:6,vertical:1}} background={<RoundedRectangle cornerRadius={8} fill="tertiarySystemFill"/>}>{String(k==="active"?conns.length:closed.length)}</Text></HStack></Button>)}
         <Spacer/>

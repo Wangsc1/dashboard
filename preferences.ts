@@ -4,7 +4,7 @@ export interface Preferences {
   collapseGesture: boolean; removalFade: boolean; delayGreen: number; delayRed: number
   showHidden: boolean; customIcons: boolean; groupIcons: Record<string, string>
   showWrt: boolean; droplets: boolean; connectionBackground: boolean; ripple: boolean
-  foldOffline: boolean; disconnectOnSwitch: boolean; haptics: boolean
+  foldOffline: boolean; disconnectOnSwitch: boolean; interruptOnRuleDisable: boolean; haptics: boolean
   defaultPage: "overview" | "proxies" | "rules" | "connections" | "more"
   nestedDelay: boolean; nodeSort: "default" | "delay" | "name" | "nameDesc" | "delayDesc"; showGlobal: boolean
   headersEnabled: boolean; requestTimeout: number; testURL: string; testTimeout: number; logLimit: number; detailedAPI: boolean
@@ -13,7 +13,7 @@ export const DEFAULTS: Preferences = {
   theme: "system", connectionStyle: "standard", proxyStyle: "list", collapseGesture: false, removalFade: false,
   delayGreen: 240, delayRed: 500, showHidden: false, customIcons: true, groupIcons: {},
   showWrt: true, droplets: false, connectionBackground: false, ripple: false,
-  foldOffline: true, disconnectOnSwitch: false, haptics: false, defaultPage: "overview",
+  foldOffline: true, disconnectOnSwitch: false, interruptOnRuleDisable: false, haptics: false, defaultPage: "overview",
   headersEnabled: true, nestedDelay: false, nodeSort: "default", showGlobal: false, requestTimeout: 8,
   testURL: "https://www.gstatic.com/generate_204", testTimeout: 5000, logLimit: 500, detailedAPI: false,
 }
@@ -27,7 +27,7 @@ export function traceIconPreference(stage: "change" | "accepted" | "global-rende
   try {
     const raw = Storage.get<Partial<Preferences>>(KEY)
     const stored = typeof raw?.customIcons === "boolean" ? raw.customIcons : "unavailable"
-    console.log(`[preferences-icon] build=1.47 instance=${preferenceInstance} revision=${preferenceRevision} stage=${stage} enabled=${enabled} snapshot=${getPreferences().customIcons} stored=${stored}`)
+    console.log(`[preferences-icon] build=1.48 instance=${preferenceInstance} revision=${preferenceRevision} stage=${stage} enabled=${enabled} snapshot=${getPreferences().customIcons} stored=${stored}`)
   } catch { console.log("[preferences-icon] diagnostic-unavailable") }
 }
 export function preferenceTrace(stage: string) { console.log(`[preferences] revision=${preferenceRevision} ${stage}`) }

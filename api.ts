@@ -2,7 +2,7 @@ import { TimingToken, timingToken, timing, timingReadContext, timingSpan } from 
 import { CpuSampler, CpuUsage, CpuMeta, parseCpuInfo, thermalCelsius } from "./openwrt-metrics"
 
 import { getPreferences, customHeaders, recordEvent, controllerHealth, feedback } from "./preferences"
-export const VERSION = "1.47"
+export const VERSION = "1.48"
 
 export type Kind = "clash" | "openwrt"
 export type Plugin = "openclash" | "nikki" | "mihomo"
@@ -14,8 +14,9 @@ export interface Controller {
 export interface ControllerInput { id?: string; name: string; host: string; port: number; https: boolean; username: string; plugin: Plugin; auto: boolean; cport: number }
 export interface ProxyTestTarget { name: string; provider?: string; type?: string }
 export interface Group { name: string; type: string; now: string; all: string[]; delays: Record<string, number>; types?: Record<string, string>; hidden?: boolean; icon?: string; testUrl?: string; testTargets?: Record<string, ProxyTestTarget> }
-export interface Conn { id: string; host: string; src: string; dst: string; network: string; rule: string; chain: string; up: number; down: number; start: number; upSpeed?: number; downSpeed?: number; sourceIP?: string; inboundType?: string; chains?: string[]; closedAt?: number }
-export interface Rule { type: string; payload: string; proxy: string }
+export interface Conn { id: string; host: string; src: string; dst: string; network: string; rule: string; chain: string; up: number; down: number; start: number; upSpeed?: number; downSpeed?: number; ruleType?: string; rulePayload?: string; sourceIP?: string; inboundType?: string; chains?: string[]; closedAt?: number }
+// index/disabled come from Mihomo GET /rules (index, extra.disabled); absent on kernels without rule toggling.
+export interface Rule { type: string; payload: string; proxy: string; index?: number; disabled?: boolean }
 export interface Traffic { up: number; down: number; upTotal?: number; downTotal?: number }
 export interface WrtInfo { model: string; release: string; uptime: number; load: number[]; memTotal: number; memFree?: number; wan: string; target?: string; kernel?: string; cpu?: number; cpus?: CpuUsage[]; cpuModel?: string; cpuMeta?: Record<string,CpuMeta>; arch?: string; temperature?: number; disk?: DiskUsage | null }
 export interface Overview { version: string; mode: string; traffic: Traffic; upTotal: number; downTotal: number; connCount: number; wrt?: WrtInfo; mem?: number }
@@ -605,7 +606,7 @@ export async function loadConnections(c0: Controller, signal?: AbortController["
         sourceIP: String(m.sourceIP ?? ""), inboundType: String(m.type ?? ""), chains: (x.chains ?? []).slice().reverse().map(String),
         id: String(x.id), host: String(m.host || m.destinationIP || "-"), src: `${m.sourceIP ?? ""}${m.sourcePort ? ":" + m.sourcePort : ""}`,
         dst: `${m.destinationIP ?? ""}${m.destinationPort ? ":" + m.destinationPort : ""}`, network: String(m.network ?? "").toUpperCase(),
-        rule: [x.rule, x.rulePayload].filter(Boolean).join(" · "), chain: (x.chains ?? []).slice().reverse().join(" → "),
+        rule: [x.rule, x.rulePayload].filter(Boolean).join(" · "), ruleType: String(x.rule ?? ""), rulePayload: String(x.rulePayload ?? ""), chain: (x.chains ?? []).slice().reverse().join(" → "),
         up: num(x.upload), down: num(x.download), start: Date.parse(x.start) || 0,
       }
     })
@@ -632,8 +633,27 @@ export async function loadRules(c0: Controller): Promise<Rule[]> {
   const c = await cc(c0)
   {
     const j = await http(c, "/rules")
-    return (j.rules ?? []).map((r: any) => ({ type: String(r.type), payload: String(r.payload ?? ""), proxy: String(r.proxy ?? "") }))
+    return (j.rules ?? []).map((r: any) => {
+      const rule: Rule = { type: String(r.type), payload: String(r.payload ?? ""), proxy: String(r.proxy ?? "") }
+      // Only a complete (integer index + boolean extra.disabled) pair means the kernel supports toggling.
+      if (Number.isInteger(r.index) && typeof r.extra?.disabled === "boolean") { rule.index = r.index; rule.disabled = r.extra.disabled }
+      return rule
+    })
   }
+}
+export function ruleToggleSupported(r: Rule): boolean { return Number.isInteger(r.index) && typeof r.disabled === "boolean" }
+// Mihomo PATCH /rules/disable: JSON object, key = rule index, value = disabled. Runtime state only (not persisted).
+export async function setRuleDisabled(c: Controller, index: number, disabled: boolean) {
+  await http(await cc(c), "/rules/disable", { method: "PATCH", body: { [String(index)]: disabled } })
+}
+const RULE_INTERRUPT_MAX = 500
+// Closes only active connections hit by this rule (connection rule/rulePayload == rule type/payload), by id.
+export async function closeRuleConnections(c: Controller, type: string, payload: string): Promise<{ matched: number; failed: number; readFailed?: boolean }> {
+  let xs: Conn[]
+  try { xs = await loadConnections(c) } catch { return { matched: 0, failed: 0, readFailed: true } }
+  const ids = xs.filter(x => x.ruleType === type && (x.rulePayload ?? "") === payload).slice(0, RULE_INTERRUPT_MAX).map(x => x.id)
+  const rs = await Promise.allSettled(ids.map(id => closeConnection(c, id)))
+  return { matched: ids.length, failed: rs.filter(r => r.status === "rejected").length }
 }
 
 export interface ClashConfig { mode?: string; "log-level"?: string; port?: number; "socks-port"?: number; "mixed-port"?: number; "redir-port"?: number; "tproxy-port"?: number; "allow-lan"?: boolean; ipv6?: boolean; "bind-address"?: string; tun?: { enable?: boolean; [key:string]: any } }

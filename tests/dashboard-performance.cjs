@@ -100,7 +100,7 @@ const plain=x=>JSON.parse(JSON.stringify(x))
       render(pages.RulesPage,props,true);await settle();let tree=render(pages.RulesPage,props);reads=0
       tree=render(pages.RulesPage,props);assert.equal(reads,0)
       button(tree,'加载更多').props.action();tree=render(pages.RulesPage,props);assert.equal(reads,0);assert.ok(text(tree).includes('#160'))
-      button(trailing(tree.props.toolbar),'搜索规则').props.action();tree=render(pages.RulesPage,props);assert.equal(reads,0)
+      assert.equal(nodes(tree,'TextField').length,1,'search field is always present');assert.equal(reads,0)
       nodes(tree,'TextField')[0].props.onChanged('match-');tree=render(pages.RulesPage,props);assert.ok(reads>0)
       assert.ok(text(tree).includes('#2'));assert.ok(text(tree).includes('#160'));assert.ok(!text(tree).includes('other-'))
       reads=0;button(tree,'加载更多').props.action();tree=render(pages.RulesPage,props);assert.equal(reads,0);assert.ok(text(tree).includes('#200'))

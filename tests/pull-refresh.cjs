@@ -11,14 +11,12 @@ const rule=n=>({type:'DOMAIN',payload:n,proxy:'DIRECT'})
 const conn=n=>({id:n,metadata:{host:n+'.invalid'},upload:1,download:1})
 const prov={providers:{A:{type:'Rule',vehicleType:'HTTP',ruleCount:1,proxies:[]}}}
 ;(async()=>{
- // The shared harness runs setTimeout synchronously; the paused pull's abort deadline must not fire here.
- const realSetTimeout=context.setTimeout
  await test('Shell: only rules and connections are refreshable; menus; connections inline search icon still toggles search',async()=>{
   responder=()=>({body:{rules:[],providers:{},connections:[],proxies:{}}})
   const r=owner(pages.RulesPage).render({active:{...base,id:'sh-r'},version:0,selected:true});assert.equal(typeof r.props.refreshable,'function')
-  assert.deepEqual(nodes(trailing(r.props.toolbar),'Button').map(b=>b.props.title),['搜索规则'])
+  assert.deepEqual(nodes(trailing(r.props.toolbar),'Button').map(b=>b.props.title),[]);assert.deepEqual(nodes(trailing(r.props.toolbar),'Toggle').map(b=>b.props.title),['禁用规则时打断连接'])
   const page=owner(pages.ConnectionsPage),props={active:{...base,id:'sh-c'},version:0,selected:true};let c=page.render(props);assert.equal(typeof c.props.refreshable,'function')
-  const titles=nodes(trailing(c.props.toolbar),'Button').map(b=>b.props.title);assert.deepEqual(titles,['暂停监控','客户端标签','清理已断开连接','打断全部连接'])
+  const titles=nodes(trailing(c.props.toolbar),'Button').map(b=>b.props.title);assert.deepEqual(titles,['客户端标签','清理已断开连接','打断全部连接'])
   assert.equal(nodes(c,'TextField').filter(t=>t.props.title==='搜索连接...').length,0)
   const icon=nodes(c,'Button').find(b=>nodes(b,'Image').some(i=>i.props.systemName==='magnifyingglass'));assert.ok(icon,'inline search icon exists');icon.props.action()
   c=page.render(props);assert.equal(nodes(c,'TextField').filter(t=>t.props.title==='搜索连接...').length,1,'icon opens the search field');page.close()
@@ -59,21 +57,6 @@ const prov={providers:{A:{type:'Rule',vehicleType:'HTTP',ruleCount:1,proxies:[]}
   fail=false;emitScene('inactive');emitScene('background');page.render(props);await settle();const before=n;await tree.props.refreshable();assert.equal(n,before)
   page.close()
  })
- await test('connections pull while paused: one snapshot read, stays paused, no polling restart, closed history untouched, stale dropped',async()=>{
-  context.setTimeout=()=>1
-  let n=0,list=[conn('p1')];responder=()=>{n++;return {body:{connections:list}}}
-  const page=owner(pages.ConnectionsPage),props={active:{...base,id:'pull-paused',url:'http://pull-d.invalid'},version:0,selected:true}
-  let tree=page.render(props);await settle();tree=page.render(props)
-  button(trailing(tree.props.toolbar),'暂停监控').props.action();tree=page.render(props);await settle();assert.equal(intervals.size,0)
-  tree=page.render(props);const closedBefore=model.historyFor(props.active).closed.length;list=[conn('p3')];const reads=n
-  const pending=tree.props.refreshable(),pending2=tree.props.refreshable();assert.equal(pending,pending2,'repeated paused pulls coalesce');await pending;await settle()
-  assert.equal(n,reads+1,'paused pull reads once');tree=page.render(props);assert.ok(text(tree).includes('p3.invalid'));assert.equal(intervals.size,0,'still paused');assert.equal(model.historyFor(props.active).closed.length,closedBefore)
-  responder=()=>({status:500});await tree.props.refreshable();tree=page.render(props);assert.ok(text(tree).includes('p3.invalid'));assert.equal(intervals.size,0)
-  const g=gate();responder=()=>({wait:g.promise,body:{connections:[conn('old')]}});const inflight=tree.props.refreshable()
-  const other={...props,active:{...props.active,url:'http://pull-e.invalid'}};responder=()=>({body:{connections:[conn('fresh')]}});tree=page.render(other);await settle();g.resolve();await inflight;await settle();tree=page.render(other)
-  context.setTimeout=realSetTimeout;assert.ok(!text(tree).includes('old.invalid'));page.close()
- })
- context.setTimeout=realSetTimeout
  console.log(count+' pull-refresh groups passed; mocked, no device claim.')
 })().catch(e=>{console.error(e);process.exitCode=1})
 `

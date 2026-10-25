@@ -871,13 +871,13 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) { const lazy = ['proxies','rules'].includes(ids[i]) && ids[i] !== id; assert.equal(nodes(tree, types[i]).length, lazy ? 0 : 1); if (!lazy) assert.equal(nodes(tree, types[i])[0].props.selected, ids[i] === id) }
     }
-    assert.equal(api.VERSION, '1.47'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.48'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('独立导航栈保留业务owner和身份，只有选中页提供可见工具栏', () => {
     pref.savePreferences({ defaultPage: 'overview' })
     let rootTree = render(app.Root, {}, true)
     const pagesByTab = { home: app.OverviewPage, proxies: app.ProxiesPage, rules: app.RulesPage, connections: app.ConnectionsPage, more: app.MorePage }
-    const commands = { home: ['面板管理','外观设置','全局配置'], proxies: [], rules: ['搜索规则'], connections: ['暂停监控','客户端标签','清理已断开连接','打断全部连接'] }
+    const commands = { home: ['面板管理','外观设置','全局配置'], proxies: [], rules: [], connections: ['客户端标签','清理已断开连接','打断全部连接'] }
     // 仅展开组件声明，不运行effect/网络；各页独立hooks，不能与Root共用hooks槽位。
     function inspectPage(node) {
       const saved = { hooks, hookIndex, effects, cleanups }
@@ -913,6 +913,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
         assert.equal(menu.type,'Menu');assert.equal(nodes(menu,'Image').length,0) // label单独验证，不能把正文图标算成toolbar
         assert.equal(menu.props.label.props.systemName,'ellipsis.circle');menus++
         assert.deepEqual(nodes(menu,'Button').map(b=>b.props.title),commands[id])
+        if(id==='rules')assert.deepEqual(nodes(menu,'Toggle').map(t=>t.props.title),['禁用规则时打断连接'])
         assert.ok(!nodes(menu,'Button').some(b=>b.props.title==='设置'))
       }
       assert.equal(menus,selected==='more'?0:1)
@@ -1323,19 +1324,18 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     assert.equal(model.filterConnections(xs,'我的','',model.clientLabels(c)).length,1);assert.equal(model.filterConnections(xs,'','source-v6',{}).length,1)
     assert.notEqual(model.sourceKey(c),model.sourceKey({...c,url:'http://changed.invalid'}))
   })
-  await test('1.5连接监控：暂停/不可见清定时器、取消断开不发送DELETE', async () => {
+  await test('1.5连接监控：不可见清定时器、取消断开不发送DELETE，菜单无暂停/恢复', async () => {
     responder=()=>({body:{connections:[{id:'observed',upload:20,download:40,metadata:{host:'observed.invalid',sourceIP:'source',type:'TProxy',network:'tcp'},start:new Date(now-5000).toISOString(),chains:['node','group']}]}})
     render(pages.ConnectionsPage,{active:c,version:0},true);await flush();let tree=render(pages.ConnectionsPage,{active:c,version:0});assert.equal(intervals.size,1);assert.ok(text(tree).includes('observed.invalid'))
     context.confirmResult=false;calls.length=0;await button(trailing(tree.props.toolbar),'打断全部连接').props.action();assert.equal(calls.length,0)
-    button(trailing(tree.props.toolbar),'暂停监控').props.action();render(pages.ConnectionsPage,{active:c,version:0});await flush();assert.equal(intervals.size,0)
-    tree=render(pages.ConnectionsPage,{active:c,version:0});assert.ok(!text(tree).includes('Nikki / Mihomo'));assert.ok(!text(tree).includes('按实际采样间隔'));button(trailing(tree.props.toolbar),'恢复监控').props.action();render(pages.ConnectionsPage,{active:c,version:0});await flush();assert.equal(intervals.size,1)
+    assert.ok(!nodes(trailing(tree.props.toolbar),'Button').some(b=>/暂停监控|恢复监控/.test(b.props.title)));assert.ok(!text(tree).includes('Nikki / Mihomo'));assert.ok(!text(tree).includes('按实际采样间隔'));assert.equal(intervals.size,1)
     tree=unwrap(render(pages.ConnectionsPage,{active:c,version:0}));tree.props.onDisappear();render(pages.ConnectionsPage,{active:c,version:0});await flush();assert.equal(intervals.size,0);context.confirmResult=true
   })
-  await test('1.5连接pending隔离：暂停后旧结果不写历史，切换来源丢弃旧响应', async () => {
+  await test('1.5连接pending隔离：隐藏后旧结果不写历史，切换来源丢弃旧响应', async () => {
     let release;const wait=new Promise(r=>{release=r});const a={...c,id:'pending-a'},b={...c,id:'pending-b'}
     responder=()=>({wait,body:{connections:[{id:'old-pending',upload:999,download:999,metadata:{host:'old-result.invalid'}}]}})
     render(pages.ConnectionsPage,{active:a,version:0},true);await flush();let tree=render(pages.ConnectionsPage,{active:a,version:0})
-    button(trailing(tree.props.toolbar),'暂停监控').props.action();render(pages.ConnectionsPage,{active:a,version:0});await flush();release();await flush();tree=render(pages.ConnectionsPage,{active:a,version:0});assert.ok(!text(tree).includes('old-result.invalid'));assert.equal(model.historyFor(a).active.length,0);assert.equal(intervals.size,0)
+    tree.props.onDisappear();render(pages.ConnectionsPage,{active:a,version:0});await flush();release();await flush();tree=render(pages.ConnectionsPage,{active:a,version:0});assert.ok(!text(tree).includes('old-result.invalid'));assert.equal(model.historyFor(a).active.length,0);assert.equal(intervals.size,0)
     let release2;const wait2=new Promise(r=>{release2=r});responder=()=>({wait:wait2,body:{connections:[{id:'old-source',metadata:{host:'source-a.invalid'}}]}})
     render(pages.ConnectionsPage,{active:a,version:0},true);await flush();responder=()=>({body:{connections:[{id:'new-source',metadata:{host:'source-b.invalid'}}]}});render(pages.ConnectionsPage,{active:b,version:0});await flush();release2();await flush();tree=render(pages.ConnectionsPage,{active:b,version:0});assert.ok(text(tree).includes('source-b.invalid'));assert.ok(!text(tree).includes('source-a.invalid'));unmount();assert.equal(intervals.size,0)
   })
@@ -2048,15 +2048,15 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     responder=()=>({body:{connections:[]}});[...intervals.values()].find(x=>x.ms===1500).fn();await flush()
     const tree=render(pages.ConnectionsPage,{active:owner,version:0});assert.ok(!text(tree).includes('too-late.invalid'));assert.ok(tree.props.toolbar);unmount()
   })
-  await test('连接重现：隐藏标签可无onAppear重启，详情隐藏仍暂停，暂停监控不被active解除', async () => {
+  await test('连接重现：隐藏标签可无onAppear重启，详情隐藏仍暂停，后台返回后始终恢复监控', async () => {
     const props={active:{...c,id:'connections-reappear'},version:0,selected:true}
     responder=()=>({body:{connections:[]}});let tree=render(pages.ConnectionsPage,props,true);await flush()
     tree.props.onDisappear();render(pages.ConnectionsPage,{...props,selected:false});await flush();assert.equal(intervals.size,0)
     render(pages.ConnectionsPage,props);await flush();tree=render(pages.ConnectionsPage,props);await flush();assert.ok([...intervals.values()].some(x=>x.ms===1500))
     tree.props.onDisappear();now+=1000;emitScene('inactive');emitScene('active');render(pages.ConnectionsPage,props);await flush();assert.equal(intervals.size,0,'a push-style hide long before inactive stays hidden')
     tree.props.onAppear();render(pages.ConnectionsPage,props);await flush();assert.ok([...intervals.values()].some(x=>x.ms===1500))
-    tree=render(pages.ConnectionsPage,props);button(trailing(tree.props.toolbar),'暂停监控').props.action();render(pages.ConnectionsPage,props);await flush()
-    emitScene('background');now+=3600000;emitScene('active');render(pages.ConnectionsPage,props);await flush();assert.equal(intervals.size,0);unmount()
+    tree=render(pages.ConnectionsPage,props);assert.ok(!nodes(trailing(tree.props.toolbar),'Button').some(b=>/暂停监控|恢复监控/.test(b.props.title)))
+    emitScene('background');assert.equal(intervals.size,0);now+=3600000;emitScene('active');render(pages.ConnectionsPage,props);await flush();assert.ok([...intervals.values()].some(x=>x.ms===1500),'always monitoring after return');unmount()
     const diag=load('cadence-diagnostics').connectionLifecycleSummary();assert.ok(diag.includes('poll-stop'));assert.ok(!diag.includes(props.active.id));assert.ok(!diag.includes(c.url));assert.ok(diag.split('\n').length<=42)
   })
   await test('连接恢复：后台长暂停与active合并渲染仍建立新轮询owner', async () => {
@@ -2115,7 +2115,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       const diagnostic = logs.filter(x => x.startsWith('[preferences-icon]'))
       for (const stage of ['change','accepted','proxies-render','group-render']) assert.ok(diagnostic.some(x => x.includes('stage=' + stage) && x.includes('enabled=false')))
       assert.ok(diagnostic.every(x => !x.includes('private.invalid') && !x.includes('private-group-name') && !x.includes('secret-')))
-      assert.ok(diagnostic.every(x => x.includes('build=1.47') && /instance=[a-z0-9]+/.test(x)))
+      assert.ok(diagnostic.every(x => x.includes('build=1.48') && /instance=[a-z0-9]+/.test(x)))
       assert.equal(new Set(diagnostic.map(x => x.match(/instance=([^ ]+)/)[1])).size, 1)
     } finally { context.console = originalConsole; unmount(); pref.savePreferences({ customIcons: true, testURL: 'https://www.gstatic.com/generate_204' }) }
   })

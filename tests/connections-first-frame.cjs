@@ -30,12 +30,12 @@ function setup(c){store.set('neko_controllers_v1',[c]);store.set('neko_active_v1
   tree.props.onAppear();rootTree=rootOwner.render();node=declaration(rootTree);assert.equal(node.props.key,key);assert.equal(node.props.selected,true)
   tree=page.render(node.props);await settle();tree=page.render(node.props);await settle();shell(tree,c.name);assert.equal(reads,before+1);assert.equal([...intervals.values()].filter(x=>x.ms===1500).length,1)
   assert.equal(text(tree).includes(conn.host),cached,'uncompleted request cannot blank the shell or cached rows')
-  // A retained owner keeps the user's pause across leaving/returning to the tab.
-  button(tree.props.toolbar.topBarTrailing,'暂停监控').props.action();tree=page.render(node.props);await settle();const pausedReads=reads
+  // No user pause exists: leaving and returning to the tab always resumes monitoring.
+  assert.ok(!nodes(tree.props.toolbar.topBarTrailing,'Button').some(b=>/暂停监控|恢复监控/.test(b.props.title)))
   selection.setValue('proxies');rootTree=rootOwner.render();tree.props.onDisappear();tree=page.render(declaration(rootTree).props);await settle()
   emitScene('background');now+=7200000;emitScene('active');rootTree=rootOwner.render();tree=page.render(declaration(rootTree).props);await settle()
   selection.setValue('connections');shell(tree,c.name);rootTree=rootOwner.render();tree.props.onAppear();tree=page.render(declaration(rootTree).props);await settle();shell(tree,c.name)
-  assert.ok(button(tree.props.toolbar.topBarTrailing,'恢复监控'));assert.equal(reads,pausedReads);assert.equal([...intervals.values()].filter(x=>x.ms===1500).length,0)
+  assert.ok(!nodes(tree.props.toolbar.topBarTrailing,'Button').some(b=>/暂停监控|恢复监控/.test(b.props.title)));assert.equal([...intervals.values()].filter(x=>x.ms===1500).length,1)
   page.close();rootOwner.close();for(const resolve of pending.splice(0))resolve([]);await settle();assert.equal(intervals.size,0);assert.equal(sceneListeners.size,0)
  })
  await test('source switch with same id: new connection owner first frame is isolated, recent/expired/no cache',async()=>{
