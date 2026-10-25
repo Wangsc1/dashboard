@@ -24,7 +24,7 @@ async function mount(){const node=render(plot.MountedCanvasPlot,props,true);awai
    const stable=()=>{out=render(plot.MountedCanvasPlot,p);const next=layers(out);assert.deepEqual(next.map(n=>[n.type,n.props.key,n.props.frame]),initial.map(n=>[n.type,n.props.key,n.props.frame]));assert.equal(next[0].props.controller,h);return next}
    assert.equal(initial[0].props.opacity,1);assert.equal(initial[1].props.opacity,1)
    h.handlers.plotReady({generation:1});h.handlers.plotPainted({generation:1,w:145,h:plotHeight});await flush()
-   let next=stable();assert.deepEqual(next.map(n=>n.props.key),['plot-web','plot-grid']);assert.equal(next[0].props.opacity,1);assert.equal(next[1].props.opacity,0);assert.equal(timeouts.size,0)
+   let next=stable();assert.deepEqual(next.map(n=>n.props.key),initial.map(n=>n.props.key));assert.equal(next[0].props.opacity,1);assert.equal(next[1].props.opacity,0);assert.equal(timeouts.size,0)
    h.handlers.plotPainted({generation:1,w:145,h:plotHeight});await flush();stable();assert.equal(timeouts.size,0)
    plot.requestPlotKick('selected');for(const fn of [...timeouts.values()])fn();timeouts.clear();await flush();next=stable();assert.equal(next[0].props.opacity,1,'selected repaint never nudges opacity');h.resolve(true);await flush()
    emitScene('background');emitScene('active');await flush();stable();h.resolve('missing');await flush();assert.equal(h.loads,2)
@@ -33,7 +33,7 @@ async function mount(){const node=render(plot.MountedCanvasPlot,props,true);awai
   }
  })
 
- await test('主页保留+详情摘要/32核同时挂载：同名局部key不共享JS controller、消息和显示状态，关闭详情不销毁主页',async()=>{
+ await test('主页保留+详情摘要/32核同时挂载：层key跨宿主唯一且终生稳定，controller及消息独立',async()=>{
   unmount();timeouts.clear();const oldTheme=mockColorScheme;mockColorScheme="dark"
   function owner(p){
    const state={hooks:[],cleanups:new Map()}
@@ -53,9 +53,9 @@ async function mount(){const node=render(plot.MountedCanvasPlot,props,true);awai
    trees[i].props.onAppear();nodes(trees[i],'WebView')[0].props.onAppear()
   }
   await flush()
-  assert.equal(ctrls.length,36);assert.equal(new Set(ctrls).size,36)
+  assert.equal(ctrls.length,36);assert.equal(new Set(ctrls).size,36);assert.equal(new Set(trees.flatMap(t=>t.props.children.map(n=>n.props.key))).size,72)
   for(let i=0;i<36;i++){
-   const layers=trees[i].props.children;assert.deepEqual(layers.map(n=>n.props.key),['plot-web','plot-grid']);assert.equal(layers[0].props.controller,ctrls[i]);assert.equal(ctrls[i].loads,1)
+   const layers=trees[i].props.children;assert.match(layers[0].props.key,/^plot-web-\d+$/);assert.equal(layers[1].props.key,layers[0].props.key.replace('plot-web-','plot-grid-'));assert.equal(layers[0].props.controller,ctrls[i]);assert.equal(ctrls[i].loads,1)
   }
   // One detail's ready/painted must reveal only that instance, not a home or sibling host.
   ctrls[3].handlers.plotReady({generation:1});ctrls[3].handlers.plotPainted({generation:1,w:338,h:96});await flush()
@@ -63,7 +63,7 @@ async function mount(){const node=render(plot.MountedCanvasPlot,props,true);awai
   for(let i=0;i<36;i++)if(i!==3){ctrls[i].handlers.plotReady({generation:1});ctrls[i].handlers.plotPainted({generation:1,w:i<3?145:145,h:i<3?(i===0?96:66):76})}
   await flush()
   for(let i=0;i<36;i++){
-   const t=owners[i].draw();assert.equal(nodes(t,'Canvas')[0].props.opacity,0);assert.equal(nodes(t,'WebView')[0].props.opacity,1)
+   const t=owners[i].draw();assert.deepEqual(t.props.children.map(n=>n.props.key),trees[i].props.children.map(n=>n.props.key));assert.equal(nodes(t,'Canvas')[0].props.opacity,0);assert.equal(nodes(t,'WebView')[0].props.opacity,1)
    assert.equal(nodes(t,'WebView')[0].props.controller,ctrls[i]);assert.equal(nodes(t,'WebView')[0].props.disabled,true)
    assert.ok(ctrls[i].html.includes('\"background\":\"'+(i<3?'#1c1c1e':'#2c2c2e')+'\"'),'home/detail background payload')
   }

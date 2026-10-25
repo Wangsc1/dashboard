@@ -871,7 +871,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) { const lazy = ['proxies','rules'].includes(ids[i]) && ids[i] !== id; assert.equal(nodes(tree, types[i]).length, lazy ? 0 : 1); if (!lazy) assert.equal(nodes(tree, types[i])[0].props.selected, ids[i] === id) }
     }
-    assert.equal(api.VERSION, '1.58'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.59'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('独立导航栈保留业务owner和身份，只有选中页提供可见工具栏', () => {
     pref.savePreferences({ defaultPage: 'overview' })
@@ -1176,7 +1176,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       if (obj === 'uci' && method === 'set' && failSet) return { body: { result: [2] } }
       if (obj === 'uci' && method === 'get') return { body: { result: [0, { values: { common: { '.type': 'conf', server_addr: '1.2.3.4', server_port: '8055', token: 'SECRET' }, c1: { '.type': 'conf', '.name': 'c1', name: 'ssh', type: 'tcp', local_ip: '10.0.0.1', local_port: '22', remote_port: '8022' }, globals: { log_level: 'warn', data_root: '/opt/docker/' }, proxies: { http_proxy: 'http://127.0.0.1:8080' } } }] } }
       if (obj === 'docker.container' && method === 'inspect') return { body: { result: [0, { code: 200, body: { HostConfig: { RestartPolicy: { Name: 'always' } } } }] } }
-      if (obj === 'docker') return { body: { result: [0, { code: 200, body: method === 'info' ? { Containers: 1, ContainersRunning: 1, Images: 1, NGoroutines: 57, MemTotal: 16666660864, DockerRootDir: '/opt/docker', IndexServerAddress: 'https://index.docker.io/v1/', RegistryConfig: { Mirrors: [] } } : { Version: '29.6.1', ApiVersion: '1.58' } }] } }
+      if (obj === 'docker') return { body: { result: [0, { code: 200, body: method === 'info' ? { Containers: 1, ContainersRunning: 1, Images: 1, NGoroutines: 57, MemTotal: 16666660864, DockerRootDir: '/opt/docker', IndexServerAddress: 'https://index.docker.io/v1/', RegistryConfig: { Mirrors: [] } } : { Version: '29.6.1', ApiVersion: '1.59' } }] } }
       if (obj === 'docker.image') return { body: { result: [0, { code: 200, body: [{}] }] } }
       if (obj === 'docker.container') return { body: { result: [0, { code: 200 }] } }
       return { body: { result: [0, {}] } } }
@@ -1195,7 +1195,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     assert.equal(await api.loadContainerPolicy(router, 'f01e8c0c992d37147ed051e6'), 'always'); await assert.rejects(() => api.saveContainerPolicy(router, 'f01e8c0c992d37147ed051e6', 'bad'))
     await api.saveContainerPolicy(router, 'f01e8c0c992d37147ed051e6', 'unless-stopped'); assert.ok(seen.some(x => x.obj === 'docker.container' && x.method === 'update'))
     const src = fs.readFileSync(path.join(root, 'index.tsx'), 'utf8'); assert.ok(fs.readFileSync(path.join(root, 'docker-icon.ts'), 'utf8').includes('DOCKER_PNG_BASE64')); assert.ok(src.includes('UIImage.fromBase64String')); assert.ok(src.includes('<DockerLogo')); assert.ok(src.includes('title="保存"')); assert.ok(!src.includes('保存并重启')); assert.ok(!src.includes('title="保持"')); assert.ok(!src.includes('点进可编辑')); assert.ok(src.includes('<DockerLogo size={22} mono />')); assert.ok(!src.includes('SecureField title="Token')); assert.ok(!src.includes('title="Docker 管理" systemImage="shippingbox"')); assert.ok(!src.includes('title="刷新" systemImage="arrow.clockwise" action={() => setTick'))
-    const ov = await api.loadDockerOverview(router); assert.equal(ov.version, '29.6.1'); assert.equal(ov.api, '1.58'); assert.equal(ov.root, '/opt/docker')
+    const ov = await api.loadDockerOverview(router); assert.equal(ov.version, '29.6.1'); assert.equal(ov.api, '1.59'); assert.equal(ov.root, '/opt/docker')
   })
   await test('1.5.46 Docker容器详情/操作与镜像列表/删除', async () => {
     const router = { ...api.listControllers().find(x => x.kind === 'openwrt'), id: 'img-test' }, seen = []
@@ -2115,7 +2115,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       const diagnostic = logs.filter(x => x.startsWith('[preferences-icon]'))
       for (const stage of ['change','accepted','proxies-render','group-render']) assert.ok(diagnostic.some(x => x.includes('stage=' + stage) && x.includes('enabled=false')))
       assert.ok(diagnostic.every(x => !x.includes('private.invalid') && !x.includes('private-group-name') && !x.includes('secret-')))
-      assert.ok(diagnostic.every(x => x.includes('build=1.58') && /instance=[a-z0-9]+/.test(x)))
+      assert.ok(diagnostic.every(x => x.includes('build=1.59') && /instance=[a-z0-9]+/.test(x)))
       assert.equal(new Set(diagnostic.map(x => x.match(/instance=([^ ]+)/)[1])).size, 1)
     } finally { context.console = originalConsole; unmount(); pref.savePreferences({ customIcons: true, testURL: 'https://www.gstatic.com/generate_204' }) }
   })
