@@ -1,3 +1,4 @@
+import { PlotRole, sheetLifecycle } from "./cadence-diagnostics"
 import { Button, Navigation, HStack, VStack, Text, Image, RoundedRectangle, Spacer, ScrollView, ZStack, Device, NavigationStack, modifiers, useState, useEffect, useMemo, GeometryReader, useColorScheme } from "scripting"
 import { Overview, WrtInfo, fmtBytes, fmtSpeed, fmtUptime } from "./api"
 import { CpuUsage, OverviewHistory } from "./openwrt-metrics"
@@ -22,18 +23,18 @@ const SIZED=typeof SCREEN_W==="number"&&SCREEN_W>112&&SCREEN_W<=600
 export const PLOT_FULL_W:number|undefined=SIZED?SCREEN_W-64:undefined
 export const PLOT_HALF_W:number|undefined=SIZED?(SCREEN_W-48)/2-32:undefined
 export const PLOT_STROKE=1.5
-export function GridPlot(props:{samples:number[];tone:string;plotHeight?:number;area?:boolean;running?:boolean;percent?:boolean;plotWidth?:number;elevated?:boolean}) {
+export function GridPlot(props:{samples:number[];tone:string;plotHeight?:number;area?:boolean;running?:boolean;percent?:boolean;plotWidth?:number;elevated?:boolean;role?:PlotRole;sheetTrace?:number}) {
   return <InlineCanvasPlot {...props}/>
 }
 export function CpuBreakdown({cpu,running}:{cpu?:CpuUsage;running:boolean}) {
   return <HStack spacing={0} alignment="bottom"><HStack spacing={22}>{([['SYS',cpu?.system],['USER',cpu?.user],['STEAL',cpu?.steal]] as const).map(([title,value])=><VStack key={title} alignment="leading" spacing={3}><Text font={10} fontWeight="semibold" foregroundStyle="secondaryLabel" lineLimit={1}>{title}</Text><MetricNumber value={value} digits={1} pointSize={14} running={running}/></VStack>)}</HStack><Spacer/><HStack alignment="lastTextBaseline" spacing={2}><MetricNumber running={running} value={cpu?.usage} digits={1} pointSize={22} tone="#3485eb"/><Text font={11} foregroundStyle="#3485eb">%</Text></HStack></HStack>
 }
-export function CpuCard({w,history,running,onOpen,detail=false}:{w?:WrtInfo;history:number[];running:boolean;onOpen?:()=>void;detail?:boolean}) {
-  return <HomeCard onOpen={onOpen}><HStack><Text font={detail?15:16} fontWeight="semibold">{detail?w?.cpuModel||"CPU 型号未提供":"CPU"}</Text><Spacer/>{!detail?<Text font={11} fontWeight="bold" foregroundStyle="#3485eb" padding={{horizontal:8,vertical:4}} background={<RoundedRectangle cornerRadius={8} fill={{light:"#d6e8ff",dark:"#24374d"}}/>}>{w?.temperature===undefined?"-- °C":`${w.temperature.toFixed(1)} °C`}</Text>:null}</HStack><GridPlot samples={history} tone="#3485eb" percent running={running} plotWidth={PLOT_FULL_W} elevated={detail}/><CpuBreakdown cpu={w?.cpus?.find(c=>c.id==='cpu')} running={running&&!detail}/></HomeCard>
+export function CpuCard({w,history,running,onOpen,detail=false,sheetTrace}:{w?:WrtInfo;history:number[];running:boolean;onOpen?:()=>void;detail?:boolean;sheetTrace?:number}) {
+  return <HomeCard onOpen={onOpen}><HStack><Text font={detail?15:16} fontWeight="semibold">{detail?w?.cpuModel||"CPU 型号未提供":"CPU"}</Text><Spacer/>{!detail?<Text font={11} fontWeight="bold" foregroundStyle="#3485eb" padding={{horizontal:8,vertical:4}} background={<RoundedRectangle cornerRadius={8} fill={{light:"#d6e8ff",dark:"#24374d"}}/>}>{w?.temperature===undefined?"-- °C":`${w.temperature.toFixed(1)} °C`}</Text>:null}</HStack><GridPlot samples={history} tone="#3485eb" percent running={running} plotWidth={PLOT_FULL_W} elevated={detail} role={detail?"detail":"home"} sheetTrace={sheetTrace}/><CpuBreakdown cpu={w?.cpus?.find(c=>c.id==='cpu')} running={running&&!detail}/></HomeCard>
 }
 export function TrafficCard({heading,rate,total,history,tone,running}:{heading:string;rate?:number;total?:number;history:number[];tone:string;running:boolean}) {
   const parts=rate===undefined?undefined:fmtSpeed(rate).split(' '),value=parts?Number(parts[0]):undefined,unit=parts?" "+parts.slice(1).join(' '):""
-  return <HomeCard><HStack spacing={3}><Text font={16} fontWeight="semibold">{heading}</Text><Spacer/><MetricNumber running={false} value={value} unit={unit} pointSize={14} tone={tone} digits={value!==undefined&&value<100?1:0}/></HStack><GridPlot samples={history} tone={tone} plotHeight={66} area running={running} plotWidth={PLOT_HALF_W}/><Text font={12} foregroundStyle="secondaryLabel">{`已用 ${total===undefined?'--':fmtBytes(total)}`}</Text></HomeCard>
+  return <HomeCard><HStack spacing={3}><Text font={16} fontWeight="semibold">{heading}</Text><Spacer/><MetricNumber running={false} value={value} unit={unit} pointSize={14} tone={tone} digits={value!==undefined&&value<100?1:0}/></HStack><GridPlot samples={history} tone={tone} plotHeight={66} area running={running} plotWidth={PLOT_HALF_W} role="home"/><Text font={12} foregroundStyle="secondaryLabel">{`已用 ${total===undefined?'--':fmtBytes(total)}`}</Text></HomeCard>
 }
 // Deterministic bars: no GeometryReader. Equal flexible-width bars, one fixed 24pt row height.
 const BAR_ROW={minWidth:0,maxWidth:"infinity" as const,minHeight:24,maxHeight:24}
@@ -108,34 +109,36 @@ export function HomeDashboard({overview,histories,running,onCpu}:{overview:Overv
 // content itself never changes identity on each poll; only this mounted body updates.
 export interface CpuDetailFrame { overview:Overview|null; histories:OverviewHistory; running:boolean }
 export interface CpuDetailFeed { value:CpuDetailFrame; subscribe(fn:(value:CpuDetailFrame,old:CpuDetailFrame)=>void):void; unsubscribe(fn:(value:CpuDetailFrame,old:CpuDetailFrame)=>void):void }
-export function LiveCpuDetails({feed}:{feed:CpuDetailFeed}) {
+export function LiveCpuDetails({feed,trace}:{feed:CpuDetailFeed;trace?:number}) {
   const [frame,setFrame]=useState(()=>feed.value)
   useEffect(()=>{
+    sheetLifecycle("content-mount",trace)
     const changed=(value:CpuDetailFrame)=>setFrame(value)
     feed.subscribe(changed);setFrame(feed.value)
-    return()=>feed.unsubscribe(changed)
-  },[feed])
-  return <CpuDetails overview={frame.overview} histories={frame.histories} running={frame.running}/>
+    return()=>{sheetLifecycle("content-dispose",trace);feed.unsubscribe(changed)}
+  },[feed,trace])
+  useEffect(()=>{sheetLifecycle(frame.running?"running":"paused",trace)},[frame.running,trace])
+  return <CpuDetails trace={trace} overview={frame.overview} histories={frame.histories} running={frame.running}/>
 }
-export function CpuDetails({overview,histories,running}:{overview:Overview|null;histories:OverviewHistory;running:boolean}) {
+export function CpuDetails({overview,histories,running,trace}:{overview:Overview|null;histories:OverviewHistory;running:boolean;trace?:number}) {
   const dismiss=Navigation.useDismiss()
   const w=overview?.wrt,cores=w?.cpus?.filter(x=>x.id!=='cpu')??[],rows=Array.from({length:Math.ceil(cores.length/2)},(_,i)=>cores.slice(i*2,i*2+2))
   const info=[['Uptime',w?fmtUptime(w.uptime,true):'--'],['Arch',w?.arch||'--'],['Cpu',cores.length?String(cores.length):'--'],['Kernel',w?.kernel||'--'],['Board',w?.model||'--']]
-  return <NavigationStack presentationDetents={['large']} presentationDragIndicator="visible" presentationContentInteraction="scrolls"><ScrollView navigationTitle="CPU" navigationBarTitleDisplayMode="inline" background={HOME_BG} toolbar={{topBarLeading:<Button title="" systemImage="xmark" accessibilityLabel="关闭CPU详情" action={dismiss}/>}}><VStack spacing={16} padding={{horizontal:16,top:12,bottom:24}}><HomeCard><Text font={15} fontWeight="semibold">{w?.release||'系统版本未提供'}</Text><VStack spacing={5}>{info.map(([title,value])=><HStack key={title}><Text font={12} foregroundStyle="label">{title}</Text><Spacer/><Text font={12} foregroundStyle="label" multilineTextAlignment="trailing">{value}</Text></HStack>)}</VStack></HomeCard><DetailCpuSummary key="summary" w={w} history={histories.cpu.cpu??[]} running={running}/>{rows.map(row=><CoreRow key={`core-${row[0].id}`} cpus={row} w={w} histories={histories} running={running}/>)}{!cores.length?<Text font={12} foregroundStyle="secondaryLabel">/proc/stat未提供逻辑核数据或当前账号无读取权限。</Text>:null}</VStack></ScrollView></NavigationStack>
+  return <NavigationStack onAppear={()=>sheetLifecycle("appear",trace)} onDisappear={()=>sheetLifecycle("disappear",trace)} presentationDetents={['large']} presentationDragIndicator="visible" presentationContentInteraction="scrolls"><ScrollView navigationTitle="CPU" navigationBarTitleDisplayMode="inline" background={HOME_BG} toolbar={{topBarLeading:<Button title="" systemImage="xmark" accessibilityLabel="关闭CPU详情" action={dismiss}/>}}><VStack spacing={16} padding={{horizontal:16,top:12,bottom:24}}><HomeCard><Text font={15} fontWeight="semibold">{w?.release||'系统版本未提供'}</Text><VStack spacing={5}>{info.map(([title,value])=><HStack key={title}><Text font={12} foregroundStyle="label">{title}</Text><Spacer/><Text font={12} foregroundStyle="label" multilineTextAlignment="trailing">{value}</Text></HStack>)}</VStack></HomeCard><DetailCpuSummary key="summary" sheetTrace={trace} w={w} history={histories.cpu.cpu??[]} running={running}/>{rows.map(row=><CoreRow key={`core-${row[0].id}`} sheetTrace={trace} cpus={row} w={w} histories={histories} running={running}/>)}{!cores.length?<Text font={12} foregroundStyle="secondaryLabel">/proc/stat未提供逻辑核数据或当前账号无读取权限。</Text>:null}</VStack></ScrollView></NavigationStack>
 }
 // No whole-card/element snapshots: metadata and numeric values always use latest inputs.
 // Each shared plot creates its browser layer on component mount, without native visibility gates.
-export function CoreRow({cpus,w,histories,running}:{cpus:CpuUsage[];w?:WrtInfo;histories:OverviewHistory;running:boolean}) {
-  return <HStack key={`core-${cpus[0]?.id}`} spacing={16} alignment="top">{cpus.map(c=><CoreCard key={c.id} cpu={c} w={w} history={histories.cpu[c.id]??[]} running={running}/>)}{cpus.length===1?<Spacer frame={{minWidth:0,maxWidth:'infinity'}}/>:null}</HStack>
+export function CoreRow({cpus,w,histories,running,sheetTrace}:{cpus:CpuUsage[];w?:WrtInfo;histories:OverviewHistory;running:boolean;sheetTrace?:number}) {
+  return <HStack key={`core-${cpus[0]?.id}`} spacing={16} alignment="top">{cpus.map(c=><CoreCard key={c.id} sheetTrace={sheetTrace} cpu={c} w={w} history={histories.cpu[c.id]??[]} running={running}/>)}{cpus.length===1?<Spacer frame={{minWidth:0,maxWidth:'infinity'}}/>:null}</HStack>
 }
 // Per-core plots share GridPlot and the single scheduler; no per-core timer.
-export function SampledCpuPlot({samples,running=false}:{samples:number[];running?:boolean}) {
-  return <GridPlot samples={samples} tone="#2dbf82" percent plotHeight={76} running={running} plotWidth={PLOT_HALF_W} elevated/>
+export function SampledCpuPlot({samples,running=false,sheetTrace}:{samples:number[];running?:boolean;sheetTrace?:number}) {
+  return <GridPlot samples={samples} tone="#2dbf82" percent plotHeight={76} running={running} plotWidth={PLOT_HALF_W} elevated role="detail" sheetTrace={sheetTrace}/>
 }
-export function DetailCpuSummary({w,history,running}:{w?:WrtInfo;history:number[];running:boolean}) {
-  return <VStack key="summary"><CpuCard w={w} history={history} running={running} detail/></VStack>
+export function DetailCpuSummary({w,history,running,sheetTrace}:{w?:WrtInfo;history:number[];running:boolean;sheetTrace?:number}) {
+  return <VStack key="summary"><CpuCard w={w} history={history} running={running} detail sheetTrace={sheetTrace}/></VStack>
 }
-export function CoreCard({cpu,w,history,running}:{cpu:CpuUsage;w?:WrtInfo;history:number[];running:boolean}) {
+export function CoreCard({cpu,w,history,running,sheetTrace}:{cpu:CpuUsage;w?:WrtInfo;history:number[];running:boolean;sheetTrace?:number}) {
   const meta=w?.cpuMeta?.[cpu.id]
-  return <HomeCard><HStack><Text font={12} foregroundStyle="secondaryLabel">{cpu.id.toUpperCase()}</Text><Spacer/><Text font={17} fontWeight="semibold" foregroundStyle="#2dbf82" lineLimit={1} minimumScaleFactor={0.65}>{cpu.usage===undefined?"--%":`${cpu.usage.toFixed(1)}%`}</Text></HStack><SampledCpuPlot samples={history} running={running}/><HStack spacing={5}><VStack alignment="leading" spacing={3}><Text font={9} fontWeight="semibold" foregroundStyle="secondaryLabel">频率</Text><Text font={11} fontWeight="semibold">{meta?.mhz===undefined?'-- MHz':`${meta.mhz.toFixed(0)} MHz`}</Text></VStack><Spacer/><VStack alignment="trailing" spacing={3}><Text font={9} fontWeight="semibold" foregroundStyle="secondaryLabel">缓存大小</Text><Text font={11} fontWeight="semibold">{meta?.cacheKB===undefined?'-- KB':`${meta.cacheKB} KB`}</Text></VStack></HStack></HomeCard>
+  return <HomeCard><HStack><Text font={12} foregroundStyle="secondaryLabel">{cpu.id.toUpperCase()}</Text><Spacer/><Text font={17} fontWeight="semibold" foregroundStyle="#2dbf82" lineLimit={1} minimumScaleFactor={0.65}>{cpu.usage===undefined?"--%":`${cpu.usage.toFixed(1)}%`}</Text></HStack><SampledCpuPlot samples={history} running={running} sheetTrace={sheetTrace}/><HStack spacing={5}><VStack alignment="leading" spacing={3}><Text font={9} fontWeight="semibold" foregroundStyle="secondaryLabel">频率</Text><Text font={11} fontWeight="semibold">{meta?.mhz===undefined?'-- MHz':`${meta.mhz.toFixed(0)} MHz`}</Text></VStack><Spacer/><VStack alignment="trailing" spacing={3}><Text font={9} fontWeight="semibold" foregroundStyle="secondaryLabel">缓存大小</Text><Text font={11} fontWeight="semibold">{meta?.cacheKB===undefined?'-- KB':`${meta.cacheKB} KB`}</Text></VStack></HStack></HomeCard>
 }

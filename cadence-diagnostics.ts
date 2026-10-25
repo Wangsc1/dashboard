@@ -49,20 +49,46 @@ export function connectionLifecycleSummary(){
     ...connectionEvents.map(e=>`-${Math.max(0,now-e.at)}ms ${e.event} ×${e.n}`)].join('\n')
 }
 // Chart document lifecycle: closed vocabulary plus small integers only (no source, samples, URLs or errors).
-type PlotEvent='mount'|'dispose'|'load'|'kick-selected'|'kick-appear'|'kick-shown'|'kick-skipped'|'ready'|'ready-by-probe'|'painted'|'shown'|'reveal-check'|'reload-scene-unready'|'reload-probe-failed'|'reload-probe-timeout'|'reload-load-timeout'|'reload-bridge-failures'|'fail-load-timeout'|'fail-bridge'|'ignored-load-result'|'ignored-bridge-error'|'ignored-stale-update'|'scene-active'|'scene-inactive'|'scene-background'
-const plotEvents:Array<{event:PlotEvent;at:number;gen:number;n:number;w?:number;h?:number}>=[]
+type PlotEvent='host-appear'|'host-disappear'|'web-appear'|'web-disappear'|'mount'|'dispose'|'load'|'kick-selected'|'kick-appear'|'kick-shown'|'kick-skipped'|'ready'|'ready-by-probe'|'painted'|'shown'|'reveal-check'|'reload-scene-unready'|'reload-probe-failed'|'reload-probe-timeout'|'reload-load-timeout'|'reload-bridge-failures'|'fail-load-timeout'|'fail-bridge'|'ignored-load-result'|'ignored-bridge-error'|'ignored-stale-update'|'scene-active'|'scene-inactive'|'scene-background'
+export type PlotRole='home'|'detail'
+export interface PlotTrace {id:number;role:PlotRole;sheet?:number}
+let nextPlotId=0,nextSheetId=0
+export function createPlotTrace(role:PlotRole,sheet?:number):PlotTrace{return {id:++nextPlotId,role,sheet}}
+export function createSheetTrace(){return ++nextSheetId}
+type SheetEvent='state-open'|'state-closed'|'content-mount'|'content-dispose'|'appear'|'disappear'|'running'|'paused'
+const sheetEvents:Array<{event:SheetEvent;id:number;at:number;n:number}>=[]
+export function sheetLifecycle(event:SheetEvent,id=0){
+  const last=sheetEvents[sheetEvents.length-1];if(last?.event===event&&last.id===id){last.n++;last.at=Date.now();return}
+  sheetEvents.push({event,id,at:Date.now(),n:1});if(sheetEvents.length>24)sheetEvents.shift()
+}
+const plotEvents:Array<{event:PlotEvent;at:number;gen:number;n:number;w?:number;h?:number;owner?:PlotTrace}>=[]
+// Retain per-host milestones even if many cores push startup events out of the 40-entry timeline.
+const plotHosts=new Map<number,{owner:PlotTrace;gen:number;times:Partial<Record<PlotEvent,number>>;w?:number;h?:number}>()
 let plotMounts=0,plotLive=0
-export function plotLifecycle(event:PlotEvent,gen=0,size?:{w:number;h:number}){
+export function plotLifecycle(event:PlotEvent,gen=0,size?:{w:number;h:number},owner?:PlotTrace){
+  if(owner){
+    let h=plotHosts.get(owner.id)
+    if(!h){h={owner,gen,times:{}};plotHosts.set(owner.id,h);if(plotHosts.size>64)plotHosts.delete(plotHosts.keys().next().value!)}
+    if(h.gen!==gen&&event==='load'){delete h.times.ready;delete h.times.painted;delete h.times.shown;delete h.w;delete h.h}
+    h.gen=gen
+    if(['mount','dispose','load','ready','painted','shown','host-appear','host-disappear','web-appear','web-disappear'].includes(event))h.times[event]=Date.now()
+    if(size){h.w=size.w;h.h=size.h}
+  }
   if(event==='mount'){plotMounts++;plotLive++}else if(event==='dispose')plotLive=Math.max(0,plotLive-1)
   const last=plotEvents[plotEvents.length-1]
-  if(last&&last.event===event&&last.gen===gen&&!size){last.n++;last.at=Date.now();return}
-  plotEvents.push({event,at:Date.now(),gen,n:1,w:size?.w,h:size?.h});if(plotEvents.length>40)plotEvents.shift()
+  if(last&&last.event===event&&last.gen===gen&&last.owner?.id===owner?.id&&!size){last.n++;last.at=Date.now();return}
+  plotEvents.push({event,at:Date.now(),gen,n:1,w:size?.w,h:size?.h,owner});if(plotEvents.length>40)plotEvents.shift()
 }
 export function plotLifecycleSummary(){
   const now=Date.now()
   return ['图表文档生命周期（仅本次运行，最多40项；gen=文档代次，w/h=页面报告的绘制尺寸；无来源/样本/错误文本）',
     `累计挂载=${plotMounts} 当前存活=${plotLive}`,
-    ...plotEvents.map(e=>`-${Math.max(0,now-e.at)}ms ${e.event} gen=${e.gen} ×${e.n}${e.w!==undefined?` ${e.w}x${e.h}`:''}`)].join('\n')
+    'host/web appear/disappear为原生视图回调，不代表屏幕像素合成；尺寸仍仅由网页报告。',
+    ...plotEvents.map(e=>`-${Math.max(0,now-e.at)}ms ${e.event} gen=${e.gen} ×${e.n}${e.owner?` id=${e.owner.id} role=${e.owner.role}${e.owner.sheet!==undefined?` sheet=${e.owner.sheet}`:''}`:''}${e.w!==undefined?` ${e.w}x${e.h}`:''}`),
+    '宿主最近里程碑（最多64个，时间为距查看毫秒；同事件保留最近一次）',
+    ...[...plotHosts.values()].map(h=>`id=${h.owner.id} role=${h.owner.role}${h.owner.sheet!==undefined?` sheet=${h.owner.sheet}`:''} gen=${h.gen}${h.w!==undefined?` ${h.w}x${h.h}`:''} ${Object.entries(h.times).map(([k,at])=>`${k}=-${Math.max(0,now-at!)}ms`).join(' ')}`),
+    'CPU sheet生命周期（最多24项；state为JS请求，appear/disappear为原生回调）',
+    ...sheetEvents.map(e=>`-${Math.max(0,now-e.at)}ms sheet=${e.id} ${e.event} ×${e.n}`)].join('\n')
 }
 export function cadenceSummary(){
   const lines=['采样/绘图计时摘要 v1（仅本次运行；无地址、认证、配置或响应正文）',`会话=${session} 前台采样=${active?'是':'否'} 异常阈值=1500ms 记录上限=32`,

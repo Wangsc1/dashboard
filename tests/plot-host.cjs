@@ -33,10 +33,62 @@ async function mount(){const node=render(plot.MountedCanvasPlot,props,true);awai
   }
  })
 
+ await test('主页保留+详情摘要/32核同时挂载：同名局部key不共享JS controller、消息和显示状态，关闭详情不销毁主页',async()=>{
+  unmount();timeouts.clear();const oldTheme=mockColorScheme;mockColorScheme="dark"
+  function owner(p){
+   const state={hooks:[],cleanups:new Map()}
+   return {draw(){
+    const saved={hooks,cleanups,effects,hookIndex};hooks=state.hooks;cleanups=state.cleanups;effects=[];hookIndex=0
+    const out=plot.MountedCanvasPlot(p),queued=effects;effects=[];queued.forEach(f=>f())
+    hooks=saved.hooks;cleanups=saved.cleanups;effects=saved.effects;hookIndex=saved.hookIndex;return out
+   },close(){for(const f of state.cleanups.values())f();state.cleanups.clear()}}
+  }
+  const main=[96,66,66].map(plotHeight=>owner({...props,plotHeight,elevated:false})),details=[96,...Array(32).fill(76)].map(plotHeight=>owner({...props,plotHeight,elevated:true}))
+  const owners=[...main,...details],start=hosts.length
+  const trees=owners.map(o=>o.draw());await flush();const ctrls=hosts.slice(start)
+  assert.equal(ctrls.length,36);assert.equal(new Set(ctrls).size,36)
+  for(let i=0;i<36;i++){
+   const layers=trees[i].props.children;assert.deepEqual(layers.map(n=>n.props.key),['plot-grid','plot-web']);assert.equal(layers[1].props.controller,ctrls[i]);assert.equal(ctrls[i].loads,1)
+  }
+  // One detail's ready/painted must reveal only that instance, not a home or sibling host.
+  ctrls[3].handlers.plotReady({generation:1});ctrls[3].handlers.plotPainted({generation:1,w:338,h:96});await flush()
+  for(let i=0;i<36;i++){const t=owners[i].draw();assert.equal(nodes(t,'WebView')[0].props.opacity,i===3?1:0)}
+  for(let i=0;i<36;i++)if(i!==3){ctrls[i].handlers.plotReady({generation:1});ctrls[i].handlers.plotPainted({generation:1,w:i<3?145:145,h:i<3?(i===0?96:66):76})}
+  await flush()
+  for(let i=0;i<36;i++){
+   const t=owners[i].draw();assert.equal(nodes(t,'Canvas')[0].props.opacity,0);assert.equal(nodes(t,'WebView')[0].props.opacity,1)
+   assert.equal(nodes(t,'WebView')[0].props.controller,ctrls[i]);assert.equal(nodes(t,'WebView')[0].props.disabled,true)
+   assert.ok(ctrls[i].html.includes('\"background\":\"'+(i<3?'#1c1c1e':'#2c2c2e')+'\"'),'home/detail background payload')
+  }
+  assert.equal(timeouts.size,0,'no shown-kick timers even with sheet + 32 cores')
+  details.forEach(o=>o.close());for(let i=0;i<36;i++)assert.equal(ctrls[i].disposed,i<3?0:1)
+  main.forEach(o=>{assert.equal(nodes(o.draw(),'WebView')[0].props.opacity,1);o.close()});assert.equal(timeouts.size,0);mockColorScheme=oldTheme
+ })
+ await test('详情首次在native appear前已load/painted、关闭切tab再开：id/role/sheet关联生命周期，不改变宿主行为',async()=>{
+  const diag=load('cadence-diagnostics'),sheet=diag.createSheetTrace()
+  for(let attempt=0;attempt<2;attempt++){
+   const p={...props,role:'detail',sheetTrace:sheet,elevated:true};let t=render(plot.MountedCanvasPlot,p,true);await flush();const h=hosts.at(-1)
+   assert.equal(h.loads,1,'load does not wait for native attachment')
+   h.handlers.plotReady({generation:1});h.handlers.plotPainted({generation:1,w:145,h:76});await flush();t=render(plot.MountedCanvasPlot,p)
+   assert.equal(nodes(t,'WebView')[0].props.opacity,1)
+   let summary=diag.plotLifecycleSummary(),rows=summary.split('宿主最近里程碑')[1].split('CPU sheet')[0].split('\n').filter(x=>x.includes('role=detail')&&x.includes('sheet='+sheet+' ')),row=rows.at(-1)
+   const id=/id=(\d+)/.exec(row)[1];assert.ok(row.includes('load=')&&row.includes('painted=')&&!row.includes('web-appear='),'document paint is distinguishable from native appear')
+   const before=h.sent.length;t.props.onAppear();nodes(t,'WebView')[0].props.onAppear();await flush();assert.equal(h.sent.length,before,'diagnostics never trigger bridge/reload')
+   t.props.onDisappear();nodes(t,'WebView')[0].props.onDisappear();t.props.onAppear();nodes(t,'WebView')[0].props.onAppear();await flush()
+   unmount();summary=diag.plotLifecycleSummary();row=summary.split('\n').find(x=>x.startsWith('id='+id+' '));for(const e of ['host-appear=','host-disappear=','web-appear=','web-disappear=','dispose='])assert.ok(row.includes(e),e)
+   assert.equal(timeouts.size,0)
+  }
+  // Bounded records; different ids must never be merged merely because generation/event match.
+  for(let i=0;i<100;i++){const o=diag.createPlotTrace('detail',sheet);diag.plotLifecycle('web-appear',1,undefined,o);diag.sheetLifecycle('appear',sheet);diag.sheetLifecycle('disappear',sheet)}
+  const summary=diag.plotLifecycleSummary();assert.ok(summary.split('宿主最近里程碑')[1].split('CPU sheet')[0].split('\n').filter(x=>x.startsWith('id=')).length<=64)
+  assert.ok(summary.split('CPU sheet')[1].split('\n').length<=26);assert.ok(!summary.includes('10,20')&&!summary.includes('http'))
+ })
  await test('主页和每核共用绘制组件，不存在详情专用动画实现',()=>{
   const front=nodes(home.CpuCard({history:[10,20],running:true}),home.GridPlot)[0]
   const detail=home.SampledCpuPlot({samples:[10,20],running:true})
   assert.equal(detail.type,home.GridPlot);assert.equal(home.GridPlot(front.props).type,plot.InlineCanvasPlot);assert.equal(home.GridPlot(detail.props).type,plot.InlineCanvasPlot)
+  assert.equal(front.props.role,'home');assert.equal(detail.props.role,'detail')
+  const summary=home.CpuCard({history:[10,20],running:true,detail:true,sheetTrace:71});assert.equal(nodes(summary,home.GridPlot)[0].props.role,'detail');assert.equal(nodes(summary,home.GridPlot)[0].props.sheetTrace,71)
  })
  await test('WebView在页面确认已绘制前保持透明且网格垫底；painted后才显示，丢消息时定时兜底',async()=>{
   let node=render(plot.MountedCanvasPlot,props,true);await flush();let host=hosts.at(-1)
@@ -166,7 +218,7 @@ async function mount(){const node=render(plot.MountedCanvasPlot,props,true);awai
   for(const height of [66,76,96]){
    const slot=render(plot.InlineCanvasPlot,{...props,plotHeight:height},true);assert.equal(slot.props.frame.height,height)
    const out=render(plot.MountedCanvasPlot,{...props,plotHeight:height},true);assert.equal(out.type,'ZStack');assert.equal(out.props.frame.minHeight,height);assert.equal(out.props.frame.maxHeight,height);const web=nodes(out,'WebView')[0];assert.equal(web.props.frame.minHeight,height);assert.equal(web.props.frame.maxHeight,height)
-   assert.equal(out.props.overlay,undefined);assert.equal(out.props.onAppear,undefined)
+   assert.equal(out.props.overlay,undefined);assert.equal(typeof out.props.onAppear,'function');assert.equal(typeof nodes(out,'WebView')[0].props.onAppear,'function')
    await flush();const host=hosts.at(-1);assert.equal(host.handlers.plotDiagnostic,undefined);assert.ok(host.html.includes('diagnosticEnabled=false'));assert.ok(!host.html.includes('traceEnabled=true'));assert.ok(!text(out).includes('图诊断 '));unmount()
   }
  })

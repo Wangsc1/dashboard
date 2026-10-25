@@ -32,9 +32,25 @@ async function settle(){for(let i=0;i<100;i++)await Promise.resolve()}
    const rootOwner=owner(app.Root),page=owner(app.OverviewPage);rootOwner.render({});await settle()
    const props={active:device,version:0,selected:true,onSwitch(){}}
    let view=page.render(props);await settle();nodes(view,home.HomeDashboard)[0].props.onCpu();view=page.render(props);await flush();const frozen=JSON.parse(JSON.stringify(raw(view,home.HomeDashboard))),frozenHistory=JSON.parse(JSON.stringify(view.props.sheet.content.props.feed.value.histories)),stableContent=view.props.sheet.content
+   const firstDetail=owner(home.LiveCpuDetails);firstDetail.render(stableContent.props);await settle();const firstBody=firstDetail.render(stableContent.props)
+   assert.equal(firstBody.props.running,true);assert.equal(firstBody.props.trace,stableContent.props.trace)
+   // Native attach may lag document startup; callbacks are supplied by the test, not synthesized by production code.
+   const firstNative=home.CpuDetails(firstBody.props);firstNative.props.onAppear()
    for(let i=0;i<4;i++){now+=1000;for(const timer of [...intervals.values()])if(timer.ms===1000)timer.fn();await flush();view=page.render(props);assert.equal(JSON.stringify(raw(view,home.HomeDashboard)),JSON.stringify(frozen));assert.equal(view.props.sheet.content,stableContent,'sheet content identity stays fixed across actual polling updates')}
    assert.ok(JSON.stringify(view.props.sheet.content.props.feed.value.histories)!==JSON.stringify(frozenHistory));assert.equal([...intervals.values()].filter(x=>x.ms===1000).length,1)
+   firstNative.props.onDisappear();firstDetail.close()
    view.props.sheet.onChanged(false);view=page.render(props);assert.notEqual(JSON.stringify(raw(view,home.HomeDashboard)),JSON.stringify(frozen));assert.equal(view.props.sheet.isPresented,false)
+   // User path: first sheet -> close -> another tab -> home -> second sheet. Root sampling/owner stays single.
+   const content=stableContent,trace=content.props.trace
+   assert.ok(Number.isInteger(trace));assert.equal(content.props.feed.value.running,false)
+   page.render({...props,selected:false});await settle();view=page.render(props);await settle();view=page.render(props)
+   nodes(view,home.HomeDashboard)[0].props.onCpu();view=page.render(props);await settle();view=page.render(props)
+   assert.equal(view.props.sheet.content,content);assert.equal(view.props.sheet.isPresented,true);assert.equal(content.props.feed.value.running,true)
+   const detail=owner(home.LiveCpuDetails);let body=detail.render(content.props);await settle();body=detail.render(content.props)
+   assert.equal(body.props.trace,trace);assert.equal(body.props.histories,content.props.feed.value.histories)
+   const native=home.CpuDetails(body.props);native.props.onAppear();native.props.onDisappear();detail.close()
+   view.props.sheet.onChanged(false);page.render(props);await settle()
+   const diag=load('cadence-diagnostics').plotLifecycleSummary();for(const e of ['state-open','state-closed','content-mount','content-dispose','appear','disappear'])assert.ok(diag.includes(' '+e),e)
    page.close();rootOwner.close();await settle();assert.equal(intervals.size,0);assert.equal(sceneListeners.size,0)
  })
  console.log(count+' native CPU performance groups passed; no device FPS claim')

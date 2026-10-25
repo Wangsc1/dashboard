@@ -1,4 +1,4 @@
-import { beginCadenceDiagnostics, timingToken, timing, connectionLifecycle } from "./cadence-diagnostics"
+import { beginCadenceDiagnostics, timingToken, timing, connectionLifecycle, createSheetTrace, sheetLifecycle } from "./cadence-diagnostics"
 import { detailReads, useDetailPage, useRouterDetail, peekDetail, prefetchRouterDetails, detailWrite, observeDetailsPhase, selectDetailsSource } from "./router-details"
 import { HOME_BG, HomeDashboard, CpuDetails, LiveCpuDetails, CpuDetailFrame } from "./home-ui"
 import { newHistory, appendHistory, OverviewHistory } from "./openwrt-metrics"
@@ -318,7 +318,9 @@ function OverviewPage({ active, version, onSwitch, onClose, selected = true }: {
   const shownHistory=currentFrame?.histories??(sampleSource===source?histories:newHistory())
   // Keep sheet.content stable across sample updates; publish only the live frame.
   const detailFeed=useObservable<CpuDetailFrame>(()=>({overview:null,histories:newHistory(),running:false}))
-  const detailContent=useMemo(()=><LiveCpuDetails feed={detailFeed}/>,[detailFeed])
+  const [sheetTrace]=useState(()=>createSheetTrace())
+  useEffect(()=>{sheetLifecycle(cpuOpen?"state-open":"state-closed",sheetTrace)},[cpuOpen,sheetTrace])
+  const detailContent=useMemo(()=><LiveCpuDetails feed={detailFeed} trace={sheetTrace}/>,[detailFeed,sheetTrace])
   useEffect(()=>{detailFeed.setValue({overview:shownOv,histories:shownHistory,running:showCharts&&cpuOpen})},[shownOv,shownHistory,showCharts,cpuOpen,detailFeed])
   // Freeze the obscured home chart subtree while the sheet consumes live samples.
   const [homeFrame]=useState(()=>({source:"",overview:null as Overview|null,histories:newHistory()}))
