@@ -10,7 +10,7 @@ const {chromium,webkit}=require(process.env.PLAYWRIGHT_PATH||'/tmp/neko-editor-b
   try{
    const page=await browser.newPage({viewport:{width:329,height:96},deviceScaleFactor:3}),errors=[],requests=[]
    page.on('pageerror',e=>errors.push(e.message));page.on('request',r=>requests.push(r.url()));await page.route('**/*',r=>r.abort())
-   const bridge='<script>window.readyCalls=0;window.paintedCalls=0;window.diagnostics=[];window.webkit={messageHandlers:{plotDiagnostic:{postMessage(value){window.diagnostics.push(value);return Promise.resolve(true)}},plotReady:{postMessage(){window.readyCalls++;return Promise.resolve(true)}},plotPainted:{postMessage(){window.paintedCalls++;return Promise.resolve(true)}}}};</script>'
+   const bridge='<script>window.readyCalls=0;window.paintedCalls=0;window.diagnostics=[];window.webkit={messageHandlers:{plotDiagnostic:{postMessage(value){window.diagnostics.push(value);return Promise.resolve(true)}},plotReady:{postMessage(){window.readyCalls++;return Promise.resolve(true)}},plotPainted:{postMessage(){window.paintedCalls++;return Promise.resolve(true)}},plotAck:{postMessage(v){(window.acks=window.acks||[]).push(v.seq);return Promise.resolve(true)}}}};</script>'
    const doc=html.replace('<script>',bridge+'<script>')
    await page.setContent(doc);await page.waitForFunction(()=>window.plotCanvas&&window.readyCalls===1);await page.waitForFunction(()=>window.paintedCalls===1,null,{timeout:3000});assert.equal(await page.evaluate(()=>window.paintedCalls),1,'plotPainted is sent exactly once after a real frame')
    const send=(seq,samples,running=true)=>page.evaluate(m=>window.plotCanvas.update(m),{seq,samples,running,tone:'#3485eb',percent:true,area:false})
@@ -21,7 +21,8 @@ const {chromium,webkit}=require(process.env.PLAYWRIGHT_PATH||'/tmp/neko-editor-b
     await p2.waitForTimeout(300);assert.equal(await p2.evaluate(()=>[window.paintedCalls,window.plotCanvas.painted()].join()),'0,false','zero-size document never claims a paint')
     await p2.evaluate(()=>{document.querySelector('canvas').style.display='block'});await p2.waitForFunction(()=>window.paintedCalls===1,null,{timeout:3000})
     assert.equal(await p2.evaluate(()=>window.plotCanvas.painted()),true);await p2.close()}
-   await send(1,[10,20]);const base=await page.evaluate(()=>window.plotCanvas.inspect())
+   assert.equal(await send(1,[10,20]),true);assert.deepEqual(await page.evaluate(()=>window.acks),[1],'applied update acknowledges its seq');assert.equal(await page.evaluate(()=>window.plotCanvas.alive()),2)
+   const base=await page.evaluate(()=>window.plotCanvas.inspect())
    await send(2,[10,20,80]);await page.waitForTimeout(400)
    const mid=await page.evaluate(()=>window.plotCanvas.inspect());assert.ok(mid.stats.frames-base.stats.frames>8,'browser animation must not be limited to native 20fps');assert.ok(mid.shown.at(-1).y>20&&mid.shown.at(-1).y<80)
    // Arrival interrupts an unfinished frame: no immediate snap to the old target.

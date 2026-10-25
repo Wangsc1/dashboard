@@ -23,15 +23,23 @@ export function drawPlotGrid(ctx:any,size:{width:number;height:number}){
 // Card fill = secondarySystemBackground. In a presented sheet iOS uses the elevated
 // palette (dark #2c2c2e, light unchanged), so detail plots must match that fill.
 export function plotBackground(theme:string|undefined,elevated=false){return theme==='dark'?(elevated?'#2c2c2e':'#1c1c1e'):'#f2f2f7'}
+// Script-message params and evaluateJavaScript results are consumed leniently so the chart does not depend
+// on one runtime's wrapping (raw value, JSON string, or single-element array) or on one Promise timing.
+function messageBody(v:any):any{
+  if(typeof v==='string'){try{v=JSON.parse(v)}catch{return v}}
+  if(Array.isArray(v))v=v[0]
+  return v&&typeof v==='object'&&'body' in v&&!('generation' in v)?v.body:v
+}
+const truthy=(v:any)=>v===true||v===1||v==='true'||v==='1'||v==='2'||v===2
 export function MountedCanvasPlot({samples,tone,plotHeight=96,area=false,running=true,percent=false,elevated=false}:CanvasPlotProps) {
   const [error,setError]=useState('')
   // A WebView is white until its document exists; stay transparent so the card colour shows through until the canvas has drawn.
   const [shown,setShown]=useState(false)
   const theme=useColorScheme()
-  const [host]=useState(()=>({controller:new WebViewController({ephemeral:true}),alive:true,shown:false,ready:false,loadRetries:0,bridgeFailures:0,busy:false,registered:false,loaded:false,foreground:true,generation:0,bridgeEpoch:0,seq:0,sampleAt:0,lastSamples:null as number[]|null,token:undefined as TimingToken|undefined,latest:null as PlotMessage|null,pending:null as PlotMessage|null,flush:()=>{}}))
+  const [host]=useState(()=>({controller:new WebViewController({ephemeral:true}),alive:true,shown:false,ready:false,loadRetries:0,bridgeFailures:0,markReady:(()=>{}) as ()=>void,ackSeq:0,probeSeq:0,resumeUnverified:false,clearProbe:(()=>{}) as ()=>void,busy:false,registered:false,loaded:false,foreground:true,generation:0,bridgeEpoch:0,seq:0,sampleAt:0,lastSamples:null as number[]|null,token:undefined as TimingToken|undefined,latest:null as PlotMessage|null,pending:null as PlotMessage|null,flush:()=>{}}))
   useEffect(()=>{
     host.alive=true;plotLifecycle('mount',host.generation)
-    let timeout:ReturnType<typeof setTimeout>|undefined,reveal:ReturnType<typeof setTimeout>|undefined,probe:ReturnType<typeof setTimeout>|undefined
+    let timeout:ReturnType<typeof setTimeout>|undefined,reveal:ReturnType<typeof setTimeout>|undefined,probe:ReturnType<typeof setTimeout>|undefined,probeReady:ReturnType<typeof setTimeout>|undefined
     const fail=()=>{if(host.alive){setError('曲线绘制层加载失败');host.ready=false}}
     const flush=()=>{
       if(!host.alive||!host.foreground||!host.ready||host.busy||!host.pending)return
@@ -45,9 +53,19 @@ export function MountedCanvasPlot({samples,tone,plotHeight=96,area=false,running
         if(host.shown){plotLifecycle('ignored-bridge-error',host.generation);if(++host.bridgeFailures>=3){plotLifecycle('reload-bridge-failures',host.generation);reload()}return}
         plotLifecycle('fail-bridge',host.generation);fail()}
       // A resume probe must not itself wait forever on a suspended document.
-      if(payload.resume)probe=setTimeout(()=>{if(valid()){plotLifecycle('reload-probe-timeout',host.generation);reload()}},8000)
-      // 'missing' = no chart runtime in the document; false = this update is stale (document is healthy).
-      void host.controller.evaluateJavaScript(`return window.plotCanvas ? window.plotCanvas.update(${JSON.stringify(payload)}) : 'missing'`).then(ok=>{if(ok===true){host.bridgeFailures=0;if(valid()&&payload.resume)setError('')}else if(ok===false){if(valid())plotLifecycle('ignored-stale-update',host.generation)}else rejected()},rejected).finally(()=>{finished();if(valid()){if(probe!==undefined)clearTimeout(probe);probe=undefined;host.busy=false;flush()}})
+      host.clearProbe=()=>{if(probe!==undefined)clearTimeout(probe);probe=undefined}
+      if(payload.resume){host.probeSeq=payload.seq;probe=setTimeout(()=>{if(valid()){plotLifecycle('reload-probe-timeout',host.generation);host.probeSeq=0;reload()}},8000)}
+      let keepProbe=false
+      // Result contract is read leniently. 'missing' = no chart runtime; false = stale update (document healthy);
+      // true/1/'true' = applied; anything else is unverified: the page's plotAck message (or the probe timeout) decides.
+      void host.controller.evaluateJavaScript(`return window.plotCanvas ? window.plotCanvas.update(${JSON.stringify(payload)}) : 'missing'`).then(r=>{
+        if(!valid())return
+        if(r==='missing')rejected()
+        else if(r===false||r==='false'||r===0){plotLifecycle('ignored-stale-update',host.generation)}
+        else if(truthy(r)){host.bridgeFailures=0;if(payload.resume)setError('')}
+        else if(payload.resume){keepProbe=host.ackSeq<payload.seq}
+        else plotLifecycle('ignored-bridge-error',host.generation)
+      },rejected).finally(()=>{finished();if(valid()){if(!keepProbe){host.clearProbe();if(payload.resume)host.probeSeq=0};host.busy=false;flush()}})
     }
     host.flush=flush
     // The WebView is already part of the first render. Register then load once;
@@ -65,6 +83,16 @@ export function MountedCanvasPlot({samples,tone,plotHeight=96,area=false,running
       // once the document is ready (or merely not yet failed) a false/rejected result must not hide it.
       // Not-yet-ready failures are left to the bounded load timeout above (one retry, then error).
       const loadResult=(bad:boolean)=>{if(valid()&&bad)plotLifecycle('ignored-load-result',generation)}
+      // If script messages are unavailable or delayed, the document itself can still prove it is running:
+      // poll its own state (not a mask; no visibility change unless the page confirms a real paint).
+      const aliveCheck=(left:number)=>{if(!valid()||host.ready)return;probeReady=setTimeout(()=>{
+        if(!valid()||host.ready)return
+        void host.controller.evaluateJavaScript('return window.plotCanvas ? window.plotCanvas.alive() : 0').then(r=>{
+          if(!valid()||host.ready)return
+          if(r===1||r===2||r==='1'||r==='2'){plotLifecycle('ready-by-probe',generation);host.markReady()}else if(left>0)aliveCheck(left-1)
+        },()=>{if(left>0)aliveCheck(left-1)})
+      },1000)}
+      aliveCheck(6)
       void host.controller.loadHTML(plotCanvasHTML(initial??undefined,false,generation)).then(ok=>loadResult(ok===false),()=>loadResult(true))
     }
     // Reload only this chart document if a resume probe finds no working runtime.
@@ -72,7 +100,7 @@ export function MountedCanvasPlot({samples,tone,plotHeight=96,area=false,running
     const reload=()=>{
       host.bridgeEpoch++;host.busy=false;host.ready=false;host.loaded=false
       if(probe!==undefined)clearTimeout(probe);probe=undefined
-      if(timeout!==undefined)clearTimeout(timeout);if(reveal!==undefined)clearTimeout(reveal)
+      if(timeout!==undefined)clearTimeout(timeout);if(probeReady!==undefined)clearTimeout(probeReady);if(reveal!==undefined)clearTimeout(reveal)
       host.shown=false;setShown(false);setError('');host.pending=host.latest;start()
     }
     const changed=(phase:'active'|'inactive'|'background')=>{
@@ -90,12 +118,11 @@ export function MountedCanvasPlot({samples,tone,plotHeight=96,area=false,running
       flush()
     }
     AppEvents.scenePhase.addListener(changed)
-    const accepts=(value:any)=>host.alive&&(value?.generation===host.generation||(value==null&&host.generation===1))
-    void host.controller.addScriptMessageHandler('plotReady',(value:any)=>{
-      if(!accepts(value))return false
-      if(host.ready)return true
+    const accepts=(raw:any)=>{const value=messageBody(raw);return host.alive&&(value?.generation===host.generation||(value==null&&host.generation===1))}
+    const markReady=()=>{
+      if(host.ready)return
       plotLifecycle('ready',host.generation)
-      if(timeout!==undefined)clearTimeout(timeout)
+      if(timeout!==undefined)clearTimeout(timeout);if(probeReady!==undefined)clearTimeout(probeReady);probeReady=undefined
       host.ready=true;flush()
       // Normally the page reports plotPainted. If that message is lost, reveal only after
       // the document confirms a real non-zero-size paint; a view that has not been laid out
@@ -105,19 +132,30 @@ export function MountedCanvasPlot({samples,tone,plotHeight=96,area=false,running
         if(!host.alive||host.generation!==generation||host.shown)return
         void host.controller.evaluateJavaScript('return window.plotCanvas?.painted?.() === true').then(ok=>{
           if(!host.alive||host.generation!==generation||host.shown)return
-          plotLifecycle('reveal-check',generation);if(ok===true){plotLifecycle('shown',generation);host.shown=true;setShown(true)}else if(left>0)check(left-1)
+          plotLifecycle('reveal-check',generation);if(truthy(ok)){plotLifecycle('shown',generation);host.shown=true;setShown(true)}else if(left>0)check(left-1)
         },()=>{if(host.alive&&host.generation===generation&&left>0)check(left-1)})
       },700)}
-      check(6);return true
+      check(6)
+    }
+    host.markReady=markReady
+    void host.controller.addScriptMessageHandler('plotReady',(value:any)=>{
+      if(!accepts(value))return false
+      markReady();return true
     }).then(()=>host.controller.addScriptMessageHandler('plotPainted',(value:any)=>{
       if(!accepts(value))return false
       if(reveal!==undefined)clearTimeout(reveal)
-      plotLifecycle('painted',host.generation,typeof value?.w==='number'&&typeof value?.h==='number'?{w:value.w,h:value.h}:undefined)
+      plotLifecycle('painted',host.generation,(()=>{const b=messageBody(value);return typeof b?.w==='number'&&typeof b?.h==='number'?{w:b.w,h:b.h}:undefined})())
       if(!host.shown)plotLifecycle('shown',host.generation)
       host.shown=true;setShown(true);return true
-    })).then(()=>host.controller.addScriptMessageHandler('plotLag',(value:any)=>{if(host.alive&&value?.epoch===host.token?.epoch&&typeof value?.ms==='number')timing(host.token,'canvas-gap',value.ms);return true})).then(()=>{host.registered=true;start()},fail)
+    })).then(()=>host.controller.addScriptMessageHandler('plotAck',(value:any)=>{
+      const b=messageBody(value);if(!host.alive||b?.generation!==host.generation||typeof b?.seq!=='number')return false
+      if(b.seq>=host.ackSeq)host.ackSeq=b.seq
+      host.bridgeFailures=0
+      if(host.probeSeq!==0&&b.seq>=host.probeSeq){host.probeSeq=0;host.clearProbe();if(host.resumeUnverified){host.resumeUnverified=false;setError('')}}
+      return true
+    }).catch(()=>{})).then(()=>host.controller.addScriptMessageHandler('plotLag',(value:any)=>{if(host.alive&&value?.epoch===host.token?.epoch&&typeof value?.ms==='number')timing(host.token,'canvas-gap',value.ms);return true})).then(()=>{host.registered=true;start()},fail)
     start()
-    return()=>{plotLifecycle('dispose',host.generation);AppEvents.scenePhase.removeListener(changed);host.alive=false;host.bridgeEpoch++;host.ready=false;host.pending=null;if(probe!==undefined)clearTimeout(probe);if(timeout!==undefined)clearTimeout(timeout);if(reveal!==undefined)clearTimeout(reveal);host.controller.dispose()}
+    return()=>{plotLifecycle('dispose',host.generation);AppEvents.scenePhase.removeListener(changed);host.alive=false;host.bridgeEpoch++;host.ready=false;host.pending=null;if(probe!==undefined)clearTimeout(probe);if(timeout!==undefined)clearTimeout(timeout);if(probeReady!==undefined)clearTimeout(probeReady);if(reveal!==undefined)clearTimeout(reveal);host.controller.dispose()}
   },[host])
   useEffect(()=>{
     if(host.lastSamples!==samples){host.lastSamples=samples;host.sampleAt=Date.now()}

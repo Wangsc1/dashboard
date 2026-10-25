@@ -78,6 +78,34 @@ async function mount(){const node=render(plot.MountedCanvasPlot,props,true);awai
   const t=diag.cadenceSummary();for(const k of ['mount gen=0','load gen=1','ready gen=1','painted gen=1','329x96','shown gen=1','累计挂载=','当前存活='])assert.ok(t.includes(k),k)
   assert.ok(!t.includes('11,22,33')&&!t.includes('http'));unmount();assert.ok(diag.cadenceSummary().includes('dispose gen=1'))
  })
+ await test('3.3兼容：脚本消息参数被包装(JSON串/数组/body)仍按代次接受；evaluate返回1/"true"/undefined不触发失败或撤下',async()=>{
+  const shownNow=()=>{const o=render(plot.MountedCanvasPlot,props);return nodes(o,'WebView')[0]?.props.opacity===1&&!text(o).includes('失败')}
+  for(const wrap of [v=>v,v=>JSON.stringify(v),v=>[v],v=>({body:v})]){
+   timeouts.clear();render(plot.MountedCanvasPlot,props,true);await flush();const host=hosts.at(-1)
+   assert.equal(host.handlers.plotReady(wrap({generation:99})),false,'wrong generation still rejected')
+   assert.equal(host.handlers.plotReady(wrap({generation:1})),true);assert.equal(host.handlers.plotPainted(wrap({generation:1,w:300,h:96})),true);await flush()
+   for(const r of [1,'true',undefined]){render(plot.MountedCanvasPlot,{...props,samples:[Math.random()*50,2]});await flush();host.resolve(r);await flush()}
+   assert.equal(host.loads,1);assert.ok(shownNow());unmount()
+  }
+ })
+ await test('3.3兼容：消息通道缺失时由文档自检确认就绪(不依赖plotReady)，且仍只在确认painted后揭示',async()=>{
+  timeouts.clear();let node=render(plot.MountedCanvasPlot,props,true);await flush();const host=hosts.at(-1)
+  assert.equal(nodes(node,'WebView')[0].props.opacity,0)
+  ;[...timeouts.values()].at(-1)();await flush();assert.ok(host.sent.at(-1).includes('plotCanvas.alive'));host.resolve(1);await flush()
+  assert.ok(timeouts.size>=1,'ready-by-probe schedules the painted confirmation check')
+  node=render(plot.MountedCanvasPlot,props);assert.equal(nodes(node,'WebView')[0].props.opacity,0,'ready-by-probe alone does not reveal')
+  assert.ok(load('cadence-diagnostics').cadenceSummary().includes('ready-by-probe'));unmount()
+ })
+ await test('3.3兼容：恢复探针返回值不明时由plotAck确认，不重载；无ack才在超时后重载',async()=>{
+  for(const acked of [true,false]){
+   timeouts.clear();await mount();const host=hosts.at(-1);host.handlers.plotReady({generation:1});host.handlers.plotPainted({generation:1});await flush()
+   emitScene('inactive');emitScene('active');await flush();const seq=Number(/"seq":(\d+)/.exec(host.sent.at(-1))[1]);host.resolve(undefined);await flush()
+   assert.equal(host.loads,1)
+   if(acked){host.handlers.plotAck({generation:1,seq});await flush();assert.equal(timeouts.size,0,'ack clears the probe');assert.equal(host.loads,1)}
+   else{const probe=[...timeouts.values()].at(-1);probe();await flush();assert.equal(host.loads,2,'no ack: bounded reload')}
+   unmount()
+  }
+ })
  await test('完全不发送原生出现事件：首屏仍创建并加载且只加载一次，首帧携带样本',async()=>{
   const slot=render(plot.InlineCanvasPlot,props,true)
   assert.equal(nodes(slot,plot.MountedCanvasPlot).length,1)
@@ -164,7 +192,7 @@ async function mount(){const node=render(plot.MountedCanvasPlot,props,true);awai
  await test('恢复探针本身悬挂时只重载一次当前图表文档并清理超时owner',async()=>{
   await mount();const host=hosts.at(-1);host.handlers.plotReady();host.handlers.plotPainted();await flush()
   emitScene('background');now+=86400000;emitScene('active');await flush();const staleResolve=host.resolve
-  assert.equal(timeouts.size,1);[...timeouts.values()][0]();await flush();assert.equal(host.loads,2);assert.equal(timeouts.size,1,'only the new document load deadline remains')
+  assert.equal(timeouts.size,1);[...timeouts.values()][0]();await flush();assert.equal(host.loads,2);assert.equal(timeouts.size,2,'only the new document load deadline and its ready-poll remain')
   staleResolve(false);await flush();assert.equal(host.loads,2)
   host.handlers.plotReady({generation:2});const timersAfterReady=timeouts.size;host.handlers.plotReady({generation:2});assert.equal(timeouts.size,timersAfterReady,'ready is idempotent');host.handlers.plotPainted({generation:2});await flush();assert.equal(timeouts.size,0)
   unmount();assert.equal(sceneListeners.size,0);assert.equal(timeouts.size,0)

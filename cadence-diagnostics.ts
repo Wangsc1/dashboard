@@ -49,7 +49,7 @@ export function connectionLifecycleSummary(){
     ...connectionEvents.map(e=>`-${Math.max(0,now-e.at)}ms ${e.event} ×${e.n}`)].join('\n')
 }
 // Chart document lifecycle: closed vocabulary plus small integers only (no source, samples, URLs or errors).
-type PlotEvent='mount'|'dispose'|'load'|'ready'|'painted'|'shown'|'reveal-check'|'reload-scene-unready'|'reload-probe-failed'|'reload-probe-timeout'|'reload-load-timeout'|'reload-bridge-failures'|'fail-load-timeout'|'fail-bridge'|'ignored-load-result'|'ignored-bridge-error'|'ignored-stale-update'|'scene-active'|'scene-inactive'|'scene-background'
+type PlotEvent='mount'|'dispose'|'load'|'ready'|'ready-by-probe'|'painted'|'shown'|'reveal-check'|'reload-scene-unready'|'reload-probe-failed'|'reload-probe-timeout'|'reload-load-timeout'|'reload-bridge-failures'|'fail-load-timeout'|'fail-bridge'|'ignored-load-result'|'ignored-bridge-error'|'ignored-stale-update'|'scene-active'|'scene-inactive'|'scene-background'
 const plotEvents:Array<{event:PlotEvent;at:number;gen:number;n:number;w?:number;h?:number}>=[]
 let plotMounts=0,plotLive=0
 export function plotLifecycle(event:PlotEvent,gen=0,size?:{w:number;h:number}){

@@ -9,6 +9,7 @@ const stats={frames:0,updates:0,liveLoops:0};
 const diagnosticEnabled=${diagnostics},startedAt=performance.now();let attempts=0,grids=0,lastError='';
 // Native reveals the WebView only after a real frame has been drawn and composited, so its white backing never flashes.
 let paintedQueued=false,paintedOnce=false;const hasPaintedBridge=!!(window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.plotPainted);
+function ack(n){try{const h=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.plotAck;if(h)Promise.resolve(h.postMessage({generation:${generation},seq:n})).catch(()=>{})}catch(_){}}
 function diagnosticSnapshot(){const r=canvas.getBoundingClientRect();return {ms:Math.round(performance.now()-startedAt),width:Math.round(r.width),height:Math.round(r.height),viewportWidth:innerWidth,viewportHeight:innerHeight,bitmapWidth:canvas.width,bitmapHeight:canvas.height,context:!!ctx,hidden:document.hidden,attempts,grids,frames:stats.frames,updates:stats.updates,samples:history.length,seq,active,error:lastError}}
 function reportDiagnostic(){if(!diagnosticEnabled)return;try{Promise.resolve(window.webkit.messageHandlers.plotDiagnostic.postMessage(diagnosticSnapshot())).catch(()=>{})}catch(_){}}
 if(diagnosticEnabled){window.addEventListener('error',e=>{lastError=String(e.message||'script error').slice(0,160);reportDiagnostic()});window.addEventListener('unhandledrejection',e=>{lastError=String(e.reason?.message||'promise error').slice(0,160);reportDiagnostic()})}
@@ -36,15 +37,15 @@ window.plotCanvas={
  const values=(message.samples||[]).filter(Number.isFinite).slice(-60),target=canonical(values),oldHistory=history,wasActive=active;
  stop();active=!!message.running;scaleTo=message.percent?100:Math.max(1024,...values);
  // Resuming catches up immediately; only subsequent live samples animate.
- if(message.resume||!active||!wasActive||!shown.length||values.length<2||values.length<oldHistory.length){history=values;shown=target;scale=scaleTo;paint();return true}
+ if(message.resume||!active||!wasActive||!shown.length||values.length<2||values.length<oldHistory.length){history=values;shown=target;scale=scaleTo;paint();ack(message.seq);return true}
  // Use the last actually painted geometry on interrupted samples. Never jump to an unfinished target.
  let origin=shown;
  if(origin.length>60&&origin[0].x<0)origin=origin.slice(1);
  let goal=target;
  if(oldHistory.length===60&&values.length===60)goal=[{x:-1/59,y:oldHistory[0]},...target];
  const n=Math.max(origin.length,goal.length);from=Array.from({length:n},(_,i)=>origin[Math.min(i,origin.length-1)]);to=Array.from({length:n},(_,i)=>goal[Math.min(i,goal.length-1)]);
- history=values;scaleFrom=scale;start=performance.now();lastFrameAt=start;duration=Math.max(1000,Math.min(2500,observed));raf=requestAnimationFrame(frame);stats.liveLoops=1;return true;
- },pause(){active=false;stop()},painted(){return paintedOnce},inspect(){return {seq,stats:{...stats},shown:shown.map(p=>({...p})),history:history.slice(),scale}}};
+ history=values;scaleFrom=scale;start=performance.now();lastFrameAt=start;duration=Math.max(1000,Math.min(2500,observed));raf=requestAnimationFrame(frame);stats.liveLoops=1;ack(message.seq);return true;
+ },pause(){active=false;stop()},painted(){return paintedOnce},alive(){return paintedOnce?2:1},inspect(){return {seq,stats:{...stats},shown:shown.map(p=>({...p})),history:history.slice(),scale}}};
  // Lifecycle restoration is not a new sample: repaint the retained target, do
  // not append history or restart a catch-up animation. Size recovery also paints
  // when running=false (including a zero-sized view becoming measurable again).
@@ -55,7 +56,7 @@ window.plotCanvas={
  canvas.addEventListener('contextrestored',restore);
  // The first frame uses inline samples; it does not wait for a second native bridge round trip.
  const initial=${JSON.stringify(initial??null).replace(/</g,'\\u003c')};if(initial)window.plotCanvas.update(initial);
- Promise.resolve(window.webkit.messageHandlers.plotReady.postMessage({generation:${generation}})).catch(()=>{});
+ try{Promise.resolve(window.webkit.messageHandlers.plotReady.postMessage({generation:${generation}})).catch(()=>{})}catch(_){}
  if(diagnosticEnabled){reportDiagnostic();let ticks=0;const diagnosticTimer=setInterval(()=>{reportDiagnostic();if(++ticks>=60)clearInterval(diagnosticTimer)},1000);window.addEventListener('pagehide',()=>clearInterval(diagnosticTimer))}
 })();
 </script></body></html>`
