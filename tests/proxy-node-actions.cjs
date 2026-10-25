@@ -62,7 +62,7 @@ const group=(title='test')=>({name:title,type:'Selector',all:[name,'other'],now:
    t.props.onAppear();t=page.render();await settle();t=page.render()
    const fresh=owner(pages.GroupSection);try{
     const v=fresh.render({...nodes(t,pages.GroupSection)[0].props,expanded:true});const wait=deferred();responder=()=>({wait:wait.promise,body:{delay:432}})
-    const pending=action(v,name,'speedometer');await settle();t=page.render();assert.ok(text(t).includes('测速中'));wait.resolve();await pending;t=page.render();assert.ok(text(t).includes('432 ms'))
+    const pending=action(v,name,'speedometer');await settle();t=page.render();assert.ok(!text(t).includes('测速中'));assert.ok(text(fresh.render({...nodes(t,pages.GroupSection)[0].props,expanded:true})).includes('测速中'));wait.resolve();await pending;t=page.render();assert.ok(!text(t).includes('432 ms'));assert.ok(text(fresh.render({...nodes(t,pages.GroupSection)[0].props,expanded:true})).includes('432ms'))
    }finally{fresh.close()}
   }finally{card.close();page.close();api.loadGroups=loadGroups;api.loadProviders=loadProviders}
  })
