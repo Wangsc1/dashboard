@@ -81,13 +81,13 @@ function instance(fn){const state={hooks:[],cleanups:new Map()};return {async dr
   publish(frame(8,true,0));const empty=await tree();assert.equal(empty.plots.length,1);assert.equal(empty.plots[0].path,baseline.plots[0].path)
   for(const own of instances.values())own.close();assert.equal(listeners.size,0);assert.ok(controllers.every(c=>c.disposed));assert.equal(intervals.size,0);assert.equal(timers.size,0)
  })
- await test('临时隔离版：CPU详情只用普通VStack容器，保留内容/导航/关闭/原生生命周期，等待真机后恢复滚动',async()=>{
+ await test('CPU详情恢复滚动容器，保留内容/导航/关闭/原生生命周期',async()=>{
   const trace=load('cadence-diagnostics').createSheetTrace(),histories={cpu:{cpu:[12],cpu0:[23]},up:[],down:[]},w={cpus:[{id:'cpu',usage:12},{id:'cpu0',usage:23}]}
   const tree=home.CpuDetails({overview:{wrt:w},histories,running:true,trace})
-  assert.equal(tree.type,'NavigationStack');assert.equal(nodes(tree,'ScrollView').length,0)
+  assert.equal(tree.type,'NavigationStack');assert.equal(nodes(tree,'ScrollView').length,1)
   assert.deepEqual(Array.from(tree.props.presentationDetents),['large']);assert.equal(tree.props.presentationDragIndicator,'visible');assert.equal(tree.props.presentationContentInteraction,'scrolls')
   assert.equal(typeof tree.props.onAppear,'function');assert.equal(typeof tree.props.onDisappear,'function')
-  const container=tree.props.children[0];assert.equal(container.type,'VStack');assert.equal(container.props.navigationTitle,'CPU');assert.equal(container.props.navigationBarTitleDisplayMode,'inline');assert.equal(container.props.background,home.HOME_BG)
+  const container=tree.props.children[0];assert.equal(container.type,'ScrollView');assert.equal(container.props.navigationTitle,'CPU');assert.equal(container.props.navigationBarTitleDisplayMode,'inline');assert.equal(container.props.background,home.HOME_BG)
   const close=container.props.toolbar.topBarLeading;assert.equal(close.type,'Button');assert.equal(close.props.systemImage,'xmark');assert.equal(close.props.accessibilityLabel,'关闭CPU详情');assert.equal(typeof close.props.action,'function')
   const content=container.props.children[0];assert.equal(content.type,'VStack');assert.equal(content.props.spacing,16);assert.equal(JSON.stringify(content.props.padding),JSON.stringify({horizontal:16,top:12,bottom:24}))
   const summary=nodes(tree,home.DetailCpuSummary)[0],row=nodes(tree,home.CoreRow)[0];assert.equal(summary.props.w,w);assert.equal(summary.props.history,histories.cpu.cpu);assert.equal(summary.props.running,true);assert.equal(summary.props.sheetTrace,trace);assert.equal(summary.props.key,'summary')
