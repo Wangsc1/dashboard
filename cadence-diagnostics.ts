@@ -55,20 +55,31 @@ export interface PlotTrace {id:number;role:PlotRole;sheet?:number}
 let nextPlotId=0,nextSheetId=0
 export function createPlotTrace(role:PlotRole,sheet?:number):PlotTrace{return {id:++nextPlotId,role,sheet}}
 export function createSheetTrace(){return ++nextSheetId}
-type SheetEvent='state-open'|'state-closed'|'content-mount'|'content-dispose'|'appear'|'disappear'|'running'|'paused'
+type SheetEvent='content-create'|'state-open'|'state-closed'|'content-mount'|'content-dispose'|'appear'|'disappear'|'running'|'paused'
 const sheetEvents:Array<{event:SheetEvent;id:number;at:number;n:number}>=[]
+// First timestamps/counts survive timeline eviction and later presentations of retained content.
+const sheetFirst=new Map<number,{times:Partial<Record<SheetEvent,number>>;appearances:number}>()
 export function sheetLifecycle(event:SheetEvent,id=0){
+  let first=sheetFirst.get(id)
+  if(!first){first={times:{},appearances:0};sheetFirst.set(id,first);if(sheetFirst.size>16)sheetFirst.delete(sheetFirst.keys().next().value!)}
+  if(first.times[event]===undefined)first.times[event]=Date.now()
+  if(event==='appear')first.appearances++
   const last=sheetEvents[sheetEvents.length-1];if(last?.event===event&&last.id===id){last.n++;last.at=Date.now();return}
   sheetEvents.push({event,id,at:Date.now(),n:1});if(sheetEvents.length>24)sheetEvents.shift()
 }
 const plotEvents:Array<{event:PlotEvent;at:number;gen:number;n:number;w?:number;h?:number;owner?:PlotTrace}>=[]
 // Retain per-host milestones even if many cores push startup events out of the 40-entry timeline.
-const plotHosts=new Map<number,{owner:PlotTrace;gen:number;times:Partial<Record<PlotEvent,number>>;w?:number;h?:number}>()
+const plotHosts=new Map<number,{owner:PlotTrace;gen:number;times:Partial<Record<PlotEvent,number>>;firstAppear:Partial<Record<'host'|'web',number>>;appearanceCount:{host:number;web:number};w?:number;h?:number}>()
 let plotMounts=0,plotLive=0
 export function plotLifecycle(event:PlotEvent,gen=0,size?:{w:number;h:number},owner?:PlotTrace){
   if(owner){
     let h=plotHosts.get(owner.id)
-    if(!h){h={owner,gen,times:{}};plotHosts.set(owner.id,h);if(plotHosts.size>64)plotHosts.delete(plotHosts.keys().next().value!)}
+    if(!h){h={owner,gen,times:{},firstAppear:{},appearanceCount:{host:0,web:0}};plotHosts.set(owner.id,h);if(plotHosts.size>64)plotHosts.delete(plotHosts.keys().next().value!)}
+    if(event==='host-appear'||event==='web-appear'){
+      const layer=event==='host-appear'?'host':'web'
+      if(h.firstAppear[layer]===undefined)h.firstAppear[layer]=Date.now()
+      h.appearanceCount[layer]++
+    }
     if(h.gen!==gen&&event==='load'){delete h.times.ready;delete h.times.painted;delete h.times.shown;delete h.w;delete h.h}
     h.gen=gen
     if(['mount','dispose','load','ready','painted','shown','host-appear','host-disappear','web-appear','web-disappear'].includes(event))h.times[event]=Date.now()
@@ -85,9 +96,11 @@ export function plotLifecycleSummary(){
     `累计挂载=${plotMounts} 当前存活=${plotLive}`,
     'host/web appear/disappear为原生视图回调，不代表屏幕像素合成；尺寸仍仅由网页报告。',
     ...plotEvents.map(e=>`-${Math.max(0,now-e.at)}ms ${e.event} gen=${e.gen} ×${e.n}${e.owner?` id=${e.owner.id} role=${e.owner.role}${e.owner.sheet!==undefined?` sheet=${e.owner.sheet}`:''}`:''}${e.w!==undefined?` ${e.w}x${e.h}`:''}`),
-    '宿主最近里程碑（最多64个，时间为距查看毫秒；同事件保留最近一次）',
-    ...[...plotHosts.values()].map(h=>`id=${h.owner.id} role=${h.owner.role}${h.owner.sheet!==undefined?` sheet=${h.owner.sheet}`:''} gen=${h.gen}${h.w!==undefined?` ${h.w}x${h.h}`:''} ${Object.entries(h.times).map(([k,at])=>`${k}=-${Math.max(0,now-at!)}ms`).join(' ')}`),
-    'CPU sheet生命周期（最多24项；state为JS请求，appear/disappear为原生回调）',
+    '宿主最近里程碑（最多64个；firstAppear不覆盖，appearanceCount为回调次数；其余同事件保留最近一次）',
+    ...[...plotHosts.values()].map(h=>`id=${h.owner.id} role=${h.owner.role}${h.owner.sheet!==undefined?` sheet=${h.owner.sheet}`:''} gen=${h.gen} ${(['host','web'] as const).map(k=>`${k}.firstAppear=${h.firstAppear[k]===undefined?'none':`-${Math.max(0,now-h.firstAppear[k]!)}ms`} ${k}.appearanceCount=${h.appearanceCount[k]}`).join(' ')}${h.w!==undefined?` ${h.w}x${h.h}`:''} ${Object.entries(h.times).map(([k,at])=>`${k}=-${Math.max(0,now-at!)}ms`).join(' ')}`),
+    'sheet首次信号（最多16个；content-create=首次JS构建，content-mount/state=effect执行；appear不等于像素已合成）',
+    ...[...sheetFirst.entries()].map(([id,s])=>`sheet=${id} appearanceCount=${s.appearances} ${Object.entries(s.times).map(([k,at])=>`first.${k}=-${Math.max(0,now-at!)}ms`).join(' ')}`),
+    'CPU sheet生命周期（最多24项；state为JS effect，content-mount为订阅effect；appear/disappear为原生回调）',
     ...sheetEvents.map(e=>`-${Math.max(0,now-e.at)}ms sheet=${e.id} ${e.event} ×${e.n}`)].join('\n')
 }
 export function cadenceSummary(){

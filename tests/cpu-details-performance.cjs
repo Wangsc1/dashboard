@@ -2,6 +2,8 @@
 const fs=require('node:fs'),vm=require('node:vm')
 const harness=fs.readFileSync(__dirname+'/run.cjs','utf8').split(';(async () => {')[0]
 const checks=String.raw`
+// Each setter belongs to its component; retained detail subscriptions must not update whichever owner rendered last.
+scripting.useState=function(v){const slots=hooks,i=hookIndex++;if(!(i in slots))slots[i]=typeof v==='function'?v():v;return [slots[i],v=>{slots[i]=typeof v==='function'?v(slots[i]):v}]}
 function owner(fn){const state={hooks:[],cleanups:new Map()};return {render(props){const savedEffects=effects,savedCleanups=cleanups,savedIndex=hookIndex;hooks=state.hooks;cleanups=state.cleanups;effects=[];hookIndex=0;const tree=fn(props),queued=effects;effects=savedEffects;cleanups=savedCleanups;hookIndex=savedIndex;queued.forEach(f=>{const previous=cleanups;cleanups=state.cleanups;f();cleanups=previous});return tree},close(){for(const f of state.cleanups.values())f();state.cleanups.clear()}}}
 async function settle(){for(let i=0;i<100;i++)await Promise.resolve()}
 ;(async()=>{
@@ -38,7 +40,7 @@ async function settle(){for(let i=0;i<100;i++)await Promise.resolve()}
    const firstNative=home.CpuDetails(firstBody.props);firstNative.props.onAppear()
    for(let i=0;i<4;i++){now+=1000;for(const timer of [...intervals.values()])if(timer.ms===1000)timer.fn();await flush();view=page.render(props);assert.equal(JSON.stringify(raw(view,home.HomeDashboard)),JSON.stringify(frozen));assert.equal(view.props.sheet.content,stableContent,'sheet content identity stays fixed across actual polling updates')}
    assert.ok(JSON.stringify(view.props.sheet.content.props.feed.value.histories)!==JSON.stringify(frozenHistory));assert.equal([...intervals.values()].filter(x=>x.ms===1000).length,1)
-   firstNative.props.onDisappear();firstDetail.close()
+   firstNative.props.onDisappear()
    view.props.sheet.onChanged(false);view=page.render(props);assert.notEqual(JSON.stringify(raw(view,home.HomeDashboard)),JSON.stringify(frozen));assert.equal(view.props.sheet.isPresented,false)
    // User path: first sheet -> close -> another tab -> home -> second sheet. Root sampling/owner stays single.
    const content=stableContent,trace=content.props.trace
@@ -46,9 +48,10 @@ async function settle(){for(let i=0;i<100;i++)await Promise.resolve()}
    page.render({...props,selected:false});await settle();view=page.render(props);await settle();view=page.render(props)
    nodes(view,home.HomeDashboard)[0].props.onCpu();view=page.render(props);await settle();view=page.render(props)
    assert.equal(view.props.sheet.content,content);assert.equal(view.props.sheet.isPresented,true);assert.equal(content.props.feed.value.running,true)
-   const detail=owner(home.LiveCpuDetails);let body=detail.render(content.props);await settle();body=detail.render(content.props)
+   const detail=firstDetail;let body=detail.render(content.props);await settle();body=detail.render(content.props)
    assert.equal(body.props.trace,trace);assert.equal(body.props.histories,content.props.feed.value.histories)
-   const native=home.CpuDetails(body.props);native.props.onAppear();native.props.onDisappear();detail.close()
+   const native=home.CpuDetails(body.props);native.props.onAppear();native.props.onDisappear()
+   const retained=load('cadence-diagnostics').plotLifecycleSummary();assert.equal(retained.split('\n').filter(l=>l.includes('sheet='+trace+' content-mount')).length,1,'same retained instance across both sheets');assert.ok(!retained.includes('sheet='+trace+' content-dispose'),'not disposed on first dismissal');detail.close()
    view.props.sheet.onChanged(false);page.render(props);await settle()
    const diag=load('cadence-diagnostics').plotLifecycleSummary();for(const e of ['state-open','state-closed','content-mount','content-dispose','appear','disappear'])assert.ok(diag.includes(' '+e),e)
    page.close();rootOwner.close();await settle();assert.equal(intervals.size,0);assert.equal(sceneListeners.size,0)

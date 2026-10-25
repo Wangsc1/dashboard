@@ -110,7 +110,7 @@ export function HomeDashboard({overview,histories,running,onCpu}:{overview:Overv
 export interface CpuDetailFrame { overview:Overview|null; histories:OverviewHistory; running:boolean }
 export interface CpuDetailFeed { value:CpuDetailFrame; subscribe(fn:(value:CpuDetailFrame,old:CpuDetailFrame)=>void):void; unsubscribe(fn:(value:CpuDetailFrame,old:CpuDetailFrame)=>void):void }
 export function LiveCpuDetails({feed,trace}:{feed:CpuDetailFeed;trace?:number}) {
-  const [frame,setFrame]=useState(()=>feed.value)
+  const [frame,setFrame]=useState(()=>{sheetLifecycle("content-create",trace);return feed.value})
   useEffect(()=>{
     sheetLifecycle("content-mount",trace)
     const changed=(value:CpuDetailFrame)=>setFrame(value)

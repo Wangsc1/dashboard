@@ -83,6 +83,18 @@ async function mount(){const node=render(plot.MountedCanvasPlot,props,true);awai
   const summary=diag.plotLifecycleSummary();assert.ok(summary.split('宿主最近里程碑')[1].split('CPU sheet')[0].split('\n').filter(x=>x.startsWith('id=')).length<=64)
   assert.ok(summary.split('CPU sheet')[1].split('\n').length<=26);assert.ok(!summary.includes('10,20')&&!summary.includes('http'))
  })
+ await test('首次appear与计数不被第二次appear/40项timeline淘汰覆盖；文档先painted也不伪造native出现',async()=>{
+  const diag=load('cadence-diagnostics'),owner=diag.createPlotTrace('detail',diag.createSheetTrace())
+  diag.plotLifecycle('painted',1,{w:145,h:76},owner)
+  const line=()=>diag.plotLifecycleSummary().split('\n').find(l=>l.startsWith('id='+owner.id+' '))
+  assert.ok(line().includes('web.firstAppear=none web.appearanceCount=0'))
+  diag.plotLifecycle('host-appear',1,undefined,owner);diag.plotLifecycle('web-appear',1,undefined,owner)
+  now+=1000;diag.plotLifecycle('host-disappear',1,undefined,owner);diag.plotLifecycle('web-disappear',1,undefined,owner)
+  now+=1000;diag.plotLifecycle('host-appear',1,undefined,owner);diag.plotLifecycle('web-appear',1,undefined,owner)
+  for(let i=0;i<50;i++)diag.plotLifecycle('painted',1,{w:145,h:76},owner)
+  const row=line();for(const k of ['host.firstAppear=-2000ms','web.firstAppear=-2000ms','host.appearanceCount=2','web.appearanceCount=2','web-appear=-0ms'])assert.ok(row.includes(k),k)
+  const timeline=diag.plotLifecycleSummary().split('宿主最近里程碑')[0];assert.ok(!timeline.includes(' web-appear gen='),'timeline evicted appear but snapshot still remembers first')
+ })
  await test('主页和每核共用绘制组件，不存在详情专用动画实现',()=>{
   const front=nodes(home.CpuCard({history:[10,20],running:true}),home.GridPlot)[0]
   const detail=home.SampledCpuPlot({samples:[10,20],running:true})
