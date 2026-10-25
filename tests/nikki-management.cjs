@@ -193,6 +193,29 @@ const sub={name:'Edited',url:'https://new-subscription.invalid/file',userAgent:'
     await assert.rejects(()=>api.saveNikkiFile(n,'file:local.yaml',original,'x'.repeat(25000)),/部分内容/);assert.equal(seen,2);assert.equal(remoteFiles.get('/etc/nikki/profiles/local.yaml').length,8192)
     fixture();let release;downloadWait=new Promise(r=>release=r);const pending=api.saveNikkiFile(n,'file:local.yaml',original,'different');await settle();await assert.rejects(()=>api.saveNikkiFile(n,'file:local.yaml',original,'overlap'),/正在执行/);release();downloadWait=null;await pending
   })
+  await test('two subscriptions: only clicked id updates/spins; completion rereads management without updating the other',async()=>{
+    for(const mode of ['success','failure','source-change']){
+      fixture();state.s2={...state.s1,'.index':5,name:'Second subscription',url:'https://second.invalid/sub'}
+      const before=clone(state),props={c:n,kind:'subscription'};let tree=render(pages.ManagementPage,props,true);await settle();tree=render(pages.ManagementPage,props)
+      const buttons=t=>nodes(t,'Button').filter(b=>b.props.accessibilityLabel==='更新订阅');assert.equal(buttons(tree).length,2)
+      let release;const gate=new Promise(r=>release=r);fail=(obj,m)=>obj==='luci.nikki'&&m==='update_subscription'?{wait:gate,body:{result:[0,{success:mode!=='failure'}]}}:null
+      calls.length=0;const confirmsBefore=confirms.length,alertsBefore=alerts.length,pending=buttons(tree)[0].props.action();await settle();tree=render(pages.ManagementPage,props)
+      assert.equal(nodes(buttons(tree)[0],'ProgressView').length,1);assert.equal(nodes(buttons(tree)[1],'ProgressView').length,0);assert.ok(buttons(tree).every(b=>b.props.disabled))
+      await buttons(tree)[1].props.action();const requests=()=>calls.filter(c=>c.url.endsWith('/ubus')).map(c=>JSON.parse(c.init.body).params)
+      assert.deepEqual(requests().filter(p=>p[1]==='luci.nikki').map(p=>[p[2],p[3]]),[['update_subscription',{section_id:'s1'}]])
+      assert.deepEqual(requests().filter(p=>p[1]==='uci'&&p[2]==='get').map(p=>p[3]),[{config:'nikki',section:'s1'}])
+      const count=calls.length,active=mode==='source-change'?{...props,c:{...n,url:'http://other.invalid'}}:props
+      if(mode==='source-change')tree=render(pages.ManagementPage,active)
+      release();await pending;tree=render(pages.ManagementPage,active);await settle();tree=render(pages.ManagementPage,active)
+      assert.equal(nodes(tree,'ProgressView').length,0);assert.equal(confirms.length,confirmsBefore);assert.equal(alerts.length,alertsBefore);assert.deepEqual(state,before)
+      assert.equal(requests().filter(p=>p[1]==='luci.nikki').length,1)
+      const after=requests().slice(requests().length-(calls.length-count))
+      if(mode==='success'){
+        assert.deepEqual(after.map(p=>[p[1],p[2],p[3]]),[['uci','get',{config:'nikki'}],['file','list',{path:'/etc/nikki/profiles'}],['file','list',{path:'/etc/nikki/subscriptions'}]])
+        assert.ok(buttons(tree).every(b=>!b.props.disabled))
+      }else{assert.equal(calls.length,count);if(mode==='failure'){assert.ok(text(tree).includes('订阅更新失败'));assert.ok(buttons(tree).every(b=>!b.props.disabled))}else assert.ok(text(tree).includes('来源已改变'))}
+    }
+  })
   await test('subscription update verifies section type; configuration selection commits with upstream reload event, no extra rc reload',async()=>{
     fixture();await api.updateNikkiSubscription(n,'s1');assert.ok(writes().some(c=>JSON.parse(c.init.body).params[2]==='update_subscription'));calls.length=0;await assert.rejects(()=>api.updateNikkiSubscription(n,'r1'),/类型不符/);assert.equal(writes().length,0)
     const d=await api.loadNikkiManagement(n);await api.selectNikkiProfile(n,d,'subscription:s1');assert.equal(state.config.profile,'subscription:s1');assert.equal(autoReloads,1);assert.ok(!writes().some(c=>JSON.parse(c.init.body).params[1]==='rc'))

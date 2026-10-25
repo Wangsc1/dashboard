@@ -613,7 +613,7 @@ export function prefetchNikkiManagement(c:Controller|null){
 }
 const managementPrefetch=new Set<string>()
 export function NikkiManagementPage({c,kind}:{c:Controller;kind:"profile"|"subscription"|"rule"}) {
-  const work=useWork(c),[data,setData]=useState<NikkiManagement|null>(()=>c.kind==="openwrt"&&c.plugin==="nikki"?managementCache.get(source(c))??null:null),[fresh,setFresh]=useState(false),[error,setError]=useState(""),[tick,setTick]=useState(0),[visible,setVisible]=useState(true),[edit,setEdit]=useState<EditTarget|null>(null),[navigation]=useState({entry:0})
+  const work=useWork(c),[data,setData]=useState<NikkiManagement|null>(()=>c.kind==="openwrt"&&c.plugin==="nikki"?managementCache.get(source(c))??null:null),[fresh,setFresh]=useState(false),[error,setError]=useState(""),[tick,setTick]=useState(0),[visible,setVisible]=useState(true),[edit,setEdit]=useState<EditTarget|null>(null),[navigation]=useState({entry:0}),[updatingSubscription,setUpdatingSubscription]=useState<string|null>(null)
   const supported=c.kind==="openwrt"&&c.plugin==="nikki",title={profile:"配置文件",subscription:"订阅管理",rule:"附加规则"}[kind]
   const refresh=()=>setTick(t=>t+1)
   // After a write the cached copy is stale: drop it and block actions until the re-read lands.
@@ -626,7 +626,7 @@ export function NikkiManagementPage({c,kind}:{c:Controller;kind:"profile"|"subsc
   const entryKey=edit?source(c)+":"+edit.entry:"closed"
   const content=edit ? edit.kind==="subscription"?<NikkiSubscriptionEditor key={entryKey} entryKey={entryKey} c={c} base={edit.base} value={edit.value} done={saved=>done(saved,edit.entry)}/>:edit.kind==="rule"?<NikkiRuleEditor key={entryKey} c={c} base={edit.base} value={edit.value} done={saved=>done(saved,edit.entry)}/>:edit.kind==="sort"?<NikkiRuleSort key={entryKey} c={c} base={edit.base} done={saved=>done(saved,edit.entry)}/>:<NikkiFileEditor key={entryKey} entryKey={entryKey} c={c} base={edit.base} file={edit.value} done={saved=>{if(saved)refresh()}}/> : <Text/>
   async function removeSubscription(s:NikkiSubscription) {if(!fresh)return;await work.run(()=>work.simpleConfirm("删除订阅",`确认要删除订阅「${s.name}」吗？`,"确认删除",async()=>{await deleteNikkiSubscription(work.owner,data!,s.id);if(work.current()){refreshAfterWrite();work.setNotice("订阅设置已删除；系统可能已自动重载")}}))}
-  async function update(s:NikkiSubscription) {if(!fresh)return;await work.run(async()=>{await updateNikkiSubscription(work.owner,s.id,data!);if(work.current())refreshAfterWrite()})}
+  async function update(s:NikkiSubscription) {if(!fresh)return;await work.run(async()=>{setUpdatingSubscription(s.id);try{await updateNikkiSubscription(work.owner,s.id,data!);if(work.current())refreshAfterWrite()}finally{setUpdatingSubscription(null)}})}
   async function enable(f:NikkiFile) {if(!fresh||data?.profile===f.key)return;await work.run(()=>work.commitConfirm(`启用「${f.name}」？将提交为 Nikki 选用配置，由系统触发重载；配置选择成功不代表内核已成功加载。`,async()=>{
     await selectNikkiProfile(work.owner,data!,f.key)
     if(work.current())refreshAfterWrite()
@@ -641,7 +641,7 @@ export function NikkiManagementPage({c,kind}:{c:Controller;kind:"profile"|"subsc
         {data&&kind==="rule"?<>
           {data.rules.length===0?<VStack spacing={14} frame={{maxWidth:"infinity",minHeight:360}}><Image systemName="text.badge.plus" font={56} foregroundStyle="secondaryLabel"/><Text font="title2" fontWeight="bold">没有规则</Text><Note>点击右上角菜单添加规则</Note></VStack>:<><Note>{`总开关：${data.appendRules?"启用":"禁用"} · 提交可能自动重载 Nikki 服务`}</Note>{data.rules.map(r=><Panel key={r.id}><HStack><Text fontWeight="semibold">{r.type}</Text><Spacer/><Badge>{r.enabled?"启用":"禁用"}</Badge></HStack><Text>{r.matcher||"所有请求"}</Text><Note>{`${r.node}${r.noResolve?" · no-resolve":""}`}</Note><HStack><Button title="编辑" disabled={work.busy} action={()=>openEdit({kind:"rule",value:r})}/><Spacer/><Button title="删除规则" systemImage="trash" role="destructive" disabled={work.busy} action={()=>work.run(()=>work.commitConfirm(`删除规则「${r.type} · ${r.matcher}」？`,async()=>{await deleteNikkiRule(work.owner,data,r.id);if(work.current())refresh()}))}/></HStack></Panel>)}</>}
         </>:null}
-        {data&&kind==="subscription"?<>{data.subscriptions.length===0?<Note>暂无订阅，请点击右上角 + 添加</Note>:data.subscriptions.map(s=>subscriptionCard({s,busy:work.busy,edit:()=>openEdit({kind:"subscription",value:s}),update:()=>update(s),remove:()=>removeSubscription(s)}))}</>:null}
+        {data&&kind==="subscription"?<>{data.subscriptions.length===0?<Note>暂无订阅，请点击右上角 + 添加</Note>:data.subscriptions.map(s=>subscriptionCard({s,busy:work.busy,updating:updatingSubscription===s.id,edit:()=>openEdit({kind:"subscription",value:s}),update:()=>update(s),remove:()=>removeSubscription(s)}))}</>:null}
         {data&&kind==="profile"?<>
           {data.filesError?<Note error>部分目录无读取权限，文件列表或元信息可能不完整。</Note>:null}
           {data.files.length===0?<Note>没有配置文件，请先在订阅管理添加并更新订阅，或通过原有设备文件管理上传本地配置。</Note>:<>{data.files.map(f=><Panel key={f.key}><Button buttonStyle="plain" disabled={work.busy} action={()=>enable(f)}><VStack alignment="leading" spacing={10} frame={{maxWidth:"infinity",alignment:"topLeading"}}><HStack><Badge>{f.origin==="subscription"?"订阅":"本地"}</Badge><Spacer/>{data.profile===f.key?<Image systemName="checkmark.circle.fill" foregroundStyle="systemGreen"/>:null}</HStack><Text font={24} fontWeight="bold" lineLimit={2}>{f.name}</Text>{data.profile!==f.key?<Note>点击启用</Note>:null}<Note>{`更新于 ${f.mtime&&f.mtime>0?new Date(f.mtime*1000).toLocaleString():"未提供"}`}</Note><Note>{f.size===null?"文件大小未提供（可能尚未下载）":fmtBytes(f.size)}</Note></VStack></Button><Button accessibilityLabel="编辑" buttonStyle="plain" disabled={work.busy||f.size===null} action={()=>openEdit({kind:"file",value:f})}>{nikkiEditLabel()}</Button></Panel>)}</>}
@@ -668,7 +668,7 @@ export function nikkiRelativeUpdate(value:string,now=Date.now()):string {
   return Math.floor(seconds/86400)+"天前"
 }
 function nikkiEditLabel() {return <Image systemName="pencil" font={14} foregroundStyle="label" frame={{width:34,height:34}} background={<Circle fill="tertiarySystemFill"/>}/>}
-function subscriptionCard({s,busy,edit,update,remove}:{s:NikkiSubscription;busy:boolean;edit:()=>void;update:()=>void;remove:()=>void}) {
+function subscriptionCard({s,busy,updating,edit,update,remove}:{s:NikkiSubscription;busy:boolean;updating:boolean;edit:()=>void;update:()=>void;remove:()=>void}) {
   return <Panel key={s.id}>
     <HStack spacing={5} padding={{horizontal:8,vertical:5}} background={<RoundedRectangle cornerRadius={7} fill="tertiarySystemBackground"/>}><Image systemName="link" font={12}/><Text font={12}>订阅</Text></HStack>
     <Text font={24} fontWeight="bold" lineLimit={2}>{s.name}</Text>
@@ -677,7 +677,7 @@ function subscriptionCard({s,busy,edit,update,remove}:{s:NikkiSubscription;busy:
     <HStack spacing={10}>
       <Button accessibilityLabel="编辑" buttonStyle="plain" disabled={busy} action={edit}>{nikkiEditLabel()}</Button>
       <Spacer/>
-      <Button accessibilityLabel="更新订阅" buttonStyle="plain" disabled={busy} action={update}>{providerRefreshLabel(busy,"label")}</Button>
+      <Button accessibilityLabel="更新订阅" buttonStyle="plain" disabled={busy} action={update}>{providerRefreshLabel(updating,"label")}</Button>
       <Button accessibilityLabel="删除订阅" buttonStyle="plain" disabled={busy} action={remove}><Image systemName="trash" font={14} foregroundStyle="label" frame={{width:34,height:34}} background={<Circle fill="tertiarySystemFill"/>}/></Button>
     </HStack>
   </Panel>
