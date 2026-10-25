@@ -19,7 +19,7 @@ const prov={providers:{A:{type:'Rule',vehicleType:'HTTP',ruleCount:1,proxies:[]}
   const titles=nodes(trailing(c.props.toolbar),'Button').map(b=>b.props.title);assert.deepEqual(titles,['客户端标签','清理已断开连接','打断全部连接'])
   assert.equal(nodes(c,'TextField').filter(t=>t.props.title==='搜索连接...').length,0)
   const icon=nodes(c,'Button').find(b=>nodes(b,'Image').some(i=>i.props.systemName==='magnifyingglass'));assert.ok(icon,'inline search icon exists');icon.props.action()
-  c=page.render(props);assert.equal(nodes(c,'TextField').filter(t=>t.props.title==='搜索连接...').length,1,'icon opens the search field');page.close()
+  c=page.render(props);assert.equal(nodes(c,'TextField').filter(t=>t.props.title==='搜索连接...').length,1,'icon opens the search field');const searchField=nodes(c,'TextField').find(t=>t.props.title==='搜索连接...');assert.equal(searchField.props.frame.height,44);assert.equal(searchField.props.font,16);page.close()
   for(const [name,p] of [['ProxiesPage',{active:{...base,id:'sh-p'},version:0,selected:true}],['MorePage',{active:{...base,id:'sh-m'},selected:true,onChanged(){}}]]){
    if(!pages[name])continue;const t=owner(pages[name]).render(p);assert.equal(t.props.refreshable,undefined,name+' has no refreshable')}
  })
