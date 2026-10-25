@@ -28,7 +28,7 @@ export function MountedCanvasPlot({samples,tone,plotHeight=96,area=false,running
   // A WebView is white until its document exists; stay transparent so the card colour shows through until the canvas has drawn.
   const [shown,setShown]=useState(false)
   const theme=useColorScheme()
-  const [host]=useState(()=>({controller:new WebViewController({ephemeral:true}),alive:true,ready:false,busy:false,registered:false,loaded:false,foreground:true,generation:0,bridgeEpoch:0,seq:0,sampleAt:0,lastSamples:null as number[]|null,token:undefined as TimingToken|undefined,latest:null as PlotMessage|null,pending:null as PlotMessage|null,flush:()=>{}}))
+  const [host]=useState(()=>({controller:new WebViewController({ephemeral:true}),alive:true,shown:false,ready:false,busy:false,registered:false,loaded:false,foreground:true,generation:0,bridgeEpoch:0,seq:0,sampleAt:0,lastSamples:null as number[]|null,token:undefined as TimingToken|undefined,latest:null as PlotMessage|null,pending:null as PlotMessage|null,flush:()=>{}}))
   useEffect(()=>{
     host.alive=true
     let timeout:ReturnType<typeof setTimeout>|undefined,reveal:ReturnType<typeof setTimeout>|undefined,probe:ReturnType<typeof setTimeout>|undefined
@@ -60,7 +60,7 @@ export function MountedCanvasPlot({samples,tone,plotHeight=96,area=false,running
       host.bridgeEpoch++;host.busy=false;host.ready=false;host.loaded=false
       if(probe!==undefined)clearTimeout(probe);probe=undefined
       if(timeout!==undefined)clearTimeout(timeout);if(reveal!==undefined)clearTimeout(reveal)
-      setShown(false);setError('');host.pending=host.latest;start()
+      host.shown=false;setShown(false);setError('');host.pending=host.latest;start()
     }
     const changed=(phase:'active'|'inactive'|'background')=>{
       if(phase==='active'&&host.foreground)return
@@ -80,13 +80,22 @@ export function MountedCanvasPlot({samples,tone,plotHeight=96,area=false,running
       if(host.ready)return true
       if(timeout!==undefined)clearTimeout(timeout)
       host.ready=true;flush()
-      // Normally the page reports plotPainted; the timer only guards against a lost message.
+      // Normally the page reports plotPainted. If that message is lost, reveal only after
+      // the document confirms a real non-zero-size paint; a view that has not been laid out
+      // yet (first tab entry) keeps the native grid and paints when its size arrives.
       const generation=host.generation
-      reveal=setTimeout(()=>{if(host.alive&&host.generation===generation)setShown(true)},700);return true
+      const check=(left:number)=>{reveal=setTimeout(()=>{
+        if(!host.alive||host.generation!==generation||host.shown)return
+        void host.controller.evaluateJavaScript('return window.plotCanvas?.painted?.() === true').then(ok=>{
+          if(!host.alive||host.generation!==generation||host.shown)return
+          if(ok===true){host.shown=true;setShown(true)}else if(left>0)check(left-1)
+        },()=>{if(host.alive&&host.generation===generation&&left>0)check(left-1)})
+      },700)}
+      check(6);return true
     }).then(()=>host.controller.addScriptMessageHandler('plotPainted',(value:any)=>{
       if(!accepts(value))return false
       if(reveal!==undefined)clearTimeout(reveal)
-      setShown(true);return true
+      host.shown=true;setShown(true);return true
     })).then(()=>host.controller.addScriptMessageHandler('plotLag',(value:any)=>{if(host.alive&&value?.epoch===host.token?.epoch&&typeof value?.ms==='number')timing(host.token,'canvas-gap',value.ms);return true})).then(()=>{host.registered=true;start()},fail)
     start()
     return()=>{AppEvents.scenePhase.removeListener(changed);host.alive=false;host.bridgeEpoch++;host.ready=false;host.pending=null;if(probe!==undefined)clearTimeout(probe);if(timeout!==undefined)clearTimeout(timeout);if(reveal!==undefined)clearTimeout(reveal);host.controller.dispose()}

@@ -34,7 +34,23 @@ async function mount(){const node=render(plot.MountedCanvasPlot,props,true);awai
   assert.equal(nodes(node,'WebView')[0].props.opacity,1);assert.equal(nodes(node,'Canvas').length,0)
   node=render(plot.MountedCanvasPlot,props,true);await flush();host=hosts.at(-1);host.handlers.plotReady();await flush()
   for(const fn of [...timeouts.values()])fn();await flush();node=render(plot.MountedCanvasPlot,props)
-  assert.equal(nodes(node,'WebView')[0].props.opacity,1,'fallback timer reveals when painted message is lost')
+  assert.equal(nodes(node,'WebView')[0].props.opacity,0,'timer alone never reveals; the document must confirm a painted canvas')
+  assert.ok(host.sent.at(-1).includes('plotCanvas?.painted'));host.resolve(true);await flush();node=render(plot.MountedCanvasPlot,props)
+  assert.equal(nodes(node,'WebView')[0].props.opacity,1,'lost painted message is recovered only after confirmed paint')
+ })
+ await test('首次挂载/非启动页首次切入：ready后尺寸未稳定(未绘制)不揭示空WebView，保留原生网格，尺寸到达后painted才揭示',async()=>{
+  for(const label of ['启动页首次打开','非启动页首次切入']){
+   timeouts.clear();let node=render(plot.MountedCanvasPlot,props,true);await flush();const host=hosts.at(-1)
+   host.handlers.plotReady({generation:1});await flush()
+   for(let round=0;round<8;round++){
+    const fns=[...timeouts.values()];timeouts.clear();fns.forEach(fn=>fn());await flush()
+    if(host.resolve){const r=host.resolve;host.resolve=null;r(false);await flush()}
+    node=render(plot.MountedCanvasPlot,props)
+    assert.equal(nodes(node,'WebView')[0].props.opacity,0,label+': zero-size document stays hidden');assert.equal(nodes(node,'Canvas').length,1,label+': native grid remains')
+   }
+   host.handlers.plotPainted({generation:1});await flush();node=render(plot.MountedCanvasPlot,props)
+   assert.equal(nodes(node,'WebView')[0].props.opacity,1);assert.equal(nodes(node,'Canvas').length,0);unmount()
+  }
  })
  await test('完全不发送原生出现事件：首屏仍创建并加载且只加载一次，首帧携带样本',async()=>{
   const slot=render(plot.InlineCanvasPlot,props,true)

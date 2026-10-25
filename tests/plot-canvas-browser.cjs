@@ -14,6 +14,13 @@ const {chromium,webkit}=require(process.env.PLAYWRIGHT_PATH||'/tmp/neko-editor-b
    const doc=html.replace('<script>',bridge+'<script>')
    await page.setContent(doc);await page.waitForFunction(()=>window.plotCanvas&&window.readyCalls===1);await page.waitForFunction(()=>window.paintedCalls===1,null,{timeout:3000});assert.equal(await page.evaluate(()=>window.paintedCalls),1,'plotPainted is sent exactly once after a real frame')
    const send=(seq,samples,running=true)=>page.evaluate(m=>window.plotCanvas.update(m),{seq,samples,running,tone:'#3485eb',percent:true,area:false})
+   // First tab entry: the document can load before the view has a size. It must not report painted,
+   // and must paint grid+report exactly once when size arrives (ResizeObserver), without a new sample.
+   {const p2=await browser.newPage({viewport:{width:329,height:96},deviceScaleFactor:3});await p2.route('**/*',r=>r.abort())
+    await p2.setContent(doc.replace('<canvas>','<canvas style="display:none">'));await p2.waitForFunction(()=>window.plotCanvas&&window.readyCalls===1)
+    await p2.waitForTimeout(300);assert.equal(await p2.evaluate(()=>[window.paintedCalls,window.plotCanvas.painted()].join()),'0,false','zero-size document never claims a paint')
+    await p2.evaluate(()=>{document.querySelector('canvas').style.display='block'});await p2.waitForFunction(()=>window.paintedCalls===1,null,{timeout:3000})
+    assert.equal(await p2.evaluate(()=>window.plotCanvas.painted()),true);await p2.close()}
    await send(1,[10,20]);const base=await page.evaluate(()=>window.plotCanvas.inspect())
    await send(2,[10,20,80]);await page.waitForTimeout(400)
    const mid=await page.evaluate(()=>window.plotCanvas.inspect());assert.ok(mid.stats.frames-base.stats.frames>8,'browser animation must not be limited to native 20fps');assert.ok(mid.shown.at(-1).y>20&&mid.shown.at(-1).y<80)

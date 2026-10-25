@@ -8,7 +8,7 @@ let config={tone:'#3485eb',area:false,percent:true},history=[],from=[],to=[],sho
 const stats={frames:0,updates:0,liveLoops:0};
 const diagnosticEnabled=${diagnostics},startedAt=performance.now();let attempts=0,grids=0,lastError='';
 // Native reveals the WebView only after a real frame has been drawn and composited, so its white backing never flashes.
-let paintedQueued=false;const hasPaintedBridge=!!(window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.plotPainted);
+let paintedQueued=false,paintedOnce=false;const hasPaintedBridge=!!(window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.plotPainted);
 function diagnosticSnapshot(){const r=canvas.getBoundingClientRect();return {ms:Math.round(performance.now()-startedAt),width:Math.round(r.width),height:Math.round(r.height),viewportWidth:innerWidth,viewportHeight:innerHeight,bitmapWidth:canvas.width,bitmapHeight:canvas.height,context:!!ctx,hidden:document.hidden,attempts,grids,frames:stats.frames,updates:stats.updates,samples:history.length,seq,active,error:lastError}}
 function reportDiagnostic(){if(!diagnosticEnabled)return;try{Promise.resolve(window.webkit.messageHandlers.plotDiagnostic.postMessage(diagnosticSnapshot())).catch(()=>{})}catch(_){}}
 if(diagnosticEnabled){window.addEventListener('error',e=>{lastError=String(e.message||'script error').slice(0,160);reportDiagnostic()});window.addEventListener('unhandledrejection',e=>{lastError=String(e.reason?.message||'promise error').slice(0,160);reportDiagnostic()})}
@@ -20,7 +20,7 @@ function paint(){
  if(!w||!h)return;
  const cw=Math.round(w*d),ch=Math.round(h*d);if(canvas.width!==cw||canvas.height!==ch){canvas.width=cw;canvas.height=ch}
  ctx.setTransform(d,0,0,d,0,0);ctx.clearRect(0,0,w,h);ctx.strokeStyle='rgba(146,149,163,.22)';ctx.lineWidth=.6;ctx.setLineDash([3,3]);ctx.beginPath();
- for(let i=0;i<8;i++){ctx.moveTo(i*w/7,0);ctx.lineTo(i*w/7,h)}for(let i=0;i<5;i++){ctx.moveTo(0,i*h/4);ctx.lineTo(w,i*h/4)}ctx.stroke();ctx.setLineDash([]);grids++;
+ for(let i=0;i<8;i++){ctx.moveTo(i*w/7,0);ctx.lineTo(i*w/7,h)}for(let i=0;i<5;i++){ctx.moveTo(0,i*h/4);ctx.lineTo(w,i*h/4)}ctx.stroke();ctx.setLineDash([]);grids++;paintedOnce=true;
  if(!paintedQueued&&hasPaintedBridge){paintedQueued=true;setTimeout(()=>{try{Promise.resolve(window.webkit.messageHandlers.plotPainted.postMessage({generation:${generation}})).catch(()=>{})}catch(_){}},90)}
  if(history.length<2||shown.length<2)return;
  const y=v=>h-2-v/scale*(h-4);ctx.beginPath();ctx.moveTo(shown[0].x*w,y(shown[0].y));
@@ -44,7 +44,7 @@ window.plotCanvas={
  if(oldHistory.length===60&&values.length===60)goal=[{x:-1/59,y:oldHistory[0]},...target];
  const n=Math.max(origin.length,goal.length);from=Array.from({length:n},(_,i)=>origin[Math.min(i,origin.length-1)]);to=Array.from({length:n},(_,i)=>goal[Math.min(i,goal.length-1)]);
  history=values;scaleFrom=scale;start=performance.now();lastFrameAt=start;duration=Math.max(1000,Math.min(2500,observed));raf=requestAnimationFrame(frame);stats.liveLoops=1;return true;
- },pause(){active=false;stop()},inspect(){return {seq,stats:{...stats},shown:shown.map(p=>({...p})),history:history.slice(),scale}}};
+ },pause(){active=false;stop()},painted(){return paintedOnce},inspect(){return {seq,stats:{...stats},shown:shown.map(p=>({...p})),history:history.slice(),scale}}};
  // Lifecycle restoration is not a new sample: repaint the retained target, do
  // not append history or restart a catch-up animation. Size recovery also paints
  // when running=false (including a zero-sized view becoming measurable again).
