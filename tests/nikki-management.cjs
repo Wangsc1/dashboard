@@ -97,6 +97,61 @@ const sub={name:'Edited',url:'https://new-subscription.invalid/file',userAgent:'
     fail=(obj,m)=>obj==='uci'&&m==='changes'?{body:{result:[6]}}:null
     await assert.rejects(()=>api.saveNikkiSubscription(n,base,'s1',sub),/没有权限访问 uci.changes/);assert.equal(writes().length,0)
   })
+  await test('commit accepts status-only [0]; lost acknowledgement verifies clean persisted target, never replays writes',async()=>{
+    for(const lost of [false,true]){
+      fixture();const base=await api.loadNikkiManagement(n);let commits=0
+      fail=(obj,m)=>{if(obj!=='uci'||m!=='commit')return null;commits++;state=staged;staged=null;dirty=[];autoReloads++;return lost?{throw:'lost reply after commit'}:{body:{result:[0]}}}
+      await api.saveNikkiSubscription(n,base,null,sub);assert.equal(commits,1);assert.equal(autoReloads,1);assert.equal(Object.values(state).filter(v=>v.name===sub.name).length,1)
+      const methods=writes().map(c=>JSON.parse(c.init.body).params[2]);assert.deepEqual(methods,['add','commit']);assert.ok(!calls.some(c=>c.url.endsWith('/ubus')&&JSON.parse(c.init.body).params[1]==='rc'))
+    }
+  })
+  await test('lost commit with matching staged values or conflicting persisted state remains unknown, no revert/retry',async()=>{
+    for(const mode of ['staged','conflict','unreadable']){
+      fixture();const base=await api.loadNikkiManagement(n);let committed=false
+      fail=(obj,m)=>{
+        if(obj==='uci'&&m==='commit'){committed=true;if(mode==='conflict'){state=staged;state.s1.name='external';staged=null;dirty=[]}return {throw:'lost reply'}}
+        if(committed&&mode==='unreadable'&&obj==='uci')return {throw:'offline'}
+        return null
+      }
+      await assert.rejects(()=>api.saveNikkiSubscription(n,base,'s1',sub),/提交结果未确认/)
+      assert.deepEqual(writes().map(c=>JSON.parse(c.init.body).params[2]),['set','commit']);if(mode==='staged'){assert.equal(staged.s1.name,sub.name);assert.ok(dirty.length)}
+    }
+  })
+  await test('verification pins the write session, retries reads only and rejects newly staged data/expired session',async()=>{
+    for(const mode of ['recover','new-staging','expired']){
+      fixture();const base=await api.loadNikkiManagement(n);let committed=false,reads=0,writeSid='',logins=0
+      fail=(obj,m)=>{
+        const sid=JSON.parse(calls.at(-1).init.body).params[0]
+        if(committed&&obj==='session')logins++
+        if(obj==='uci'&&m==='commit'){writeSid=sid;committed=true;state=staged;staged=null;dirty=[];return {throw:'lost reply'}}
+        if(committed&&obj==='uci'){
+          assert.equal(sid,writeSid);reads++
+          if(mode==='expired')return {body:{result:[6]}}
+          if(mode==='recover'&&reads===1)return {throw:'temporarily offline'}
+          if(mode==='new-staging'&&m==='get')dirty=[['set','s1','name','foreign']]
+        }
+        return null
+      }
+      const saving=api.saveNikkiSubscription(n,base,'s1',sub)
+      if(mode==='recover')await saving;else await assert.rejects(()=>saving,/提交结果未确认/)
+      assert.equal(logins,0);assert.ok(reads<=9);assert.deepEqual(writes().map(c=>JSON.parse(c.init.body).params[2]),['set','commit'])
+    }
+  })
+  await test('unverified commit exposes safe protocol status only, never private transport details',async()=>{
+    for(const [reply,expected] of [[{body:{result:[6]}},/ubus状态6/],[{body:{result:[9]}},/代码 9/],[{status:503},/HTTP 503/],[{throw:'https://private.invalid/sub?token=secret'},/未取得有效提交响应/]]){
+      fixture();const base=await api.loadNikkiManagement(n);fail=(obj,m)=>obj==='uci'&&m==='commit'?reply:null
+      await assert.rejects(()=>api.saveNikkiSubscription(n,base,'s1',sub),e=>{assert.match(e.message,expected);assert.ok(!e.message.includes('private.invalid')&&!e.message.includes('token='));return true})
+      assert.deepEqual(writes().map(c=>JSON.parse(c.init.body).params[2]),['set','commit']);assert.ok(staged);assert.ok(dirty.length)
+    }
+  })
+  await test('duplicate disappear callbacks share uncertain save, retain original error and draft without a second mutation',async()=>{
+    fixture();const base=await api.loadNikkiManagement(n),props={c:n,base,value:null,done(){throw Error('must not report saved')}}
+    let tree=render(management.NikkiSubscriptionEditor,props,true);await settle();nodes(tree,'TextField')[0].props.onChanged('New draft');nodes(tree,'TextField')[1].props.onChanged(sub.url)
+    fail=(obj,m)=>obj==='uci'&&m==='commit'?{throw:'lost reply'}:null
+    const first=tree.props.onDisappear(),second=tree.props.onDisappear();assert.equal(first,second);await first
+    tree=render(management.NikkiSubscriptionEditor,props);assert.ok(text(tree).includes('提交结果未确认'));assert.equal(nodes(tree,'TextField')[0].props.value,'New draft');await tree.props.onDisappear()
+    assert.deepEqual(writes().map(c=>JSON.parse(c.init.body).params[2]),['add','commit']);assert.ok(dirty.length)
+  })
   await test('permission denial does not retry mutations, cleanup own staging; lost commit is uncertain not replayed',async()=>{
     fixture();let d=await api.loadNikkiManagement(n);fail=(obj,m)=>obj==='uci'&&m==='set'?{body:{result:[6]}}:null
     await assert.rejects(()=>api.saveNikkiSubscription(n,d,'s1',sub),/保存未完成/);assert.equal(state.s1.name,'Mock subscription');assert.equal(writes().filter(c=>JSON.parse(c.init.body).params[2]==='set').length,1);assert.equal(staged,null)

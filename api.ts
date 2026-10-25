@@ -1,7 +1,7 @@
 import { CpuSampler, CpuUsage, CpuMeta, parseCpuInfo, thermalCelsius } from "./openwrt-metrics"
 
 import { getPreferences, customHeaders, recordEvent, controllerHealth, feedback } from "./preferences"
-export const VERSION = "1.75"
+export const VERSION = "1.76"
 
 export type Kind = "clash" | "openwrt"
 export type Plugin = "openclash" | "nikki" | "mihomo"
@@ -967,6 +967,25 @@ export async function loadNikkiManagement(c:Controller):Promise<NikkiManagement>
   const result:NikkiManagement={profile:String(j.values.config?.profile??""),appendRules:j.values.mixin?.rule==="1",files,subscriptions,rules:vs.filter(x=>x[".type"]==="rule").map(x=>({id:x[".name"],type:String(x.type??""),matcher:String(x.matcher??""),node:String(x.node??""),enabled:x.enabled==="1",noResolve:x.no_resolve==="1"})),filesError:!local||!remote}
   nikkiSnapshots.set(result,{source:nikkiSource(c),values:j.values});return result
 }
+// A get alone can echo session staging. Only a matching full target bracketed by
+// clean changes reads on the SAME pinned session can confirm a lost commit reply.
+async function verifyNikkiCommit(c:Controller,sid:string,expected:string):Promise<boolean> {
+  const source=nikkiSource(c)
+  for(let attempt=0;attempt<3;attempt++){
+    if(attempt)await new Promise<void>(resolve=>setTimeout(resolve,500))
+    if(nikkiSource(c)!==source)return false
+    try {
+      const read=(method:string)=>ubusRaw(c,sid,"uci",method,{config:"nikki"},2)
+      const before=await read("changes")
+      if(!Array.isArray(before.changes))return false
+      if(before.changes.length)continue
+      const actual=await read("get"),after=await read("changes")
+      if(nikkiSource(c)!==source)return false
+      if(Array.isArray(after.changes)&&after.changes.length===0&&actual.values&&canonical(actual.values)===expected)return true
+    } catch { /* Read-only retries only; never re-login into another session's staging. */ }
+  }
+  return false
+}
 // Mutations pin one authenticated session: never replay add/append/commit after an ambiguous response.
 // Refuse dirty sessions rather than committing/reverting somebody else's staged UCI changes.
 async function nikkiTransaction(c:Controller,base:NikkiManagement,mutate:(call:(method:string,args?:any)=>Promise<any>,values:any)=>Promise<void>) {
@@ -981,11 +1000,22 @@ async function nikkiTransaction(c:Controller,base:NikkiManagement,mutate:(call:(
     if(canonical(current)!==canonical(snap.values))return nikkiFail("设备配置已改变，请刷新后重新编辑；当前草稿未丢弃")
     // rpcd commit emits config.change; Nikki registers procd_add_reload_trigger("nikki").
     // No explicit rc.init: committing can still trigger this upstream side effect.
-    try { await mutate(call,current);committing=true;await call("commit") }
+    let expected=""
+    try {
+      await mutate(call,current)
+      // Capture rpcd's complete staged target, including generated section ids/order.
+      const target=(await call("get")).values
+      if(!target||typeof target!=="object")return nikkiFail("未能读取本次暂存目标，未提交；草稿仍保留")
+      expected=canonical(target)
+      committing=true;await call("commit")
+    }
     catch(e) {
       if(!committing&&staged){try{await call("revert")}catch{return nikkiFail("保存未完成且清理暂存失败，请检查设备；草稿仍保留")}}
+      if(committing&&await verifyNikkiCommit(c,sid,expected))return
       if(e instanceof NikkiManagementError)throw e
-      return nikkiFail(committing?"提交结果未确认，系统可能已触发重载。请刷新核实；不会自动重试":"保存未完成；草稿仍保留，请检查权限与连接")
+      // Keep only protocol status, never arbitrary transport text (which may contain private URLs).
+      const message=e instanceof Error?e.message:"",status=message==="ACCESS"?"ubus状态6（权限拒绝）":/^ubus 调用失败，代码 \d+$/.test(message)?message:/^请求失败 HTTP \d+$/.test(message)?message:"未取得有效提交响应"
+      return nikkiFail(committing?`提交结果未确认（${status}），只读核验未通过，系统可能已触发重载。请刷新核实；不会自动重试`:"保存未完成；草稿仍保留，请检查权限与连接")
     }
   })
 }
