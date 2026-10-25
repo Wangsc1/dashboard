@@ -729,10 +729,25 @@ export function reconcileNikkiText(previous:string,input:string):string {
 // preserves the full editor area without a downward modal dismissal.
 // Recovery is source/file scoped and memory-only. A canceled confirmation, failed
 // write or navigation teardown must not discard the last complete local document.
+// Fold by code point, retaining original UTF-16 offsets even when lowercasing expands.
+export function nikkiLiteralMatches(content:string,query:string):EditorTextRange[]{
+  if(!query)return []
+  let folded="",offset=0,line=1;const starts:number[]=[],ends:number[]=[],lines:number[]=[]
+  for(const char of content){const lower=char.toLowerCase();for(let j=0;j<lower.length;j++){starts.push(offset);ends.push(offset+char.length);lines.push(line)}folded+=lower;offset+=char.length;if(char==="\n")line++}
+  const needle=Array.from(query,char=>char.toLowerCase()).join(""),result:EditorTextRange[]=[]
+  for(let i=0;(i=folded.indexOf(needle,i))!==-1;i+=needle.length){const last=i+needle.length-1;if((i===0||starts[i]!==starts[i-1])&&(last===ends.length-1||ends[last]!==ends[last+1]))result.push({start:starts[i],end:ends[last],line:lines[i]})}
+  return result
+}
+// YAML support verified on device with the official Editor in its default script context.
+export function nikkiEditorExtension(filename:string){
+  const extensions:Record<string,"tsx"|"ts"|"js"|"jsx"|"txt"|"md"|"css"|"html"|"json"|"yaml">={tsx:"tsx",ts:"ts",js:"js",jsx:"jsx",txt:"txt",md:"md",css:"css",html:"html",json:"json",yaml:"yaml",yml:"yaml"}
+  return extensions[filename.split(".").pop()?.toLowerCase()??""]??"txt"
+}
 const nikkiFileDrafts=new Map<string,{original:string;text:string}>()
 type NikkiEditorSession={controller:EditorController;original:string;key:string;entry:string;closed:boolean;cancel:()=>void;closedSignal:Promise<void>}
 export function NikkiFileEditor({c,base,file,done,entryKey="direct",onExit}:{c:Controller;base:NikkiManagement;file:NikkiFile;done:(saved?:boolean)=>void;entryKey?:string;onExit?:()=>void}) {
-  const work=useWork(c),[host]=useState({session:null as NikkiEditorSession|null,exitNotified:false,searchEpoch:0,searchContent:null as string|null}),[appeared,setAppeared]=useState(false),[tick,setTick]=useState(0),[,paint]=useState(0),[loadError,setLoadError]=useState("")
+  const work=useWork(c),[host]=useState({session:null as NikkiEditorSession|null,exitNotified:false,searchEpoch:0,searchContent:null as string|null,localBusy:false}),[appeared,setAppeared]=useState(false),[tick,setTick]=useState(0),[,paint]=useState(0),[loadError,setLoadError]=useState("")
+  const [localBusy,setLocalBusy]=useState(false),[localError,setLocalError]=useState(""),[replacing,setReplacing]=useState(false)
   const [searching,setSearching]=useState(false),[query,setQuery]=useState(""),[replacement,setReplacement]=useState(""),[matches,setMatches]=useState<EditorTextRange[]>([]),[index,setIndex]=useState(0),[searchStatus,setSearchStatus]=useState("输入关键字后点击搜索")
   const draftKey=JSON.stringify(work.owner)+":"+file.key
   const valid=(s:NikkiEditorSession)=>host.session===s&&s.key===draftKey&&s.entry===entryKey&&!s.closed&&!work.changed&&work.current()
@@ -749,16 +764,14 @@ export function NikkiFileEditor({c,base,file,done,entryKey="direct",onExit}:{c:C
   useEffect(()=>{
     if(!appeared||work.changed)return
     let alive=true,timer:ReturnType<typeof setTimeout>|undefined
-    host.session=null;host.searchEpoch++;setLoadError("");setMatches([])
+    host.session=null;host.localBusy=false;host.searchEpoch++;setLoadError("");setMatches([]);setLocalBusy(false);setLocalError("")
     const active=()=>alive&&work.current()
     async function load(){
       try{
         const text=await Promise.race([readNikkiFile(work.owner,file.key),new Promise<never>((_,reject)=>{timer=setTimeout(()=>reject(new NikkiManagementError("完整正文读取超时；未写入文件，请重试读取")),20000)})])
         if(!active())return
         const draft=nikkiFileDrafts.get(draftKey),restored=draft&&draft.text!==draft.original?draft:null
-        // YAML is not in the SDK's documented extension set. Never mislabel it as JSON.
-        const extensions:Record<string,"tsx"|"ts"|"js"|"jsx"|"txt"|"md"|"css"|"html"|"json">={tsx:"tsx",ts:"ts",js:"js",jsx:"jsx",txt:"txt",md:"md",css:"css",html:"html",json:"json"}
-        const controller=new EditorController({content:restored?.text??text,ext:extensions[file.filename.split(".").pop()?.toLowerCase()??""]??"txt",readOnly:false})
+        const controller=new EditorController({content:restored?.text??text,ext:nikkiEditorExtension(file.filename),readOnly:false})
         let cancel=()=>{};const closedSignal=new Promise<void>(resolve=>{cancel=resolve})
         const s:NikkiEditorSession={controller,original:restored?.original??text,key:draftKey,entry:entryKey,closed:false,cancel,closedSignal}
         host.session=s
@@ -774,7 +787,7 @@ export function NikkiFileEditor({c,base,file,done,entryKey="direct",onExit}:{c:C
   },[appeared,file.key,entryKey,source(c),tick])
   function leave(){close(host.session);work.onDisappear();if(!host.exitNotified){host.exitNotified=true;onExit?.()}}
   async function save(){
-    const s=host.session;if(!s||!valid(s))return
+    const s=host.session;if(!s||!valid(s)||host.localBusy)return
     await work.run(async()=>{
       // SDK content is the current document; onContentChanged is delayed ~100ms.
       // Read here even if the UI has not received its first dirty notification.
@@ -791,43 +804,46 @@ export function NikkiFileEditor({c,base,file,done,entryKey="direct",onExit}:{c:C
       finally{work.guard.leaving=false}
     })
   }
-  async function findMatches(s:NikkiEditorSession,preferred=0){
-    const epoch=++host.searchEpoch,content=s.controller.content
-    setSearchStatus("正在搜索…")
-    try{
-      const result=await s.controller.searchText(query,{caseSensitive:false})
-      if(!valid(s)||host.searchEpoch!==epoch)return
-      if(s.controller.content!==content){setMatches([]);setSearchStatus("正文已改变，请重新搜索");return}
-      const i=result.length?Math.min(preferred,result.length-1):0
-      host.searchContent=content;setMatches(result);setIndex(i);setSearchStatus(result.length?"":"无匹配")
-      if(result.length)await s.controller.setSelection(result[i].start,result[i].end)
-    }catch(e){if(valid(s)&&host.searchEpoch===epoch){setMatches([]);setSearchStatus("搜索失败，请重试")}throw e}
+  async function localAction(action:(s:NikkiEditorSession)=>Promise<void>){
+    const s=host.session;if(!s||!valid(s)||host.localBusy||work.busy)return
+    host.localBusy=true;setLocalBusy(true);setLocalError("")
+    try{await action(s)}catch{if(valid(s))setLocalError("本地操作失败，正文与草稿仍保留")}
+    finally{if(host.session===s){host.localBusy=false;if(valid(s))setLocalBusy(false)}}
   }
-  async function search(){const s=host.session;if(!s||!valid(s))return;if(!query){setMatches([]);setSearchStatus("请输入查找内容");return}await work.run(()=>findMatches(s))}
-  async function go(next:number){const s=host.session;if(!s||!valid(s)||!matches.length)return;await work.run(async()=>{if(s.controller.content!==host.searchContent){setMatches([]);setSearchStatus("正文已改变，请重新搜索");return}const i=(next+matches.length)%matches.length;await s.controller.setSelection(matches[i].start,matches[i].end);if(valid(s))setIndex(i)})}
-  async function replace(){
-    const s=host.session;if(!s||!valid(s)||!matches.length)return
-    const m=matches[index],content=s.controller.content
-    await work.run(async()=>{
-      const latest=await s.controller.searchText(query,{caseSensitive:false})
-      if(!valid(s)||s.controller.content!==content)return
-      const current=latest.find(x=>x.start===m.start&&x.end===m.end)
-      if(!current){await findMatches(s);return}
-      await s.controller.setSelection(current.start,current.end)
-      if(!valid(s)||s.controller.content!==content)return
-      await s.controller.replaceSelection(replacement)
-      if(!valid(s))return
-      retain(s);await findMatches(s,index)
-    })
+  async function locate(s:NikkiEditorSession,m:EditorTextRange){
+    try{if(typeof s.controller.setSelection!=="function")throw Error("unavailable");await s.controller.setSelection(m.start,m.end);return valid(s)}
+    catch{if(valid(s))setLocalError("定位失败；匹配结果仍可查看");return false}
   }
+  function collect(s:NikkiEditorSession,preferred=0){
+    const content=s.controller.content,result=nikkiLiteralMatches(content,query),i=result.length?Math.min(preferred,result.length-1):0
+    host.searchContent=content;setMatches(result);setIndex(i);setSearchStatus(!query?"请输入查找内容":result.length?"":"无匹配")
+    return {result,i,content}
+  }
+  async function search(){await localAction(async s=>{const {result,i}=collect(s);if(result.length)await locate(s,result[i])})}
+  async function go(next:number){await localAction(async s=>{if(!matches.length)return;if(s.controller.content!==host.searchContent){collect(s);setLocalError("正文已改变，请重新定位");return}const i=(next+matches.length)%matches.length;setIndex(i);await locate(s,matches[i])})}
+  async function replace(){await localAction(async s=>{
+    if(!matches.length)return
+    const m=matches[index],content=s.controller.content,epoch=host.searchEpoch
+    if(content!==host.searchContent){collect(s);setLocalError("正文已改变，请重新选择匹配");return}
+    if(!await locate(s,m)||!valid(s)||host.searchEpoch!==epoch||s.controller.content!==content)return
+    if(typeof s.controller.replaceSelection!=="function"){setLocalError("此版本不支持替换；正文未改动");return}
+    try{await s.controller.replaceSelection(replacement)}catch{if(valid(s)){retain(s);collect(s);setLocalError("替换未确认，请核对正文后重试")}return}
+    if(!valid(s))return
+    retain(s);const {result,i}=collect(s,index);if(result.length)await locate(s,result[i])
+  })}
   const session=host.session,enabled=!!session&&valid(session)&&!loadError
   // Keep save available before the debounced dirty callback; unchanged saves are no-ops.
-  const toolbar={topBarTrailing:<Button accessibilityLabel="保存" buttonStyle="plain" disabled={!enabled||work.busy} action={save}><Image systemName="checkmark.circle"/></Button>}
+  const toolbar={topBarTrailing:<Button accessibilityLabel="保存" buttonStyle="plain" disabled={!enabled||work.busy||localBusy} action={save}><Image systemName="checkmark.circle"/></Button>}
   return <VStack alignment="leading" spacing={0} tabBarVisibility="hidden" background="systemBackground" frame={{maxWidth:"infinity",maxHeight:"infinity"}} navigationTitle={file.filename} navigationBarTitleDisplayMode="inline" toolbar={toolbar} onAppear={()=>{host.exitNotified=false;work.onAppear();if(appeared&&(!host.session||host.session.closed))setTick(n=>n+1);setAppeared(true)}} onDisappear={leave}>
     <Status work={work}/>{work.changed?<Note error>来源已改变，请返回后重新进入</Note>:null}
     {loadError?<><Note error>{loadError}</Note><Button title="重试读取" action={()=>setTick(n=>n+1)}/></>:!session?<Note>正在完整读取配置正文…</Note>:null}
-    {enabled?<><HStack spacing={16} padding={{horizontal:12,vertical:6}}><Button accessibilityLabel="撤销" buttonStyle="plain" disabled={work.busy} action={()=>{if(session&&valid(session))session.controller.undo()}}><Image systemName="arrow.uturn.backward"/></Button><Button accessibilityLabel="重做" buttonStyle="plain" disabled={work.busy} action={()=>{if(session&&valid(session))session.controller.redo()}}><Image systemName="arrow.uturn.forward"/></Button><Spacer/><Button title="查找 / 替换" disabled={work.busy} action={()=>setSearching(!searching)}/></HStack>
-      {searching?<VStack spacing={4} padding={{horizontal:12}}><HStack><TextField title="查找" value={query} onChanged={v=>{host.searchEpoch++;setQuery(v);setMatches([]);setSearchStatus("输入关键字后点击搜索")}}/><Button title="搜索" disabled={work.busy} action={search}/></HStack><HStack><TextField title="替换为" value={replacement} onChanged={setReplacement}/><Button title="替换" disabled={!matches.length||work.busy} action={replace}/></HStack><HStack><Text>{matches.length?`${index+1} / ${matches.length}`:searchStatus}</Text><Spacer/><Button title="上一个" disabled={!matches.length||work.busy} action={()=>go(index-1)}/><Button title="下一个" disabled={!matches.length||work.busy} action={()=>go(index+1)}/></HStack></VStack>:null}
-      <Editor controller={session!.controller} scriptName={file.filename} showAccessoryView disabled={work.busy} frame={{maxWidth:"infinity",maxHeight:"infinity"}}/></>:null}
+    {enabled?<><HStack spacing={12} padding={{horizontal:12,vertical:2}}><Button accessibilityLabel="撤销" buttonStyle="plain" disabled={work.busy||localBusy} action={()=>{if(session&&valid(session))session.controller.undo()}}><Image systemName="arrow.uturn.backward" frame={{minWidth:44,minHeight:44}}/></Button><Button accessibilityLabel="重做" buttonStyle="plain" disabled={work.busy||localBusy} action={()=>{if(session&&valid(session))session.controller.redo()}}><Image systemName="arrow.uturn.forward" frame={{minWidth:44,minHeight:44}}/></Button><Spacer/><Button accessibilityLabel="查找 / 替换" buttonStyle="plain" disabled={work.busy} action={()=>setSearching(!searching)}><Image systemName="magnifyingglass" frame={{minWidth:44,minHeight:44}}/></Button></HStack>
+      {searching?<VStack spacing={2} padding={{horizontal:12}}>
+        <HStack spacing={4}><TextField title="查找" prompt="查找" labelsHidden textFieldStyle="roundedBorder" value={query} onChanged={v=>{host.searchEpoch++;setQuery(v);setMatches([]);setLocalError("");setSearchStatus("输入关键字后点击搜索")}}/><Button accessibilityLabel="搜索" buttonStyle="plain" disabled={work.busy||localBusy} action={search}><Image systemName="magnifyingglass" frame={{minWidth:44,minHeight:44}}/></Button><Button accessibilityLabel="展开替换" buttonStyle="plain" action={()=>setReplacing(!replacing)}><Image systemName={replacing?"chevron.up":"chevron.down"} frame={{minWidth:44,minHeight:44}}/></Button></HStack>
+        <HStack spacing={4}><Text>{matches.length?`${index+1} / ${matches.length}`:searchStatus}</Text><Spacer/><Button accessibilityLabel="上一个" buttonStyle="plain" disabled={!matches.length||work.busy||localBusy} action={()=>go(index-1)}><Image systemName="chevron.up" frame={{minWidth:44,minHeight:44}}/></Button><Button accessibilityLabel="下一个" buttonStyle="plain" disabled={!matches.length||work.busy||localBusy} action={()=>go(index+1)}><Image systemName="chevron.down" frame={{minWidth:44,minHeight:44}}/></Button></HStack>
+        {replacing?<HStack spacing={4}><TextField title="替换为" prompt="替换为" labelsHidden textFieldStyle="roundedBorder" value={replacement} onChanged={setReplacement}/><Button accessibilityLabel="替换" buttonStyle="plain" disabled={!matches.length||work.busy||localBusy} action={replace}><Image systemName="arrow.left.arrow.right" frame={{minWidth:44,minHeight:44}}/></Button></HStack>:null}
+        {localError?<Text foregroundStyle="red">{localError}</Text>:null}
+      </VStack>:null}
+      <Editor controller={session!.controller} showAccessoryView disabled={work.busy} frame={{maxWidth:"infinity",maxHeight:"infinity"}}/></>:null}
   </VStack>
 }

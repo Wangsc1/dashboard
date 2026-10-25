@@ -31,10 +31,10 @@ declare var FileManager: { isiCloudEnabled: boolean; iCloudDocumentsDirectory: s
 
 declare var console: { log(...args: any[]): void }
 
-// Official views/editor/{zh,en}.md and index.tsx (no undocumented flush/ready API).
+// Official views/editor docs plus device-confirmed YAML mode (IMG5355). No flush/ready API.
 interface EditorTextRange {start:number;end:number;line:number}
 declare class EditorController {
-  constructor(options?:{content?:string;ext?:"tsx"|"ts"|"js"|"jsx"|"txt"|"md"|"css"|"html"|"json";readOnly?:boolean});
+  constructor(options?:{content?:string;ext?:"tsx"|"ts"|"js"|"jsx"|"txt"|"md"|"css"|"html"|"json"|"yaml";readOnly?:boolean});
   readonly ext:string;
   content:string;
   onContentChanged?:()=>void;
