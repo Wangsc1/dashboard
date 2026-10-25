@@ -1,6 +1,6 @@
 import { beginCadenceDiagnostics, timingToken, timing, connectionLifecycle, createSheetTrace, sheetLifecycle } from "./cadence-diagnostics"
 import { detailReads, useDetailPage, useRouterDetail, peekDetail, prefetchRouterDetails, detailWrite, observeDetailsPhase, selectDetailsSource } from "./router-details"
-import { HOME_BG, HomeDashboard, CpuDetails, LiveCpuDetails, CpuDetailFrame } from "./home-ui"
+import { HOME_BG, HomeDashboard, CpuDetails, LiveCpuDetails, createCpuDetailFeed } from "./home-ui"
 import { newHistory, appendHistory, OverviewHistory } from "./openwrt-metrics"
 import { rootToolbar } from "./root-toolbar"
 import { prefetchMoreVersions, prefetchProxies, prefetchRules, prefetchConnections, ProxiesPage, ConnectionsPage, RulesPage, GroupSection, MorePage as DashboardMorePage } from "./dashboard-pages"
@@ -317,7 +317,7 @@ function OverviewPage({ active, version, onSwitch, onClose, selected = true }: {
   const shownOv=currentFrame?.overview??(sampleSource===source?ov:null)
   const shownHistory=currentFrame?.histories??(sampleSource===source?histories:newHistory())
   // Keep sheet.content stable across sample updates; publish only the live frame.
-  const detailFeed=useObservable<CpuDetailFrame>(()=>({overview:null,histories:newHistory(),running:false}))
+  const [detailFeed]=useState(()=>createCpuDetailFeed({overview:null,histories:newHistory(),running:false}))
   const [sheetTrace]=useState(()=>createSheetTrace())
   useEffect(()=>{sheetLifecycle(cpuOpen?"state-open":"state-closed",sheetTrace)},[cpuOpen,sheetTrace])
   const detailContent=useMemo(()=><LiveCpuDetails feed={detailFeed} trace={sheetTrace}/>,[detailFeed,sheetTrace])

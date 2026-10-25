@@ -109,6 +109,17 @@ export function HomeDashboard({overview,histories,running,onCpu}:{overview:Overv
 // content itself never changes identity on each poll; only this mounted body updates.
 export interface CpuDetailFrame { overview:Overview|null; histories:OverviewHistory; running:boolean }
 export interface CpuDetailFeed { value:CpuDetailFrame; subscribe(fn:(value:CpuDetailFrame,old:CpuDetailFrame)=>void):void; unsubscribe(fn:(value:CpuDetailFrame,old:CpuDetailFrame)=>void):void }
+// Plain per-owner feed: only the explicit LiveCpuDetails subscription updates UI.
+// Reference equality and synchronous listener snapshots match the existing feed contract.
+export function createCpuDetailFeed(initial:CpuDetailFrame):CpuDetailFeed & {setValue(value:CpuDetailFrame):void} {
+  const listeners=new Set<(value:CpuDetailFrame,old:CpuDetailFrame)=>void>()
+  return {
+    value:initial,
+    setValue(value){const old=this.value;this.value=value;if(value!==old)for(const fn of [...listeners])fn(value,old)},
+    subscribe(fn){listeners.add(fn)},
+    unsubscribe(fn){listeners.delete(fn)},
+  }
+}
 export function LiveCpuDetails({feed,trace}:{feed:CpuDetailFeed;trace?:number}) {
   const [frame,setFrame]=useState(()=>{sheetLifecycle("content-create",trace);return feed.value})
   useEffect(()=>{

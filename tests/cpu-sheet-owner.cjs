@@ -9,15 +9,50 @@ function instance(fn){const state={hooks:[],cleanups:new Map()};return {async dr
  hooks=saved.hooks;cleanups=saved.cleanups;effects=saved.effects;hookIndex=saved.hookIndex;return out
 },close(){for(const c of state.cleanups.values())c();state.cleanups.clear()}}}
 ;(async()=>{
+ await test('生产普通feed同步/引用相等/快照发布/实例隔离，不调用Observable或隐式setter',async()=>{
+  const original=scripting.useObservable;scripting.useObservable=()=>{throw Error('no Observable allowed')}
+  try{
+   const frame=n=>({overview:{wrt:{uptime:n}},histories:{cpu:{},up:[],down:[]},running:!!n})
+   const zero=frame(0),one=frame(1),two=frame(2),a=home.createCpuDetailFeed(zero),b=home.createCpuDetailFeed(zero)
+   assert.equal(Object.getPrototypeOf(a),vm.runInContext('Object.prototype',context))
+   const descriptor=Object.getOwnPropertyDescriptor(a,'value');assert.equal(descriptor.get,undefined);assert.equal(descriptor.set,undefined);assert.equal(descriptor.value,zero)
+   const log=[],other=[],first=(v,old)=>{assert.equal(a.value,v);log.push([v,old]);a.unsubscribe(second)},second=(v,old)=>log.push(['second',v,old])
+   a.subscribe(first);a.subscribe(first);a.subscribe(second);b.subscribe(v=>other.push(v))
+   a.setValue(zero);assert.equal(log.length,0,'same frame reference is silent')
+   a.setValue(one);assert.equal(log.length,2,'synchronous snapshot delivers both listeners despite in-flight unsubscribe');assert.equal(log[0][0],one);assert.equal(log[0][1],zero)
+   a.setValue(two);assert.equal(log.length,3);assert.equal(log[2][1],one);assert.equal(other.length,0);assert.equal(b.value,zero)
+   a.unsubscribe(first);a.unsubscribe(first);a.setValue(frame(3));assert.equal(log.length,3,'unsubscribe is idempotent')
+   b.setValue(one);assert.equal(other.length,1)
+   // Actual OverviewPage must allocate a stable plain feed, not merely a replacement mock.
+   const props={active:null,version:0,onSwitch:()=>{},selected:true}
+   render(app.OverviewPage,props,true);await flush();const feed=hooks.find(x=>x&&x.setValue&&x.subscribe&&Object.prototype.hasOwnProperty.call(x,'value'))
+   assert.ok(feed);assert.equal(Object.getOwnPropertyDescriptor(feed,'value').get,undefined)
+   render(app.OverviewPage,props);await flush();assert.ok(hooks.includes(feed));unmount()
+  }finally{scripting.useObservable=original}
+ })
+ await test('普通feed订阅边界取最新帧，卸载停止UI订阅，重进不读旧快照',async()=>{
+  const frame=(n,running=true)=>({overview:{wrt:{uptime:n}},histories:{cpu:{cpu:[n]},up:[],down:[]},running})
+  const feed=home.createCpuDetailFeed(frame(0)),first=render(home.LiveCpuDetails,{feed},true)
+  assert.equal(first.props.overview.wrt.uptime,0)
+  // Publication between render and effect must not be lost.
+  feed.setValue(frame(1));await flush();let out=render(home.LiveCpuDetails,{feed});await flush();assert.equal(out.props.overview.wrt.uptime,1)
+  feed.setValue(frame(2,false));out=render(home.LiveCpuDetails,{feed});await flush();assert.equal(out.props.running,false,'retained closed sheet pauses plots as before')
+  const retained=hooks;unmount();feed.setValue(frame(3));assert.equal(retained[0].overview.wrt.uptime,2,'disposed UI receives no writes')
+  out=render(home.LiveCpuDetails,{feed},true);assert.equal(out.props.overview.wrt.uptime,3,'fresh mount reads latest snapshot')
+  // Publication during subscription installation is followed by reading the current value.
+  const subscribe=feed.subscribe;feed.subscribe=fn=>{feed.setValue(frame(4));subscribe(fn)}
+  await flush();out=render(home.LiveCpuDetails,{feed});await flush();assert.equal(out.props.overview.wrt.uptime,4)
+  unmount()
+ })
  await test('固定详情owner内部订阅最新帧，原始数据不冻结，关闭/卸载退订',async()=>{
   const listeners=new Set(),frame=(n,running=true)=>({overview:{wrt:{cpus:[{id:'cpu',usage:n}]}},histories:{cpu:{cpu:[n]},down:[],up:[]},running})
-  const feed={value:frame(0),subscribe(fn){listeners.add(fn)},unsubscribe(fn){listeners.delete(fn)}}
+  const feed=home.createCpuDetailFeed(frame(0)),sub=feed.subscribe,unsub=feed.unsubscribe;feed.subscribe=fn=>{listeners.add(fn);sub(fn)};feed.unsubscribe=fn=>{listeners.delete(fn);unsub(fn)}
   const page=instance(home.LiveCpuDetails),props={feed};let out=await page.draw(props);assert.equal(listeners.size,1)
   for(let i=1;i<=8;i++){
-   const old=feed.value;feed.value=frame(i);for(const cb of listeners)cb(feed.value,old)
+   feed.setValue(frame(i))
    out=await page.draw(props);assert.equal(out.type,home.CpuDetails);assert.equal(out.props.histories,feed.value.histories);assert.equal(out.props.overview,feed.value.overview);assert.equal(out.props.running,true);assert.equal(listeners.size,1)
   }
-  const old=feed.value;feed.value=frame(9,false);for(const cb of listeners)cb(feed.value,old);out=await page.draw(props);assert.equal(out.props.running,false)
+  feed.setValue(frame(9,false));out=await page.draw(props);assert.equal(out.props.running,false)
   page.close();assert.equal(listeners.size,0);assert.equal(intervals.size,0)
  })
  await test('sheet原生appear先于content effect不等于内容尚未构建；首次/再次保留内容，首次时间不被覆盖',async()=>{
@@ -46,8 +81,8 @@ function instance(fn){const state={hooks:[],cleanups:new Map()};return {async dr
    const cpus=Array.from({length:count},(_,i)=>({id:'cpu'+i,usage:n+i}));cpus.unshift({id:'cpu',usage:n})
    return {overview:{wrt:{cpus,uptime:n,release:'test',cpuModel:'test',cpuMeta:n?{cpu0:{mhz:1000,cacheKB:12}}:undefined}},histories:{cpu:Object.fromEntries(cpus.map(c=>[c.id,[10,n]])),up:[],down:[]},running}
   }
-  const feed={value:frame(0,false),subscribe(f){listeners.add(f)},unsubscribe(f){listeners.delete(f)}}
-  const publish=f=>{const old=feed.value;feed.value=f;for(const fn of listeners)fn(f,old)}
+  const feed=home.createCpuDetailFeed(frame(0,false)),sub=feed.subscribe,unsub=feed.unsubscribe;feed.subscribe=f=>{listeners.add(f);sub(f)};feed.unsubscribe=f=>{listeners.delete(f);unsub(f)}
+  const publish=f=>feed.setValue(f)
   async function tree(){
    const seen=new WeakSet(),plots=[],skeleton=[]
    async function walk(n,path){
