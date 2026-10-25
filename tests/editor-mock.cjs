@@ -12,6 +12,7 @@ class MockEditorController {
   undo(){this.check();if(this.past.length){this.future.push(this._content);this._content=this.past.pop();this.changeAt=MockEditorController.clock+100}}
   redo(){this.check();if(this.future.length){this.past.push(this._content);this._content=this.future.pop();this.changeAt=MockEditorController.clock+100}}
   async searchText(query,{caseSensitive=false}={}){this.check();if(!query)return [];const text=caseSensitive?this.content:this.content.toLowerCase(),q=caseSensitive?query:query.toLowerCase(),out=[];for(let i=0;(i=text.indexOf(q,i))!==-1;i+=q.length)out.push({start:i,end:i+q.length,line:this.content.slice(0,i).split('\n').length});return out}
+  scrollToLine(line){this.check();this.scrolledLine=line}
   setSelection(start,end){this.check();this.selection=[start,end]}
   replaceSelection(text){this.check();const [start,end]=this.selection,next=this.content.slice(0,start)+text+this.content.slice(end);if(this.deferEdits){this.past.push(this._content);this.future=[];this.pendingNative=next;this.changeAt=MockEditorController.clock+100}else this.input(next);this.selection=[start,start+text.length]}
   async getSelectedText(){this.check();return this.content.slice(...this.selection)}

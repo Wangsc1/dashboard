@@ -39,6 +39,7 @@ declare class EditorController {
   content:string;
   onContentChanged?:()=>void;
   searchText(query:string,options?:{caseSensitive?:boolean;regexp?:boolean;wholeWord?:boolean}):Promise<EditorTextRange[]>;
+  scrollToLine(line:number):void;
   setSelection(start:number,end:number):void;
   replaceSelection(text:string):void;
   undo():void;redo():void;dispose():void;

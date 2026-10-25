@@ -822,22 +822,31 @@ export function NikkiFileEditor({c,base,file,done,entryKey="direct",onExit}:{c:C
     try{if(typeof s.controller.setSelection!=="function")throw Error("当前运行环境无 EditorController.setSelection");await s.controller.setSelection(m.start,m.end);return valid(s)}
     catch(e){if(valid(s))setLocalError("定位失败；匹配结果仍可查看："+localDetail(e));return false}
   }
+  const queryEpoch=host.searchEpoch
+  async function browseLocate(s:NikkiEditorSession,m:EditorTextRange){
+    if(!valid(s)||host.searchEpoch!==queryEpoch)return false
+    if(s.controller.content!==host.searchContent){setMatches([]);setSearchStatus("正文已改变，请重新搜索");return false}
+    try{
+      if(typeof s.controller.scrollToLine!=="function")throw Error("当前运行环境无 EditorController.scrollToLine")
+      await s.controller.scrollToLine(m.line)
+      return valid(s)&&host.searchEpoch===queryEpoch
+    }catch(e){if(valid(s)&&host.searchEpoch===queryEpoch)setLocalError("定位失败；匹配结果仍可查看："+localDetail(e));return false}
+  }
   function collect(s:NikkiEditorSession,preferred=0){
     const content=s.controller.content,result=nikkiLiteralMatches(content,query),i=result.length?Math.min(preferred,result.length-1):0
     host.searchContent=content;setMatches(result);setIndex(i);setSearchStatus(!query?"请输入查找内容":result.length?"":"无匹配")
     return {result,i,content}
   }
-  async function search(){await localAction(async s=>{const {result,i}=collect(s);if(result.length)await locate(s,result[i])})}
+  async function search(){await localAction(async s=>{
+    if(host.searchEpoch!==queryEpoch)return
+    const {result,i}=collect(s),error=hideKeyboard()
+    if(error)setLocalNotice("键盘未能自动收起："+error)
+    if(result.length)await browseLocate(s,result[i])
+  })}
   async function go(next:number){await localAction(async s=>{
-    if(!matches.length)return
-    // Best effort only: native selection may focus later and show the keyboard.
-    // Do not retry with timers or suppress normal body editing.
-    let keyboardError=""
-    try{
-      keyboardError=hideKeyboard()
-      if(s.controller.content!==host.searchContent){collect(s);setLocalError("正文已改变，请重新定位");return}
-      const i=(next+matches.length)%matches.length;setIndex(i);await locate(s,matches[i])
-    }finally{if(valid(s)){keyboardError=hideKeyboard()||keyboardError;if(keyboardError)setLocalNotice("键盘未能自动收起："+keyboardError)}}
+    if(!matches.length||host.searchEpoch!==queryEpoch)return
+    if(s.controller.content!==host.searchContent){setMatches([]);setSearchStatus("正文已改变，请重新搜索");return}
+    const i=(next+matches.length)%matches.length;setIndex(i);await browseLocate(s,matches[i])
   })}
   // Command dispatch is not a document acknowledgement. Observe the complete
   // getter through onContentChanged, with a timeout bound (not a sleep/retry).
@@ -882,7 +891,7 @@ export function NikkiFileEditor({c,base,file,done,entryKey="direct",onExit}:{c:C
     if(typeof s.controller.replaceSelection!=="function"){setLocalError("此版本不支持替换；正文未改动");return}
     const expected=content.slice(0,m.start)+replacement+content.slice(m.end)
     const outcome=await applyEdit(s,content,expected,replacement,"已替换 1 处（未保存）",index)
-    if(outcome==="confirmed"&&valid(s)&&host.searchEpoch===epoch){const {result,i}=collect(s,index);if(result.length)await locate(s,result[i])}
+    if(outcome==="confirmed"&&valid(s)&&host.searchEpoch===epoch){const {result,i}=collect(s,index);if(result.length)await browseLocate(s,result[i])}
   })}
   async function replaceAll(){await localAction(async s=>{
     if(!query||!matches.length)return
