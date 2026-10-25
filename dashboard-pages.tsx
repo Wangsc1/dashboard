@@ -835,6 +835,10 @@ export function NikkiFileEditor({c,base,file,done,entryKey="direct",onExit}:{c:C
   // Keep save available before the debounced dirty callback; unchanged saves are no-ops.
   const toolbar={topBarTrailing:<Button accessibilityLabel="保存" buttonStyle="plain" disabled={!enabled||work.busy||localBusy} action={save}><Image systemName="checkmark.circle"/></Button>}
   return <VStack alignment="leading" spacing={0} tabBarVisibility="hidden" background="systemBackground" frame={{maxWidth:"infinity",maxHeight:"infinity"}} navigationTitle={file.filename} navigationBarTitleDisplayMode="inline" toolbar={toolbar} onAppear={()=>{host.exitNotified=false;work.onAppear();if(appeared&&(!host.session||host.session.closed))setTick(n=>n+1);setAppeared(true)}} onDisappear={leave}>
+    {/* Keep all changing controls/status inside one intrinsic-height header.
+        The remaining-space body is a permanent sibling, so opening Find cannot
+        shift the native Editor host even when null children are filtered. */}
+    <VStack alignment="leading" spacing={0} frame={{maxWidth:"infinity"}}>
     <Status work={work}/>{work.changed?<Note error>来源已改变，请返回后重新进入</Note>:null}
     {loadError?<><Note error>{loadError}</Note><Button title="重试读取" action={()=>setTick(n=>n+1)}/></>:!session?<Note>正在完整读取配置正文…</Note>:null}
     {enabled?<><HStack spacing={12} padding={{horizontal:12,vertical:2}}><Button accessibilityLabel="撤销" buttonStyle="plain" disabled={work.busy||localBusy} action={()=>{if(session&&valid(session))session.controller.undo()}}><Image systemName="arrow.uturn.backward" frame={{minWidth:44,minHeight:44}}/></Button><Button accessibilityLabel="重做" buttonStyle="plain" disabled={work.busy||localBusy} action={()=>{if(session&&valid(session))session.controller.redo()}}><Image systemName="arrow.uturn.forward" frame={{minWidth:44,minHeight:44}}/></Button><Spacer/><Button accessibilityLabel="查找 / 替换" buttonStyle="plain" disabled={work.busy} action={()=>setSearching(!searching)}><Image systemName="magnifyingglass" frame={{minWidth:44,minHeight:44}}/></Button></HStack>
@@ -844,6 +848,10 @@ export function NikkiFileEditor({c,base,file,done,entryKey="direct",onExit}:{c:C
         {replacing?<HStack spacing={4}><TextField title="替换为" prompt="替换为" labelsHidden textFieldStyle="roundedBorder" value={replacement} onChanged={setReplacement}/><Button accessibilityLabel="替换" buttonStyle="plain" disabled={!matches.length||work.busy||localBusy} action={replace}><Image systemName="arrow.left.arrow.right" frame={{minWidth:44,minHeight:44}}/></Button></HStack>:null}
         {localError?<Text foregroundStyle="red">{localError}</Text>:null}
       </VStack>:null}
-      <Editor controller={session!.controller} showAccessoryView disabled={work.busy} frame={{maxWidth:"infinity",maxHeight:"infinity"}}/></>:null}
+    </>:null}
+    </VStack>
+    <VStack alignment="leading" spacing={0} frame={{maxWidth:"infinity",maxHeight:"infinity"}}>
+      {enabled?<Editor controller={session!.controller} showAccessoryView disabled={work.busy} frame={{maxWidth:"infinity",maxHeight:"infinity"}}/>:null}
+    </VStack>
   </VStack>
 }
