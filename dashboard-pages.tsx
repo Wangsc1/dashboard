@@ -93,9 +93,7 @@ export function ProxyNodeDetailPage({c,name,target}:{c:Controller;name:string;ta
         <NodeDetailBox title="来源"><NodeDetailRow label="所属订阅" value={target?.provider??"未指定提供者（全局代理接口）"}/>{target&&target.name!==name?<><Divider/><NodeDetailRow label="实际节点" value={target.name}/></>:null}</NodeDetailBox>
         <NodeDetailBox title="协议能力">{(["xudp","tfo","mptcp"] as const).map((key,i)=><VStack key={key} spacing={0} frame={{maxWidth:"infinity"}}>{i?<Divider/>:null}<NodeDetailRow label={key.toUpperCase()} value={capability(data[key])}/></VStack>)}</NodeDetailBox>
         <NodeDetailBox title="最近探测"><NodeDetailRow label="最近探测状态" value={data.alive===undefined?"内核未提供":data.alive?"存活":"未存活"}/></NodeDetailBox>
-        <Text font={12} foregroundStyle="secondaryLabel">最近探测结果不是实时可用性。</Text>
       </>:null}
-      <Text font={12} foregroundStyle="secondaryLabel">仅进入页面或手动刷新时读取活动连接快照；按实际节点名称精确匹配代理链，可能包含其他订阅的同名节点。字节为这些活动连接自建立以来的计数，不是刷新间隔增量，也不是此订阅的精确统计或节点历史累计。</Text>
       {connectionError?<NodeDetailBox title="当前关联连接"><Text foregroundStyle="systemRed">{`连接快照读取失败：${connectionError}`}</Text><Button title="重试连接快照" action={refresh}/></NodeDetailBox>:null}
       {!snapshot&&!connectionError?<NodeDetailBox title="当前关联连接"><Text>正在读取连接快照…</Text></NodeDetailBox>:null}
       {snapshot?<>
@@ -104,7 +102,6 @@ export function ProxyNodeDetailPage({c,name,target}:{c:Controller;name:string;ta
           {!snapshot.connections.length?<Text padding={{vertical:16}}>快照中没有同名关联活动连接</Text>:null}
           {snapshot.connections.slice(0,20).map(connection=><VStack key={connection.id} alignment="leading" spacing={6} frame={{maxWidth:"infinity"}}><Divider/><Text padding={{top:12}}>{connection.host}</Text><Text font={12} foregroundStyle="secondaryLabel">{connection.rule||"规则未提供"}</Text><Text font={12} foregroundStyle="secondaryLabel">{connection.chain}</Text><NodeDetailRow label="上传 / 下载" value={`${fmtBytes(connection.up)} / ${fmtBytes(connection.down)}`}/></VStack>)}
         </NodeDetailBox>
-        {snapshot.connections.length>20?<Text font={12} foregroundStyle="secondaryLabel">{`仅展示前20条；流量合计涵盖全部${snapshot.connections.length}条匹配活动连接。`}</Text>:null}
       </>:null}
     </VStack>
   </ScrollView>

@@ -141,7 +141,7 @@ const group=(title='test')=>({name:title,type:'Selector',all:[name,'other'],now:
   responder=url=>url.endsWith('/connections')?(failConnections?{status:503}:{body:{connections}}):(failDetail?{status:404}:{body:{type:'Shadowsocks',udp:true,xudp:true,tfo:false,mptcp:true,alive:true,history:[{delay:98765}],password:'NEVER'}})
   try{
    calls.length=0;view.render({c:device,name:'display-group',target});await settle();let t=view.render();assert.equal(calls.length,2)
-   const words=text(t);for(const value of ['Subscription A','actual-node','XUDP','TFO','MPTCP','最近探测','存活','当前连接流量','22','仅展示前20条','同名节点',api.fmtBytes(2200),api.fmtBytes(4400),api.fmtBytes(6600)])assert.ok(words.includes(value),value)
+   const words=text(t);assert.ok(!/最近探测结果不是|仅进入页面|仅展示前20条/.test(words));for(const value of ['Subscription A','actual-node','XUDP','TFO','MPTCP','最近探测','存活','当前连接流量','22',api.fmtBytes(2200),api.fmtBytes(4400),api.fmtBytes(6600)])assert.ok(words.includes(value),value)
    assert.ok(!/延迟历史|98765|NEVER|最高上传|最近错误/.test(words));assert.ok(words.includes('target-19.invalid'));assert.ok(!words.includes('target-20.invalid'))
    view.render();await settle();assert.equal(calls.length,2,'rerender does not poll')
    failConnections=true;button(t,'刷新快照').props.action();t=view.render();await settle();t=view.render();assert.ok(text(t).includes('Shadowsocks'));assert.ok(text(t).includes('连接快照读取失败'));assert.ok(!text(t).includes('总计'))
