@@ -16,6 +16,17 @@ const plot=load('plot-view')
 const props={samples:[10,20],tone:'#3485eb',percent:true,running:true}
 async function mount(){const node=render(plot.MountedCanvasPlot,props,true);await flush();return node}
 ;(async()=>{
+ await test('临时N只由原生cover绘制，painted后随原cover透明，W仅在HTML画布外',async()=>{
+  const calls=[],ctx=new Proxy({}, {get:(_,name)=>(...args)=>calls.push([name,...args]),set:()=>true})
+  plot.drawPlotGrid(ctx,{width:145,height:76});assert.equal(calls.some(c=>c[0]==='fillText'),false)
+  calls.length=0;plot.drawPlotCover(ctx,{width:145,height:76},'#f2f2f7');assert.deepEqual(calls.filter(c=>c[0]==='fillText'),[['fillText','N',9,4]])
+  let t=render(plot.MountedCanvasPlot,props,true);await flush();const h=hosts.at(-1)
+  assert.equal(nodes(t,'Canvas')[0].props.opacity,1);assert.equal(nodes(t,'WebView')[0].props.opacity,1)
+  assert.ok(h.html.includes('<canvas></canvas><span id="plot-web-source" aria-hidden="true">W</span>'))
+  assert.ok(!h.html.includes('>N<'));assert.equal(nodes(t,'Text').length,0,'N adds no native sibling/layout node')
+  h.handlers.plotPainted({generation:1,w:145,h:76});await flush();t=render(plot.MountedCanvasPlot,props)
+  assert.equal(nodes(t,'Canvas')[0].props.opacity,0);assert.equal(nodes(t,'WebView')[0].props.opacity,1);unmount()
+ })
  await test('reveal保留Canvas/WebView两兄弟身份、位置、frame和controller：首次/详情尺寸/重复painted/恢复/重载',async()=>{
   for(const plotHeight of [66,76,96]){
    timeouts.clear();const p={...props,plotHeight};let out=render(plot.MountedCanvasPlot,p,true);await flush();const h=hosts.at(-1)
@@ -113,7 +124,7 @@ async function mount(){const node=render(plot.MountedCanvasPlot,props,true);awai
   let node=render(plot.MountedCanvasPlot,props,true);await flush();let host=hosts.at(-1)
   assert.equal(nodes(node,'Canvas')[0].props.opacity,1)
   const grid=nodes(node,'Canvas')[0];assert.ok(grid,'native grid shown before the WebView is ready');assert.equal(grid.props.opaque,false,'opaque Canvas paints black')
-  const ops=[],ctx={fillRect:(...v)=>ops.push(['fill',...v]),setLineDash:a=>ops.push(['dash',a]),beginPath(){},moveTo:(x,y)=>ops.push(['m',x,y]),lineTo:(x,y)=>ops.push(['l',x,y]),stroke:()=>ops.push(['s'])}
+  const ops=[],ctx={fillRect:(...v)=>ops.push(['fill',...v]),setLineDash:a=>ops.push(['dash',a]),beginPath(){},moveTo:(x,y)=>ops.push(['m',x,y]),lineTo:(x,y)=>ops.push(['l',x,y]),stroke:()=>ops.push(['s']),save(){this.savedFill=this.fillStyle},restore(){this.fillStyle=this.savedFill},fillText:(...v)=>ops.push(['text',...v])}
   grid.props.draw(ctx,{width:70,height:40});assert.equal(ctx.strokeStyle,'rgba(146,149,163,0.22)');assert.equal(ops.filter(o=>o[0]==='m').length,13);assert.equal(ops.filter(o=>o[0]==='l').length,13);assert.equal(ctx.fillStyle,'#f2f2f7');assert.equal(JSON.stringify(ops[0]),'["fill",0,0,70,40]');assert.equal(JSON.stringify(ops[1]),'["dash",[3,3]]');assert.equal(JSON.stringify(ops.filter(o=>o[0]==='l')[7]),'["l",70,40]');assert.equal(JSON.stringify(ops.filter(o=>o[0]==='l')[12]),'["l",70,40]')
   assert.equal(typeof host.handlers.plotPainted,'function')
   host.handlers.plotReady();await flush();node=render(plot.MountedCanvasPlot,props)

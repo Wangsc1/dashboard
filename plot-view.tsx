@@ -24,6 +24,9 @@ export function drawPlotGrid(ctx:any,size:{width:number;height:number}){
 // WebView backing and any web grid underneath without doubling the grid strokes.
 export function drawPlotCover(ctx:any,size:{width:number;height:number},background:string){
   ctx.fillStyle=background;ctx.fillRect(0,0,size.width,size.height);drawPlotGrid(ctx,size)
+  // TEMP display-source probe: N belongs only to this cover; remove with the HTML W after diagnosis.
+  ctx.save();ctx.fillStyle='#b45309';ctx.fillRect(2,2,14,14)
+  ctx.fillStyle='#ffffff';ctx.font=10;ctx.textAlign='center';ctx.textBaseline='top';ctx.fillText('N',9,4);ctx.restore()
 }
 // Card fill = secondarySystemBackground. In a presented sheet iOS uses the elevated
 // palette (dark #2c2c2e, light unchanged), so detail plots must match that fill.

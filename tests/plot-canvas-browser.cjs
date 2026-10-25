@@ -16,12 +16,14 @@ const {chromium,webkit}=require(process.env.PLAYWRIGHT_PATH||'/tmp/neko-editor-b
    const bridge='<script>window.readyCalls=0;window.paintedCalls=0;window.diagnostics=[];window.webkit={messageHandlers:{plotDiagnostic:{postMessage(value){window.diagnostics.push(value);return Promise.resolve(true)}},plotReady:{postMessage(){window.readyCalls++;return Promise.resolve(true)}},plotPainted:{postMessage(){window.paintedCalls++;return Promise.resolve(true)}},plotAck:{postMessage(v){(window.acks=window.acks||[]).push(v.seq);return Promise.resolve(true)}}}};</script>'
    const doc=html.replace('<script>',bridge+'<script>')
    await page.setContent(doc);await page.waitForFunction(()=>window.plotCanvas&&window.readyCalls===1);await page.waitForFunction(()=>window.paintedCalls===1,null,{timeout:3000});assert.equal(await page.evaluate(()=>window.paintedCalls),1,'plotPainted is sent exactly once after a real frame')
+   const assertWebMarker=async p=>assert.deepEqual(await p.evaluate(()=>{const w=document.querySelector('#plot-web-source'),s=getComputedStyle(w),r=w.getBoundingClientRect();return [w.textContent,w.parentElement===document.body,!document.querySelector('canvas').contains(w),s.position,s.pointerEvents,s.opacity,s.display,s.visibility,r.width,r.height]}),['W',true,true,'absolute','none','1','block','visible',14,14])
+   await assertWebMarker(page) // No inline samples: DOM marker does not wait for a curve or running.
    const send=(seq,samples,running=true)=>page.evaluate(m=>window.plotCanvas.update(m),{seq,samples,running,tone:'#3485eb',percent:true,area:false})
    // First tab entry: the document can load before the view has a size. It must not report painted,
    // and must paint grid+report exactly once when size arrives (ResizeObserver), without a new sample.
    {const p2=await browser.newPage({viewport:{width:329,height:96},deviceScaleFactor:3});await p2.route('**/*',r=>r.abort())
     await p2.setContent(doc.replace('<canvas>','<canvas style="display:none">'));await p2.waitForFunction(()=>window.plotCanvas&&window.readyCalls===1)
-    await p2.waitForTimeout(300);assert.equal(await p2.evaluate(()=>[window.paintedCalls,window.plotCanvas.painted()].join()),'0,false','zero-size document never claims a paint')
+    await p2.waitForTimeout(300);await assertWebMarker(p2);assert.equal(await p2.evaluate(()=>[window.paintedCalls,window.plotCanvas.painted()].join()),'0,false','zero-size document never claims a paint')
     await p2.evaluate(()=>{document.querySelector('canvas').style.display='block'});await p2.waitForFunction(()=>window.paintedCalls===1,null,{timeout:3000})
     assert.equal(await p2.evaluate(()=>window.plotCanvas.painted()),true);await p2.close()}
    assert.equal(await send(1,[10,20]),true);assert.deepEqual(await page.evaluate(()=>window.acks),[1],'applied update acknowledges its seq');assert.equal(await page.evaluate(()=>window.plotCanvas.alive()),2)
@@ -34,7 +36,7 @@ const {chromium,webkit}=require(process.env.PLAYWRIGHT_PATH||'/tmp/neko-editor-b
    await page.waitForTimeout(1100);const end=await page.evaluate(()=>window.plotCanvas.inspect());assert.equal(end.shown.at(-1).y,40);assert.equal(end.stats.liveLoops,0);assert.equal(end.seq,3)
    assert.equal(await send(2,[999]),false,'stale update rejected');assert.deepEqual((await page.evaluate(()=>window.plotCanvas.inspect())).history,[10,20,80,40])
    await send(4,[0,10,20,30]);await page.waitForTimeout(100);await send(5,[0,10,20,30],false)
-   const paused=await page.evaluate(()=>window.plotCanvas.inspect());await page.waitForTimeout(200);assert.equal((await page.evaluate(()=>window.plotCanvas.inspect())).stats.frames,paused.stats.frames)
+   const paused=await page.evaluate(()=>window.plotCanvas.inspect());await page.waitForTimeout(200);assert.equal((await page.evaluate(()=>window.plotCanvas.inspect())).stats.frames,paused.stats.frames);await assertWebMarker(page)
    // Return from details: latest history must be painted in full immediately,
    // for both a growing history and a full window with many replaced samples.
    let sequence=6
@@ -64,7 +66,7 @@ const {chromium,webkit}=require(process.env.PLAYWRIGHT_PATH||'/tmp/neko-editor-b
    const pixelsNow=()=>page.evaluate(()=>{const c=document.querySelector('canvas'),d=c.getContext('2d').getImageData(0,0,c.width,c.height).data;return d.some((v,i)=>i%4===3&&v>0)})
    const beforeRestore=await page.evaluate(()=>window.plotCanvas.inspect())
    await page.evaluate(()=>{window.dispatchEvent(new Event('pagehide'));const c=document.querySelector('canvas');c.width=c.width})
-   assert.equal(await pixelsNow(),false)
+   assert.equal(await pixelsNow(),false);await assertWebMarker(page) // W survives a cleared canvas and stopped animation.
    await page.evaluate(()=>window.dispatchEvent(new Event('pageshow')))
    assert.equal(await pixelsNow(),true,'pageshow repaints without samples, resize or native render')
    let restored=await page.evaluate(()=>window.plotCanvas.inspect())
@@ -117,6 +119,8 @@ const {chromium,webkit}=require(process.env.PLAYWRIGHT_PATH||'/tmp/neko-editor-b
    assert.equal(multi.length,32);for(const p of multi){assert.equal(p.stats.liveLoops,0);assert.equal(p.history.length,60);assert.equal(p.shown.at(-1).y,80);assert.ok(p.stats.frames>2)}
    assert.deepEqual(errors,[]);assert.deepEqual(requests,[])
    // Stable visible WebView + opaque-colour cover: no white backing or doubled grid.
+   // Both full screenshots retain their actual source markers (baseline W, cover N).
+   // The simulated native cover sits above W, just like the real sibling Canvas.
    // This exercises pixel composition, not Scripting's native layer compositor.
    for(const background of ['#f2f2f7','#1c1c1e','#2c2c2e']){
     const coverPage=await browser.newPage({viewport:{width:145,height:76},deviceScaleFactor:3});await coverPage.route('**/*',r=>r.abort())
@@ -125,8 +129,11 @@ const {chromium,webkit}=require(process.env.PLAYWRIGHT_PATH||'/tmp/neko-editor-b
     const baseline=await coverPage.screenshot()
     await coverPage.evaluate(({grid,cover,background})=>{
      const drawPlotGrid=eval('('+grid+')'),drawPlotCover=eval('('+cover+')')
-     const c=document.createElement('canvas');c.id='native-cover';Object.assign(c.style,{position:'fixed',left:'0',top:'0',width:'100%',height:'100%',pointerEvents:'none'});document.body.appendChild(c)
-     const d=devicePixelRatio;c.width=innerWidth*d;c.height=innerHeight*d;const ctx=c.getContext('2d');ctx.scale(d,d);drawPlotCover(ctx,{width:innerWidth,height:innerHeight},background)
+     const c=document.createElement('canvas');c.id='native-cover';Object.assign(c.style,{position:'fixed',left:'0',top:'0',width:'100%',height:'100%',pointerEvents:'none',zIndex:'2'});document.body.appendChild(c)
+     const d=devicePixelRatio;c.width=innerWidth*d;c.height=innerHeight*d;const ctx=c.getContext('2d');ctx.scale(d,d)
+     // Scripting Canvas accepts numeric point-size fonts; adapt only that API to browser CSS fonts.
+     const nativeCtx=new Proxy(ctx,{get:(target,key)=>typeof target[key]==='function'?target[key].bind(target):target[key],set:(target,key,value)=>{target[key]=key==='font'&&typeof value==='number'?value+'px sans-serif':value;return true}})
+     drawPlotCover(nativeCtx,{width:innerWidth,height:innerHeight},background)
     },{grid:viewMod.exports.drawPlotGrid.toString(),cover:viewMod.exports.drawPlotCover.toString(),background})
     assert.equal(await coverPage.evaluate(()=>{const c=document.querySelector('#native-cover'),d=c.getContext('2d').getImageData(0,0,c.width,c.height).data;return d.every((v,i)=>i%4!==3||v===255)}),true,'cover fills every pixel; no underlay grid bleeds through')
     const covered=await coverPage.screenshot()
