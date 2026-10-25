@@ -83,6 +83,46 @@ const group=(title='test')=>({name:title,type:'Selector',all:[name,'other'],now:
    if(['disappear','source','disabled','unmount'].includes(kind)){const fresh=owner(pages.GroupSection);try{assert.ok(!text(fresh.render({c,g,expanded:true,onChanged(){}})).includes('678ms'))}finally{fresh.close()}}
   }
  })
+ await test('OpenWrt Nikki/OpenClash discovery and emoji provider nodes use the same routes as working group probes',async()=>{
+  const leaf='🇭🇰 GIGO-STD / %?#',local='🇯🇵 local / %?#',provider='订阅 / A%'
+  const detail={type:'Snell',udp:true,history:[{time:'2026-01-01T00:00:00Z',delay:39}],password:'NEVER'}
+  for(const plugin of ['nikki','openclash']){
+   const c={id:'route-diff-'+plugin,name:'Mock',kind:'openwrt',plugin,auto:true,host:'router-'+plugin+'.invalid',url:'http://luci-'+plugin+'.invalid',username:'root'}
+   const base='http://'+c.host+':9098',providerPath='/providers/proxies/'+encodeURIComponent(provider)+'/'+encodeURIComponent(leaf),localPath='/proxies/'+encodeURIComponent(local)
+   responder=(url,init)=>{
+    if(url===c.url+'/ubus'){
+     const [,obj,method,args]=JSON.parse(init.body).params
+     if(obj==='session')return {body:{result:[0,{ubus_rpc_session:'synthetic-session'}]}}
+     assert.equal(obj,'uci');assert.equal(method,'get');assert.equal(args.config,plugin)
+     return {body:{result:[0,{values:plugin==='nikki'?{api_listen:'0.0.0.0:9098',api_secret:'synthetic-token'}:{cn_port:'9098',dashboard_password:'synthetic-token'}}]}}
+    }
+    assert.ok(url.startsWith(base+'/'),'controller must use discovered host/port, not LuCI forwarding')
+    assert.equal(init.headers.Authorization,'Bearer synthetic-token')
+    const path=url.slice(base.length).split('?')[0]
+    if(path==='/proxies')return {body:{proxies:{G:{type:'Selector',all:[leaf,local],now:leaf},[local]:{type:'Direct',history:[{delay:33}]}}}}
+    if(path==='/providers/proxies')return {body:{providers:{[provider]:{vehicleType:'HTTP',proxies:[{name:leaf,...detail}]}}}}
+    if(path===providerPath||path===localPath)return {body:detail}
+    if(path===providerPath+'/healthcheck'||path===localPath+'/delay')return {body:{delay:77}}
+    return {status:404} // provider nodes are NOT in tunnel.Proxies().
+   }
+   calls.length=0;const g=(await api.loadGroups(c))[0];assert.equal(g.delays[leaf],39);assert.equal(g.testTargets[leaf].provider,provider)
+   assert.equal(g.testTargets[local].provider,undefined);assert.ok(calls.some(x=>x.url===c.url+'/ubus'))
+   calls.length=0;const batch=await api.testGroup(c,g);assert.equal(batch[leaf],77);assert.equal(batch[local],77)
+   const successfulPaths=calls.map(x=>x.url.split('?')[0]);assert.ok(successfulPaths.includes(base+providerPath+'/healthcheck'));assert.ok(successfulPaths.includes(base+localPath+'/delay'))
+   await assert.rejects(()=>api.testProxyNode(c,leaf),e=>/HTTP 404/.test(e.message)&&!/9090|端口/.test(e.message),'old global-only path must fail without suggesting a port change')
+   const host=actionsOwner(),card=owner(pages.GroupSection),form=owner(pages.ProxyNodeDetailPage)
+   try{
+    let state=host.render({c}),t=card.render({c,g,expanded:true,nodeActions:state,onChanged(){throw Error('no switch/refetch')}});calls.length=0
+    await action(t,leaf,'speedometer');assert.equal(calls.length,1);assert.ok(calls[0].url.startsWith(base+providerPath+'/healthcheck?'))
+    assert.ok(calls[0].url.includes('timeout='+Math.min(2000,pref.getPreferences().testTimeout)));assert.ok(calls[0].url.includes('url='+encodeURIComponent(pref.getPreferences().testURL)))
+    assert.ok(text(card.render()).includes('77ms'))
+    action(t,leaf,'info.circle');state=host.render();assert.equal(state.destination.content.props.target.provider,provider)
+    form.render(state.destination.content.props);await settle();assert.ok(text(form.render()).includes('类型：Snell'));assert.equal(calls.length,2);assert.equal(calls[1].url,base+providerPath)
+    assert.ok(!text(form.render()).includes('NEVER'));assert.ok(calls.every(x=>x.init.method==='GET'))
+    calls.length=0;await api.testProxyNode(c,local,g.testTargets[local]);await api.loadProxyNode(c,local,g.testTargets[local]);assert.equal(calls[0].url.split('?')[0],base+localPath+'/delay');assert.equal(calls[1].url,base+localPath)
+   }finally{form.close();card.close();host.close()}
+  }
+ })
  await test('native detail unknown fields, HTTP error and late completion safety',async()=>{
   const a=owner(pages.ProxyNodeDetailPage);responder=()=>({body:{type:'VMess',udp:true,alive:false}})
   let t=a.render({c:device,name});await settle();t=a.render();assert.equal(t.props.navigationTitle,name);assert.ok(text(t).includes('UDP：是'));assert.ok(text(t).includes('XUDP：内核未提供'));assert.ok(text(t).includes('存活（最近探测）：否'));assert.ok(!text(t).includes('流量'));a.close()

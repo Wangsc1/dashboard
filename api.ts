@@ -1,7 +1,7 @@
 import { CpuSampler, CpuUsage, CpuMeta, parseCpuInfo, thermalCelsius } from "./openwrt-metrics"
 
 import { getPreferences, customHeaders, recordEvent, controllerHealth, feedback } from "./preferences"
-export const VERSION = "1.94"
+export const VERSION = "1.95"
 
 export type Kind = "clash" | "openwrt"
 export type Plugin = "openclash" | "nikki" | "mihomo"
@@ -88,7 +88,9 @@ async function http(c: Controller, path: string, init: { method?: string; body?:
   } as any, path)
   if (!r.ok) {
     if (r.status === 401 || r.status === 403) throw new ControllerHTTPError("认证失败，请检查密钥")
-    if (r.status === 404) throw new ControllerHTTPError("HTTP 404：该地址不是 Clash 控制器接口，请检查端口（通常是 9090）")
+    if (r.status === 404) throw new ControllerHTTPError(path.startsWith("/proxies/") || path.startsWith("/providers/proxies/")
+      ? "HTTP 404：节点或提供者不存在，或当前内核不支持此接口"
+      : "HTTP 404：接口或资源不存在，请检查请求路径及内核支持")
     throw new ControllerHTTPError(`请求失败 HTTP ${r.status}`)
   }
   const text = await r.text()
@@ -559,12 +561,19 @@ async function delayRequest(c: Controller, path: string, timeout: number): Promi
   pendingDelayRequests.set(key, request)
   try { return await request } finally { if (pendingDelayRequests.get(key) === request) pendingDelayRequests.delete(key) }
 }
+// Global proxies and provider-owned proxies have different lookup tables/routes.
+function proxyNodePath(target: ProxyTestTarget): string {
+  return target.provider ? `/providers/proxies/${enc(target.provider)}/${enc(target.name)}` : `/proxies/${enc(target.name)}`
+}
+function proxyNodeDelayPath(target: ProxyTestTarget): string {
+  return proxyNodePath(target) + (target.provider ? "/healthcheck" : "/delay")
+}
 async function probeNodes(c: Controller, names: string[], url: string, timeout: number, targets?: Record<string, ProxyTestTarget>, onProgress?: (name: string, delay: number) => void): Promise<Record<string, number>> {
   const res: Record<string, number> = {}
   await Promise.all([...new Set(names)].map(async n => {
     const target = targets?.[n] ?? { name: n }
     if (["reject", "rejectdrop", "reject-drop", "block"].includes(target.type?.toLowerCase() ?? "")) return
-    const route = target.provider ? `/providers/proxies/${enc(target.provider)}/${enc(target.name)}/healthcheck` : `/proxies/${enc(target.name)}/delay`
+    const route = proxyNodeDelayPath(target)
     let d = 0
     try { const j = await delayRequest(c, `${route}?url=${enc(url)}&timeout=${timeout}`, timeout); d = num(j.delay) } catch { d = 0 }
     res[n] = d
@@ -580,8 +589,8 @@ export interface ProxyNodeDetail {
 export function proxyNodeError(error: unknown): string {
   return error instanceof ControllerHTTPError ? error.message : "请求失败：请检查网络、认证及内核支持"
 }
-export async function loadProxyNode(c0: Controller, name: string): Promise<ProxyNodeDetail> {
-  const c = await cc(c0), j = await http(c, "/proxies/" + enc(name))
+export async function loadProxyNode(c0: Controller, name: string, target: ProxyTestTarget = { name }): Promise<ProxyNodeDetail> {
+  const c = await cc(c0), j = await http(c, proxyNodePath(target))
   if (!j || typeof j !== "object" || Array.isArray(j)) throw new ControllerHTTPError("代理详情响应无效")
   const detail: ProxyNodeDetail = { history: [] }
   if (typeof j.type === "string") detail.type = j.type
@@ -593,9 +602,9 @@ export async function loadProxyNode(c0: Controller, name: string): Promise<Proxy
   }
   return detail
 }
-export async function testProxyNode(c0: Controller, name: string): Promise<number> {
+export async function testProxyNode(c0: Controller, name: string, target: ProxyTestTarget = { name }): Promise<number> {
   const c = await cc(c0), prefs = getPreferences(), timeout = Math.min(2000, prefs.testTimeout)
-  const j = await delayRequest(c, `/proxies/${enc(name)}/delay?url=${enc(prefs.testURL)}&timeout=${timeout}`, timeout)
+  const j = await delayRequest(c, `${proxyNodeDelayPath(target)}?url=${enc(prefs.testURL)}&timeout=${timeout}`, timeout)
   if (typeof j?.delay !== "number" || !Number.isFinite(j.delay) || j.delay <= 0) throw new ControllerHTTPError("延迟测试失败：内核未返回有效延迟")
   return j.delay
 }

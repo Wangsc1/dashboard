@@ -1,7 +1,7 @@
 import { NikkiManagement, NikkiSubscription, NikkiRule, NikkiFile, NikkiManagementError, NIKKI_RULE_TYPES, loadNikkiManagement, saveNikkiSubscription, deleteNikkiSubscription, updateNikkiSubscription, saveNikkiRule, deleteNikkiRule, setNikkiRulesEnabled, reorderNikkiRules, selectNikkiProfile, readNikkiFile, saveNikkiFile } from "./api"
 import { rootToolbar } from "./root-toolbar"
 import { AppEvents, Button, Divider, HStack, VStack, Text, Image, Circle, RoundedRectangle, Spacer, ScrollView, LazyVStack, NavigationLink, Menu, Picker, TextField, Toggle, Form, Section, ProgressView, Editor, ZStack, modifiers, Safari, useState, useEffect, useMemo } from "scripting"
-import { ProxyNodeDetail, loadProxyNode, testProxyNode, proxyNodeError, Controller, Group, Conn, Rule, Provider, setRuleDisabled, closeRuleConnections, ruleToggleSupported, loadGroups, testGroup, selectProxy, loadProviders, updateProvider, loadRules, loadConnections, closeConnection, closeAllConnections, fmtBytes, fmtSpeed, fmtUptime, delayColor, loadRuntimeVersions, checkCoreUpdate, loadNikkiRuntime, NikkiRuntime, verifyCoreRestart, upgradeCoreAndVerify, lastControllerMode, loadConfig, setMode as setControllerMode, nikkiService, nikkiServiceStatus, coreAction, CoreAction, queryDNS, webpage } from "./api"
+import { ProxyTestTarget, ProxyNodeDetail, loadProxyNode, testProxyNode, proxyNodeError, Controller, Group, Conn, Rule, Provider, setRuleDisabled, closeRuleConnections, ruleToggleSupported, loadGroups, testGroup, selectProxy, loadProviders, updateProvider, loadRules, loadConnections, closeConnection, closeAllConnections, fmtBytes, fmtSpeed, fmtUptime, delayColor, loadRuntimeVersions, checkCoreUpdate, loadNikkiRuntime, NikkiRuntime, verifyCoreRestart, upgradeCoreAndVerify, lastControllerMode, loadConfig, setMode as setControllerMode, nikkiService, nikkiServiceStatus, coreAction, CoreAction, queryDNS, webpage } from "./api"
 import { usePreferences, KernelConfigPage, updatePreference, Choice, ThresholdRange, Range, TestURLField } from "./settings-ui"
 import { NODE_SORT_OPTIONS, savePreferences, getPreferences, cachedIcon, readCachedIcon, feedback } from "./preferences"
 import { selectable, sortedNodes, historyFor, SceneVisibility, filterConnections, clientLabels, saveClientLabel, sourceKey, confirmed } from "./dashboard-model"
@@ -59,12 +59,12 @@ function publishNodeDelay(c:Controller,name:string,delay:number) {
   for(const [key,values] of testedDelays) if(key.startsWith(source+"|")&&Object.prototype.hasOwnProperty.call(values,name)) testedDelays.set(key,{...values,[name]:delay})
   for(const notify of nodeDelayListeners.get(source)??[])notify(name,delay)
 }
-export function ProxyNodeDetailPage({c,name}:{c:Controller;name:string}) {
+export function ProxyNodeDetailPage({c,name,target}:{c:Controller;name:string;target?:ProxyTestTarget}) {
   const [data,setData]=useState<ProxyNodeDetail|null>(null),[error,setError]=useState(""),[revision,setRevision]=useState(0)
-  const source=JSON.stringify([c,name]),[owner]=useState({epoch:0,alive:true,source})
+  const source=JSON.stringify([c,name,target]),[owner]=useState({epoch:0,alive:true,source})
   if(owner.source!==source){owner.source=source;owner.epoch++}
   useEffect(()=>{owner.alive=true;const epoch=++owner.epoch;setData(null);setError("")
-    void loadProxyNode(c,name).then(d=>{if(owner.alive&&owner.epoch===epoch)setData(d)}).catch(e=>{if(owner.alive&&owner.epoch===epoch)setError(proxyNodeError(e))})
+    void loadProxyNode(c,name,target).then(d=>{if(owner.alive&&owner.epoch===epoch)setData(d)}).catch(e=>{if(owner.alive&&owner.epoch===epoch)setError(proxyNodeError(e))})
     return()=>{owner.epoch++}
   },[source,name,revision])
   useEffect(()=>()=>{owner.alive=false;owner.epoch++},[])
@@ -72,13 +72,13 @@ export function ProxyNodeDetailPage({c,name}:{c:Controller;name:string}) {
   return <Form background="systemBackground" navigationTitle={name} navigationBarTitleDisplayMode="inline" onAppear={()=>{owner.alive=true}} onDisappear={()=>{owner.alive=false;owner.epoch++}}>
     {error?<Section><Text foregroundStyle="systemRed">{error}</Text><Button title="重试" action={()=>{owner.alive=true;setRevision(n=>n+1)}}/></Section>:null}
     {!data&&!error?<Section><Text>正在读取…</Text></Section>:null}
-    {data?<><Section header={<Text>代理信息</Text>}><Text>{`类型：${data.type||"内核未提供"}`}</Text>{(["udp","xudp","tfo","mptcp","alive"] as const).map(k=><Text key={k}>{`${k==="alive"?"存活（最近探测）":k.toUpperCase()}：${boolean(data[k])}`}</Text>)}</Section>
-      <Section header={<Text>延迟历史</Text>} footer={<Text>仅内核提供的最近十次记录；不代表实时可用性。</Text>}>{data.history.length?data.history.map((h,i)=><Text key={String(i)}>{`${h.time??"时间未提供"} · ${h.delay>0?h.delay+" ms":"失败"}`}</Text>):<Text>内核未提供记录</Text>}</Section></>:null}
+    {data?<><Section header={<Text>代理信息</Text>}><Text>{`类型：${data.type||"内核未提供"}`}</Text>{target&&target.name!==name?<Text>{`实际节点：${target.name}`}</Text>:null}{(["udp","xudp","tfo","mptcp","alive"] as const).map(k=><Text key={k}>{`${k==="alive"?"存活（最近探测）":k.toUpperCase()}：${boolean(data[k])}`}</Text>)}</Section>
+      <Section header={<Text>延迟历史</Text>} footer={<Text>仅内核提供的最近十次记录；不代表实时可用性。</Text>}>{data.history.length?data.history.map((entry,i)=><Text key={String(i)}>{`${entry.time??"时间未提供"} · ${entry.delay>0?entry.delay+" ms":"失败"}`}</Text>):<Text>内核未提供记录</Text>}</Section></>:null}
   </Form>
 }
 // The page (not a lazy card/context-menu preview) owns navigation and actions.
 export function useProxyNodeActions(c:Controller|null,enabled:boolean) {
-  const source=JSON.stringify(c),[detail,setDetail]=useState<{source:string;name:string}|null>(null)
+  const source=JSON.stringify(c),[detail,setDetail]=useState<{source:string;name:string;target?:ProxyTestTarget}|null>(null)
   const [busy,setBusy]=useState(""),[notice,setNotice]=useState("")
   const [owner]=useState({source,epoch:0,alive:true,visible:true,pending:false,enabled})
   if(owner.source!==source||owner.enabled!==enabled){owner.source=source;owner.enabled=enabled;owner.epoch++;owner.pending=false}
@@ -86,18 +86,18 @@ export function useProxyNodeActions(c:Controller|null,enabled:boolean) {
   useEffect(()=>{if(!enabled){setBusy("");setNotice("")}},[enabled])
   useEffect(()=>()=>{owner.alive=false;owner.epoch++;owner.pending=false},[])
   const valid=()=>owner.alive&&owner.source===source&&owner.enabled
-  function show(name:string){if(valid())setDetail({source,name})}
-  async function test(name:string){
+  function show(name:string,target?:ProxyTestTarget){if(valid())setDetail({source,name,target:target?{...target}:undefined})}
+  async function test(name:string,target?:ProxyTestTarget){
     if(!c||!valid()||!owner.visible||owner.pending)return
     owner.pending=true;const epoch=owner.epoch,controller={...c}
     const current=()=>valid()&&owner.visible&&owner.epoch===epoch
     setBusy(name);setNotice(`${name}：测速中…`)
-    try{const value=await testProxyNode(controller,name);if(current()){publishNodeDelay(controller,name,value);setNotice(`${name}：${value} ms`)}}
+    try{const value=await testProxyNode(controller,name,target);if(current()){publishNodeDelay(controller,name,value);setNotice(`${name}：${value} ms`)}}
     catch(e){if(current())setNotice(`${name}：${proxyNodeError(e)}`)}
     finally{if(current()){owner.pending=false;setBusy("")}}
   }
   const destination={isPresented:!!c&&detail?.source===source,onChanged:(v:boolean)=>{if(!v)setDetail(null)},
-    content:c&&detail?.source===source?<ProxyNodeDetailPage key={source+detail.name} c={c} name={detail.name}/>:<Text/>}
+    content:c&&detail?.source===source?<ProxyNodeDetailPage key={source+detail.name} c={c} name={detail.name} target={detail.target}/>:<Text/>}
   return {show,test,busy,notice,destination,
     appear:()=>{owner.visible=true},
     disappear:()=>{owner.visible=false;owner.epoch++;if(owner.pending)setNotice("");owner.pending=false;setBusy("")}}
@@ -139,7 +139,7 @@ export function GroupSection({c,g,onChanged,expanded=false,nodeActions}:{c:Contr
   const toggleOpen=()=>{setOpen(v=>!v);feedback()}
   return <Card><HStack onLongPressGesture={()=>{if(prefs.collapseGesture)toggleOpen()}}><Button buttonStyle="plain" frame={{maxWidth:"infinity",alignment:"leading"}} action={toggleOpen}><HStack spacing={12} frame={{maxWidth:"infinity",alignment:"leading"}} contentShape="rect">{prefs.customIcons ? <GroupIcon g={g}/> : null}<VStack alignment="leading" spacing={4}><Text font={16} fontWeight="semibold">{g.name}</Text><HStack spacing={10}><Text font={12} foregroundStyle="secondaryLabel">{now||"内核未提供当前节点"}</Text>{d!==undefined?<><Text font={12} foregroundStyle={delayColor(d) as any}>{d>0?`${d}ms`:"超时"}</Text></>:null}</HStack></VStack><Spacer/></HStack></Button><Button title="" systemImage="bolt.fill" tint="systemOrange" action={async()=>{if(busy)return;setBusy(true);await attempt(async()=>{const save=(k:string,v:number)=>{testedDelays.set(storeKey,{...(testedDelays.get(storeKey)??{}),[k]:v});testedNodes.set(`${sourceKey(c)}|${k}`,v)};const d=await testGroup(c,g,(k,v)=>{save(k,v);if(guard.alive)setDelays(merged())});for(const[k,v]of Object.entries(d))save(k,v);if(guard.alive){setDelays(merged());onChanged()}});if(guard.alive)setBusy(false)}}/><Button buttonStyle="plain" action={toggleOpen}><VStack frame={{width:44,height:44}} contentShape="rect"><GroupChevron expanded={isOpen}/></VStack></Button></HStack>
     {prefs.collapseGesture?<Button title={open?"收起预览":"展开预览"} action={()=>{setOpen(!open);feedback()}}/>:null}
-    {expanded||open?<>{(()=>{const ns=sorted.slice(0,nodeLimit),rows:string[][]=[];for(let i=0;i<ns.length;i+=2)rows.push(ns.slice(i,i+2));return rows.map(r=><HStack key={r[0]} spacing={8}>{r.map(n=>{const on=now===n,dn=delays[n];return <VStack key={n} spacing={0} frame={{maxWidth:"infinity"}} contextMenu={nodeActions?{menuItems:<><Button title="详细信息" systemImage="info.circle" action={()=>nodeActions.show(n)}/><Button title={nodeActions.busy===n?"测速中…":"延迟测试"} systemImage="speedometer" disabled={!!nodeActions.busy} action={()=>nodeActions.test(n)}/></>}:undefined}><Button key={n} buttonStyle="plain" disabled={!selectable(g)} frame={{maxWidth:"infinity"}} action={()=>{if(n===now)return;const prev=now;setNow(n);void attempt(async()=>{try{await selectProxy(c,g.name,n)}catch(e){if(guard.alive)setNow(prev);throw e}if(guard.alive)onChanged()})}}><VStack alignment="leading" spacing={10} frame={{maxWidth:"infinity",alignment:"leading"}} padding={{horizontal:10,vertical:14}} background={<RoundedRectangle cornerRadius={12} fill={on?"systemBlue":"tertiarySystemBackground"}/>}><HStack><Text font={prefs.proxyStyle==="compact"?12:13} fontWeight="semibold" lineLimit={1} foregroundStyle={on?"white":FG}>{n}</Text><Spacer/></HStack><HStack spacing={4} frame={{maxWidth:"infinity"}}><Text font={11} lineLimit={1} foregroundStyle={on?"white":"secondaryLabel"}>{g.types?.[n]||"协议未知"}</Text><Spacer/><Text font={11} foregroundStyle={dn!==undefined?delayColor(dn) as any:"secondaryLabel"}>{nodeActions?.busy===n?"测速中…":dn===undefined?(failed.has(n)?"超时":"未测速"):dn>0?`${dn}ms`:"超时"}</Text></HStack></VStack></Button></VStack>})}{r.length<2?<Spacer frame={{maxWidth:"infinity"}}/>:null}</HStack>)})()}<Pages hideCount limit={nodeLimit} total={g.all.length} more={()=>setNodeLimit(nodeLimit+40)}/></>:null}
+    {expanded||open?<>{(()=>{const ns=sorted.slice(0,nodeLimit),rows:string[][]=[];for(let i=0;i<ns.length;i+=2)rows.push(ns.slice(i,i+2));return rows.map(r=><HStack key={r[0]} spacing={8}>{r.map(n=>{const on=now===n,dn=delays[n];return <VStack key={n} spacing={0} frame={{maxWidth:"infinity"}} contextMenu={nodeActions?{menuItems:<><Button title="详细信息" systemImage="info.circle" action={()=>nodeActions.show(n,g.testTargets?.[n])}/><Button title={nodeActions.busy===n?"测速中…":"延迟测试"} systemImage="speedometer" disabled={!!nodeActions.busy} action={()=>nodeActions.test(n,g.testTargets?.[n])}/></>}:undefined}><Button key={n} buttonStyle="plain" disabled={!selectable(g)} frame={{maxWidth:"infinity"}} action={()=>{if(n===now)return;const prev=now;setNow(n);void attempt(async()=>{try{await selectProxy(c,g.name,n)}catch(e){if(guard.alive)setNow(prev);throw e}if(guard.alive)onChanged()})}}><VStack alignment="leading" spacing={10} frame={{maxWidth:"infinity",alignment:"leading"}} padding={{horizontal:10,vertical:14}} background={<RoundedRectangle cornerRadius={12} fill={on?"systemBlue":"tertiarySystemBackground"}/>}><HStack><Text font={prefs.proxyStyle==="compact"?12:13} fontWeight="semibold" lineLimit={1} foregroundStyle={on?"white":FG}>{n}</Text><Spacer/></HStack><HStack spacing={4} frame={{maxWidth:"infinity"}}><Text font={11} lineLimit={1} foregroundStyle={on?"white":"secondaryLabel"}>{g.types?.[n]||"协议未知"}</Text><Spacer/><Text font={11} foregroundStyle={dn!==undefined?delayColor(dn) as any:"secondaryLabel"}>{nodeActions?.busy===n?"测速中…":dn===undefined?(failed.has(n)?"超时":"未测速"):dn>0?`${dn}ms`:"超时"}</Text></HStack></VStack></Button></VStack>})}{r.length<2?<Spacer frame={{maxWidth:"infinity"}}/>:null}</HStack>)})()}<Pages hideCount limit={nodeLimit} total={g.all.length} more={()=>setNodeLimit(nodeLimit+40)}/></>:null}
   </Card>
 }
 const PROXY_MODE_OPTIONS = [["rule","规则模式"],["direct","直连模式"],["global","全局模式"]] as const
