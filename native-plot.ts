@@ -11,9 +11,15 @@ export function createNativePlot():NativePlotModel {
 }
 export function updateNativePlot(s:NativePlotModel,input:NativePlotInput,now:number){
   const sampleAt=Number(input.sampleAt)||0,observed=sampleAt>s.lastSampleAt&&s.lastSampleAt?sampleAt-s.lastSampleAt:1000
-  s.lastSampleAt=sampleAt;s.config=input
+  const previous=s.config
   const values=input.samples.filter(Number.isFinite).slice(-60),target=canonicalPlot(values),old=s.history,wasActive=s.active
-  s.animating=false;s.active=input.running;s.scaleTo=input.percent?100:Math.max(1024,...values)
+  const sameFrame=sampleAt===previous.sampleAt&&values.length===old.length&&values.every((v,i)=>v===old[i])&&input.percent===previous.percent
+  s.config=input;s.active=input.running
+  // running/theme changes can replay the retained snapshot on resume. They are not
+  // samples: do not shift a full window or reintroduce its pre-background timestamp.
+  if(sameFrame){if(input.resume||!s.active||!wasActive)restoreNativePlot(s);return}
+  s.lastSampleAt=input.running?sampleAt:0
+  s.animating=false;s.scaleTo=input.percent?100:Math.max(1024,...values)
   if(input.resume||!s.active||!wasActive||!s.shown.length||values.length<2||values.length<old.length){s.history=values;s.shown=target;s.scale=s.scaleTo;return}
   let origin=s.shown
   if(origin.length>60&&origin[0].x<0)origin=origin.slice(1)
@@ -30,7 +36,7 @@ export function advanceNativePlot(s:NativePlotModel,now:number){
   s.shown=s.from.map((a,i)=>({x:mix(a.x,s.to[i].x),y:mix(a.y,s.to[i].y)}));s.scale=mix(s.scaleFrom,s.scaleTo)
   if(p>=1)s.animating=false
 }
-export function restoreNativePlot(s:NativePlotModel){s.animating=false;s.shown=canonicalPlot(s.history);s.scale=s.scaleTo}
+export function restoreNativePlot(s:NativePlotModel){s.animating=false;s.shown=canonicalPlot(s.history);s.scale=s.scaleTo;s.lastSampleAt=0}
 export function drawNativeGrid(ctx:any,size:{width:number;height:number}){
   const w=size.width,h=size.height
   ctx.strokeStyle='rgba(146,149,163,0.22)';ctx.lineWidth=.6;ctx.setLineDash([3,3]);ctx.beginPath()

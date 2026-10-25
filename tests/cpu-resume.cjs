@@ -76,9 +76,9 @@ async function scenario(kind,negative){
   }else{
     assert.equal(cpuValue(tree),60,'baseline on resume must not erase latest displayed CPU')
     equal(frame(tree).overview.wrt.cpus,cpus);assert.equal(frame(tree).histories.cpu.cpu,history,'resume baseline neither appends nor clears CPU history')
-    equal(host.model.history,history);assert.equal(host.running,true)
+    equal(host.model.history,history);assert.equal(host.running,true);assert.equal(host.model.animating,false,'resume baseline snapshot must not replay a transition')
     await tick(30)
-    assert.equal(cpuValue(tree),30);equal(frame(tree).histories.cpu.cpu,[20,40,60,30]);equal(host.model.history,[20,40,60,30])
+    assert.equal(cpuValue(tree),30);equal(frame(tree).histories.cpu.cpu,[20,40,60,30]);equal(host.model.history,[20,40,60,30]);assert.equal(host.model.duration,1000,'first genuine post-resume delta uses foreground cadence, not the paused 120s')
     for(const c of frame(tree).overview.wrt.cpus)assert.equal(c.usage,30,'new delta excludes paused interval')
     // A genuine later counter rollback still breaks history; preservation is
     // strictly one resume-baseline frame, not a blanket last-value fallback.

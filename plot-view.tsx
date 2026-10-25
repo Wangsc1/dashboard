@@ -27,17 +27,17 @@ export function MountedCanvasPlot({samples,tone,plotHeight=96,plotWidth,area=fal
   const host=ref.current
   const [paused,setPaused]=useState(false)
   const record=(event:Parameters<typeof plotLifecycle>[0],size?:{w:number;h:number})=>plotLifecycle(event,0,size,host.trace)
-  const park=()=>{cancelCompletion(host);host.ticking=false;if(host.alive)setPaused(true)}
-  const wake=()=>{cancelCompletion(host);host.revision++;if(host.alive&&host.foreground&&host.visible){host.ticking=true;setPaused(false)}}
+  const park=()=>{cancelCompletion(host);const ticking=host.ticking;host.ticking=false;if(host.alive&&ticking)setPaused(true)}
+  const wake=()=>{cancelCompletion(host);host.revision++;if(host.alive&&host.foreground&&host.visible&&!host.ticking){host.ticking=true;setPaused(false)}}
   useEffect(()=>{
     host.alive=true;record('mount')
     const changed=(phase:'active'|'inactive'|'background')=>{
       if(!host.alive||(phase==='active'&&host.foreground))return
       record(phase==='active'?'scene-active':phase==='inactive'?'scene-inactive':'scene-background')
       host.foreground=phase==='active';restoreNativePlot(host.model);host.model.active=host.running&&host.foreground&&host.visible
-      if(host.foreground){wake()}else{park()}
+      if(host.foreground&&host.running){wake()}else{park()}
     }
-    const kick=(reason:'selected'|'appear')=>{if(!host.foreground||!host.visible)return;record(reason==='selected'?'kick-selected':'kick-appear');restoreNativePlot(host.model);wake()}
+    const kick=(reason:'selected'|'appear')=>{if(!host.alive||!host.foreground||!host.visible||!host.running||host.ticking)return;record(reason==='selected'?'kick-selected':'kick-appear');wake()}
     AppEvents.scenePhase.addListener(changed);kickListeners.add(kick)
     return()=>{host.alive=false;host.ticking=false;cancelCompletion(host);AppEvents.scenePhase.removeListener(changed);kickListeners.delete(kick);record('dispose')}
   },[host])
@@ -52,7 +52,7 @@ export function MountedCanvasPlot({samples,tone,plotHeight=96,plotWidth,area=fal
   useEffect(()=>{wake()},[plotHeight,plotWidth,host])
   return <TimelineCanvas schedule="animation" paused={paused} opaque={false}
     frame={{minHeight:plotHeight,maxHeight:plotHeight,minWidth:0,maxWidth:'infinity'}}
-    onAppear={()=>{if(!host.alive)return;const returning=!host.visible;host.visible=true;record('host-appear');if(returning){restoreNativePlot(host.model);host.model.active=host.running&&host.foreground};wake()}}
+    onAppear={()=>{if(!host.alive)return;const returning=!host.visible;host.visible=true;record('host-appear');if(returning){restoreNativePlot(host.model);host.model.active=host.running&&host.foreground;wake()}}
     onDisappear={()=>{if(!host.alive)return;host.visible=false;record('host-disappear');restoreNativePlot(host.model);host.model.active=false;park()}}
     draw={(ctx,size)=>{
       if(!host.alive)return

@@ -18,7 +18,7 @@ function native(tree){assert.equal(tree.type,'TimelineCanvas');assert.equal(tree
   first.forEach(t=>draw(t));assert.equal(timers.size,1,'20 completions use ONE process timer');drain()
   os.forEach((o,i)=>{assert.equal(o.render().props.paused,true);assert.equal(o.host().model,models[i])})
   now+=1000;os.forEach(o=>{o.props.samples=[10,20,50]});let trees=os.map(o=>native(o.render()));assert.ok(trees.every(t=>t.props.paused===false));assert.ok(os.every(o=>o.host().model.animating))
-  const before=writes;now+=500;trees.forEach(t=>draw(t));const mid=os[0].host().model.shown.at(-1).y;trees[0].props.onAppear();assert.equal(os[0].host().model.shown.at(-1).y,mid,'duplicate appear does not snap interpolation');emitScene('active');assert.equal(os[0].host().model.shown.at(-1).y,mid,'duplicate active does not snap');assert.equal(writes,before+1);assert.equal(timers.size,0);assert.ok(os.every(o=>o.host().model.shown.at(-1).y===40))
+  const before=writes;now+=500;trees.forEach(t=>draw(t));const mid=os[0].host().model.shown.at(-1).y;trees[0].props.onAppear();assert.equal(os[0].host().model.shown.at(-1).y,mid,'duplicate appear does not snap interpolation');emitScene('active');assert.equal(os[0].host().model.shown.at(-1).y,mid,'duplicate active does not snap');assert.equal(writes,before);assert.equal(timers.size,0);assert.ok(os.every(o=>o.host().model.shown.at(-1).y===40))
   now+=500;trees.forEach(t=>draw(t));assert.equal(timers.size,1);assert.ok(os.every(o=>o.host().model.shown.at(-1).y===50),'target actually drawn before park');assert.ok(os.every(o=>o.render().props.paused===false))
   // A new sample invalidates that host's pending completion, without canceling siblings.
   os[0].props.samples=[10,20,70];os[0].render();drain();assert.equal(os[0].render().props.paused,false);assert.ok(os.slice(1).every(o=>o.render().props.paused===true))
@@ -41,6 +41,49 @@ function native(tree){assert.equal(tree.type,'TimelineCanvas');assert.equal(tree
   t.props.onAppear();t=o.render();assert.equal(model.shown.at(-1).y,100);draw(t);drain();assert.equal(o.render().props.paused,true)
   o.props.running=false;o.render();draw(o.render());drain();plot.requestPlotKick('appear');t=o.render();assert.equal(model.animating,false);draw(t);drain()
   assert.equal(o.host().model,model);o.close();assert.equal(timers.size,0);assert.equal(sceneListeners.size,0);plot.requestPlotKick('selected');assert.equal(timers.size,0)
+ })
+ await test('resume cadence matches uninterrupted 1s samples across long gaps and native event orderings',async()=>{
+  const history=Array.from({length:60},(_,i)=>10+i)
+  async function series(order){
+   const o=instance({samples:history,tone:'#3485eb',running:true,percent:true});let t=o.render();draw(t);drain()
+   now+=1000;o.props.samples=history.map(x=>x+1);t=o.render();now+=400;draw(t);now+=600;draw(t);drain()
+   if(order){
+    emitScene('inactive');emitScene('background');if(order!=='retained-running'){o.props.running=false;o.render()}now+=120000
+    if(order==='appear-first')t.props.onDisappear(),t.props.onAppear()
+    if(order==='props-first'){o.props.running=true;o.render()}
+    emitScene('inactive');emitScene('active')
+    if(order==='active-first')t.props.onDisappear(),t.props.onAppear()
+    o.props.running=true;t=o.render();assert.equal(o.host().model.animating,false,'retained snapshot is not a sample/shift');draw(t);drain()
+   }
+   const result=[],base=order?now:now-1000
+   for(let i=2;i<6;i++){
+    now=base+(i-1)*1000;o.props.samples=history.map(x=>x+i);t=o.render();const m=o.host().model
+    result.push({duration:m.duration,from:m.from.map(p=>({...p})),to:m.to.map(p=>({...p}))})
+    now+=400;draw(t);now+=600;draw(t);drain()
+   }
+   o.close();return result
+  }
+  const cold=await series(null)
+  for(const order of ['appear-first','active-first','retained-running','props-first']){
+   const resumed=await series(order)
+   assert.deepEqual(resumed.map(x=>x.duration),cold.map(x=>x.duration),'background time must not become a 2500ms transition')
+   assert.deepEqual(resumed.slice(1),cold.slice(1),'after immediate restore, equal relative samples have equal geometry/cadence')
+  }
+  assert.equal(timers.size,0);assert.equal(sceneListeners.size,0)
+ })
+ await test('resume does not wake retained running=false hosts; duplicate kicks/appear do not reset a live interpolation',async()=>{
+  const os=Array.from({length:20},(_,i)=>instance({samples:Array.from({length:60},(_,j)=>j),tone:'#3485eb',running:i<3,percent:true}))
+  let trees=os.map(o=>o.render());trees.forEach(t=>draw(t));drain()
+  emitScene('background');now+=60000;emitScene('active');trees=os.map(o=>o.render())
+  assert.ok(trees.slice(3).every(t=>t.props.paused),'17 closed detail hosts stay paused on foreground')
+  trees.slice(0,3).forEach(t=>draw(t));drain()
+  now+=1000;os[0].props.samples=Array.from({length:60},(_,j)=>j+20);let t=os[0].render();now+=400;draw(t)
+  const m=os[0].host().model,before=JSON.stringify({shown:m.shown,from:m.from,to:m.to,start:m.start,duration:m.duration}),n=writes
+  plot.requestPlotKick('appear');plot.requestPlotKick('selected');t.props.onAppear();emitScene('active')
+  assert.equal(JSON.stringify({shown:m.shown,from:m.from,to:m.to,start:m.start,duration:m.duration}),before,'duplicate lifecycle cannot snap or restart current animation')
+  assert.equal(writes,n+2,'only the two idle visible hosts accept a one-shot external redraw; live/hidden hosts do not toggle pause')
+  assert.ok(os.slice(3).every(o=>o.render().props.paused))
+  os.forEach(o=>o.close());assert.equal(timers.size,0);assert.equal(sceneListeners.size,0)
  })
  await test('unmount before completion cancels queue, stale draw cannot set state; diagnostic is native, not document ready/painted',async()=>{
   const o=instance({samples:[1,2],tone:'#3485eb',running:true});const t=o.render();t.props.onAppear();draw(t,0,0);assert.equal(timers.size,0,'data is not parked before a measurable final draw');draw(t);assert.equal(timers.size,1);o.close();const n=writes;drain();t.props.onAppear();t.props.onDisappear();draw(t);assert.equal(writes,n);assert.equal(timers.size,0)
