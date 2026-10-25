@@ -249,6 +249,21 @@ const sub={name:'Edited',url:'https://new-subscription.invalid/file',userAgent:'
     fail=null;tree.props.onAppear();await tree.props.onDisappear();assert.equal(saved,true);assert.equal(confirms.length,confirmations,'subscription back-save never confirms, even when confirmation result is false');context.confirmResult=true;const written=writes().length;await tree.props.onDisappear();assert.equal(writes().length,written);assert.equal(state.s1.name,'Draft kept');assert.equal(state.s1.user_agent,'clash.meta');assert.equal(state.s1.prefer,'local')
     saved=false;tree=render(management.NikkiSubscriptionEditor,props,true);assertEditorActionsAbsent(tree);calls.length=0;await settle();assert.equal(calls.length,0);assert.equal(saved,false)
   })
+  await test('native editor phase remains outside the WebView stack before appear, while reading, ready and failed',async()=>{
+    const phase=t=>{const label=t.props.children.find(x=>x?.type==='Text'&&x.props.accessibilityLabel==='编辑器阶段');assert.ok(label,'phase must be a direct native sibling, not inside the WebView stack');assert.deepEqual(JSON.parse(JSON.stringify(label.props.frame)),{maxWidth:'infinity',minHeight:24,maxHeight:24,alignment:'leading'});return text(label)}
+    for(const failed of [false,true]){
+      fixture();const base=await api.loadNikkiManagement(n),props={c:n,base,file:base.files[0],done(){}}
+      let release;downloadWait=new Promise(r=>release=r);if(failed)downloadStatus=403
+      let tree=render(management.NikkiFileEditor,props,true);assert.match(phase(tree),/等待页面出现/);const controller=nodes(tree,'WebView')[0].props.controller
+      await settle();tree.props.onAppear();tree=render(management.NikkiFileEditor,props);await settle();tree=render(management.NikkiFileEditor,props);assert.match(phase(tree),failed?/加载失败/:/正在读取正文/);assert.equal(nodes(tree,'WebView')[0].props.controller,controller)
+      release();for(let i=0;i<20;i++){await new Promise(r=>nativeTimers.setTimeout(r,10));await settle();tree=render(management.NikkiFileEditor,props);if((failed?/加载失败/:/本地文档已就绪/).test(phase(tree)))break}assert.match(phase(tree),failed?/加载失败/:/本地文档已就绪/);assert.equal(nodes(tree,'WebView')[0].props.controller,controller);assert.equal(fileSave(tree,true).props.disabled,true);assert.equal(writes().length,0)
+      if(failed){assert.equal(nodes(tree,'WebView')[0].props.opacity,0);assert.ok(text(tree).includes('完整文件读取失败'))}else assert.equal(nodes(tree,'WebView')[0].props.opacity,1)
+      await tree.props.onDisappear();unmount();await settle()
+    }
+    fixture();const base=await api.loadNikkiManagement(n),props={c:n,base,file:base.files[0],done(){}},realSet=context.setTimeout,realClear=context.clearTimeout,timers=new Map();let id=0
+    context.setTimeout=(fn,ms)=>{timers.set(++id,{fn,ms});return id};context.clearTimeout=id=>timers.delete(id);context.WebViewController.initialization='silent'
+    try{let tree=render(management.NikkiFileEditor,props,true);await settle();tree.props.onAppear();tree=render(management.NikkiFileEditor,props);await settle();tree=render(management.NikkiFileEditor,props);assert.match(phase(tree),/正文已读取，正在初始化/);[...timers.values()].find(t=>t.ms===10000).fn();await settle();tree=render(management.NikkiFileEditor,props);assert.match(phase(tree),/加载失败/);assert.ok(text(tree).includes('只读恢复'));assert.equal(fileSave(tree,true).props.disabled,true);assert.equal(writes().length,0);await tree.props.onDisappear();unmount();await settle()}finally{context.setTimeout=realSet;context.clearTimeout=realClear;context.WebViewController.initialization=undefined}
+  })
   await test('editor initialization cannot depend on loadHTML promise settling after document script',async()=>{
     fixture();context.WebViewController.loadMode='pendingAfterDocument';const base=await api.loadNikkiManagement(n),props={c:n,base,file:base.files[0],done(){}};let tree=render(management.NikkiFileEditor,props,true);await settle();tree.props.onAppear();tree=render(management.NikkiFileEditor,props);await settle();tree=render(management.NikkiFileEditor,props);context.WebViewController.loadMode=undefined;const editor=nodes(tree,'WebView')[0].props.controller;assert.equal(editor.page.elements.body.value,remoteFiles.get('/etc/nikki/profiles/local.yaml').replace(/\r\n/g,'\n'));assert.ok(!text(tree).includes('正在完整读取配置与加载本地行号编辑器'))
   })

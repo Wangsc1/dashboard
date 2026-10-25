@@ -874,6 +874,8 @@ export function NikkiFileEditor({c,base,file,done,entryKey="direct",onExit}:{c:C
   const toolbar={topBarTrailing:<Button accessibilityLabel="保存" buttonStyle="plain" disabled={!ready||!!loadError||original===null||text===original||work.busy||host.closing||work.changed} action={save}><Image systemName="checkmark.circle"/></Button>}
   return <VStack alignment="leading" spacing={0} tabBarVisibility="hidden" background={<RoundedRectangle cornerRadius={0} fill={editorBackground} ignoresSafeArea={{regions:"container",edges:"bottom"}}/>} frame={{maxWidth:"infinity",maxHeight:"infinity"}} navigationTitle={file.filename} navigationBarTitleDisplayMode="inline" toolbar={toolbar} onAppear={()=>{host.closing=false;host.exitTask=null;host.exitNotified=false;host.closedSignal=new Promise<void>(resolve=>{host.cancel=resolve});work.onAppear();setAppeared(true)}} onDisappear={()=>leaveFile()}>
     <Status work={work}/>{work.changed?<Note error>来源已改变，请返回后重新进入</Note>:null}
+    {/* Native isolation outside the WebView/overlay: readiness is not proof of visible pixels. */}
+    <Text accessibilityLabel="编辑器阶段" font={11} foregroundStyle={loadError?"systemRed":"secondaryLabel"} padding={{horizontal:12}} frame={{maxWidth:"infinity",minHeight:24,maxHeight:24,alignment:"leading"}}>{!appeared?"编辑器：等待页面出现":loadError?"编辑器：加载失败（详情见下方）":ready?"编辑器：本地文档已就绪":original===null?"编辑器：正在读取正文":"编辑器：正文已读取，正在初始化"}</Text>
     <ZStack frame={{maxWidth:"infinity",maxHeight:"infinity",minHeight:0}}>
       {/* Keep the native host mounted from the first render, including before onAppear.
           Only visibility changes after the full-body handshake, never its identity. */}
