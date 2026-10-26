@@ -874,13 +874,13 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) { const lazy = ['proxies','rules'].includes(ids[i]) && ids[i] !== id; assert.equal(nodes(tree, types[i]).length, lazy ? 0 : 1); if (!lazy) assert.equal(nodes(tree, types[i])[0].props.selected, ids[i] === id) }
     }
-    assert.equal(api.VERSION, '1.103'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.104'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('独立导航栈保留业务owner和身份，只有选中页提供可见工具栏', () => {
     pref.savePreferences({ defaultPage: 'overview' })
     let rootTree = render(app.Root, {}, true)
     const pagesByTab = { home: app.OverviewPage, proxies: app.ProxiesPage, rules: app.RulesPage, connections: app.ConnectionsPage, more: app.MorePage }
-    const commands = { home: ['面板管理','外观设置','全局配置'], proxies: [], rules: [], connections: ['复制刷新诊断','客户端标签','清理已断开连接','打断全部连接'] }
+    const commands = { home: ['面板管理','外观设置','全局配置'], proxies: [], rules: [], connections: ['客户端标签','清理已断开连接','打断全部连接'] }
     // 仅展开组件声明，不运行effect/网络；各页独立hooks，不能与Root共用hooks槽位。
     function inspectPage(node) {
       const saved = { hooks, hookIndex, effects, cleanups }

@@ -16,7 +16,7 @@ const prov={providers:{A:{type:'Rule',vehicleType:'HTTP',ruleCount:1,proxies:[]}
   const r=owner(pages.RulesPage).render({active:{...base,id:'sh-r'},version:0,selected:true});assert.equal(typeof r.props.refreshable,'function')
   assert.deepEqual(nodes(trailing(r.props.toolbar),'Button').map(b=>b.props.title),[]);assert.deepEqual(nodes(trailing(r.props.toolbar),'Toggle').map(b=>b.props.title),['禁用规则时打断连接'])
   const page=owner(pages.ConnectionsPage),props={active:{...base,id:'sh-c'},version:0,selected:true};let c=page.render(props);assert.equal(typeof c.props.refreshable,'function')
-  const titles=nodes(trailing(c.props.toolbar),'Button').map(b=>b.props.title);assert.deepEqual(titles,['复制刷新诊断','客户端标签','清理已断开连接','打断全部连接'])
+  const titles=nodes(trailing(c.props.toolbar),'Button').map(b=>b.props.title);assert.deepEqual(titles,['客户端标签','清理已断开连接','打断全部连接'])
   assert.equal(nodes(c,'TextField').filter(t=>t.props.title==='搜索连接...').length,0)
   const icon=nodes(c,'Button').find(b=>nodes(b,'Image').some(i=>i.props.systemName==='magnifyingglass'));assert.ok(icon,'inline search icon exists');icon.props.action()
   c=page.render(props);assert.equal(nodes(c,'TextField').filter(t=>t.props.title==='搜索连接...').length,1,'icon opens the search field');const searchField=nodes(c,'TextField').find(t=>t.props.title==='搜索连接...');assert.equal(searchField.props.frame.height,36);assert.equal(searchField.props.font,16);assert.equal(searchField.props.prompt,'搜索连接...');assert.equal(searchField.props.textFieldStyle,'plain');assert.equal(searchField.props.labelsHidden,true);assert.equal(searchField.props.lineLimit,1);page.close()

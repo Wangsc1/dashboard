@@ -2,12 +2,13 @@
 const fs=require('node:fs'),vm=require('node:vm')
 const harness=fs.readFileSync(__dirname+'/run.cjs','utf8').split(';(async () => {')[0]
 const checks=String.raw`
+let observedDiagnostic;const originalObserve=model.ConnectionRefreshDiagnostic.prototype.observe;model.ConnectionRefreshDiagnostic.prototype.observe=function(...args){observedDiagnostic=this;return originalObserve.apply(this,args)}
 const c={id:'native-lifecycle',kind:'clash',name:'Synthetic',url:'http://synthetic.invalid'}
 let selected=false,active=c,tree
 const draw=()=>tree=render(pages.ConnectionsPage,{active,selected,version:0})
 const poll=()=>[...intervals.values()].find(x=>x.ms===1000)
 const deferred=()=>{let resolve;const promise=new Promise(r=>resolve=r);return {promise,resolve}}
-const copy=async()=>{await button(trailing(tree.props.toolbar),'复制刷新诊断').props.action();return JSON.parse(clipboard).events}
+const copy=async()=>{return JSON.parse(observedDiagnostic.copy()).events}
 ;(async()=>{
  await test('phone chronology: repeated 20ms appear/disappear never hides a selected foreground root; three subsequent polls publish',async()=>{
   const initial=now;store.set('dashboard_connections_snapshot_v1',{key:model.sourceKey(c),at:now,conns:Array.from({length:69},(_,i)=>({id:'cached-'+i,host:'cached.invalid',src:'',dst:'',network:'TCP',rule:'',chain:'',up:0,down:0,start:0}))})

@@ -2,10 +2,11 @@
 const fs=require('node:fs'),vm=require('node:vm')
 const harness=fs.readFileSync(__dirname+'/run.cjs','utf8').split(';(async () => {')[0]
 const checks=String.raw`
+let observedDiagnostic;const originalObserve=model.ConnectionRefreshDiagnostic.prototype.observe;model.ConnectionRefreshDiagnostic.prototype.observe=function(...args){observedDiagnostic=this;return originalObserve.apply(this,args)}
 const device={id:'SECRET-ID',kind:'clash',name:'SECRET-NAME',url:'http://SECRET-HOST.invalid'},props={active:device,version:0,selected:true}
 const sample={id:'SECRET-CONNECTION-ID',metadata:{host:'SECRET-TARGET.invalid',sourceIP:'192.0.2.99'},chains:['SECRET-NODE'],upload:123,download:456}
 const draw=(p=props,reset=false)=>render(pages.ConnectionsPage,p,reset)
-async function copied(tree){await button(trailing(tree.props.toolbar),'复制刷新诊断').props.action();return JSON.parse(clipboard)}
+async function copied(tree){assert.ok(!nodes(trailing(tree.props.toolbar),'Button').some(b=>b.props.title==='复制刷新诊断'));clipboard=observedDiagnostic.copy();return JSON.parse(clipboard)}
 const deferred=()=>{let resolve;const promise=new Promise(r=>resolve=r);return {promise,resolve}}
 ;(async()=>{
  await test('ring bounds and runtime whitelist reject all strings except fixed event/reason labels',()=>{
