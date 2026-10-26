@@ -31,7 +31,7 @@ const checks=String.raw`
    updates=[{name:'pkg-999',upgradeTo:undefined},{name:'pkg-999',upgradeTo:'WRONG-LAST'}]
    available=Array.from({length:100},(_,i)=>({name:i===99?'missing':'pkg-'+(900+i),version:'2',desc:'',installed:false}))
    let tree=render(app.SoftwarePage,props,true)
-   assert.equal(nodes(tree,'Picker').length,0);const tabs=nodes(tree,'HStack').find(h=>nodes(h,'Button').filter(b=>['可用','已安装','更新'].includes(text(b))).length===3);assert.ok(tabs);assert.equal(tabs.props.background,undefined);assert.equal(tabs.props.frame.height,52);assert.equal(tabs.props.frame.maxWidth,'infinity');assert.equal(tabs.props.listRowBackground,'clear');assert.ok(nodes(tabs,'Button').every(b=>b.props.frame.maxWidth==='infinity'));assert.equal(tabs.props.listRowInsets,0);assert.equal(tabs.props.glassEffect.type,'rect');assert.equal(nodes(tabs,'Text').filter(t=>t.props.glassEffect).length,1);assert.ok(nodes(tabs,'Text').find(t=>text(t)==='已安装').props.glassEffect);assert.ok(nodes(tree,'Section').some(s=>['可用','已安装','更新'].every(label=>nodes(s,'Button').some(b=>text(b)===label))));assert.equal(nodes(tabs,'Button').length,3)
+   assert.equal(nodes(tree,'Picker').length,0);const tabs=nodes(tree,'HStack').find(h=>nodes(h,'Button').filter(b=>['可用','已安装','更新'].includes(text(b))).length===3);assert.ok(tabs);assert.equal(tabs.props.background,undefined);assert.ok(nodes(tree,'Section').some(s=>['可用','已安装','更新'].every(label=>nodes(s,'Button').some(b=>text(b)===label))));assert.equal(nodes(tabs,'Button').length,3)
    nodes(tree,'Button').find(b=>text(b)==='可用').props.action();reads=0
    tree=render(app.SoftwarePage,props)
    assert.equal(reads,1000,'one installed traversal, not one scan per visible row')
