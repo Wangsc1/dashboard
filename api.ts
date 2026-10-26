@@ -1,7 +1,7 @@
 import { CpuSampler, CpuUsage, CpuMeta, parseCpuInfo, thermalCelsius } from "./openwrt-metrics"
 
 import { getPreferences, customHeaders, recordEvent, controllerHealth, feedback } from "./preferences"
-export const VERSION = "1.99"
+export const VERSION = "1.100"
 
 export type Kind = "clash" | "openwrt"
 export type Plugin = "openclash" | "nikki" | "mihomo"
@@ -958,6 +958,27 @@ export async function upgradeCoreAndVerify(c:Controller,current:()=>boolean=()=>
     if(before&&version&&version!==before)return {verified:true,version}
   }
   return {verified:false,version:last}
+}
+// Read-only, bounded verification after a single explicit service command.
+export async function verifyNikkiService(c:Controller,action:"start"|"stop"|"restart"|"reload",before:NikkiRuntime|null,current:()=>boolean=()=>true):Promise<{verified:boolean;running:boolean|null;runtime:NikkiRuntime|null}> {
+  let running:boolean|null=null,runtime:NikkiRuntime|null=null
+  // rc reload acknowledges dispatch only; there is no application-complete token.
+  if(action==="reload")return {verified:false,running,runtime}
+  for(let attempt=0;attempt<6&&current();attempt++){
+    await new Promise<void>(resolve=>setTimeout(resolve,700))
+    if(!current())break
+    if(action==="restart"){
+      runtime=await loadNikkiRuntime(c).catch(()=>null)
+      if(!current())break
+      running=runtime?.running??null
+      if(running===true&&before?.coreIdentity&&runtime?.coreIdentity&&before.coreIdentity!==runtime.coreIdentity)return {verified:true,running,runtime}
+    }else{
+      running=await nikkiServiceStatus(c).catch(()=>null)
+      if(!current())break
+      if(running===(action==="start"))return {verified:true,running,runtime}
+    }
+  }
+  return {verified:false,running,runtime}
 }
 export async function nikkiService(c: Controller, action: "start"|"stop"|"restart"|"reload") { requireNikki(c); if (!["start","stop","restart","reload"].includes(action)) throw new Error("不支持的服务动作"); await ubus(c,"rc","init",{name:"nikki",action}) }
 export type CoreAction = "upgrade"|"restart"|"reload"|"geo"|"dns"|"fakeip"

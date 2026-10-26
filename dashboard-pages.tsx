@@ -1,7 +1,7 @@
 import { NikkiManagement, NikkiSubscription, NikkiRule, NikkiFile, NikkiManagementError, NIKKI_RULE_TYPES, loadNikkiManagement, saveNikkiSubscription, deleteNikkiSubscription, updateNikkiSubscription, saveNikkiRule, deleteNikkiRule, setNikkiRulesEnabled, reorderNikkiRules, selectNikkiProfile, readNikkiFile, saveNikkiFile } from "./api"
 import { rootToolbar } from "./root-toolbar"
 import { AppEvents, Button, Divider, HStack, VStack, Text, Image, Circle, RoundedRectangle, Spacer, ScrollView, LazyVStack, NavigationLink, Menu, Picker, TextField, Toggle, Form, Section, ProgressView, Editor, ZStack, modifiers, Safari, useState, useEffect, useMemo } from "scripting"
-import { ProxyNodeConnections, loadProxyNodeConnections, ProxyTestTarget, ProxyNodeDetail, loadProxyNode, testProxyNode, proxyNodeError, Controller, Group, Conn, Rule, Provider, setRuleDisabled, closeRuleConnections, ruleToggleSupported, loadGroups, testGroup, selectProxy, loadProviders, updateProvider, loadRules, loadConnections, closeConnection, closeAllConnections, fmtBytes, fmtSpeed, fmtUptime, delayColor, loadRuntimeVersions, checkCoreUpdate, loadNikkiRuntime, NikkiRuntime, verifyCoreRestart, upgradeCoreAndVerify, lastControllerMode, loadConfig, setMode as setControllerMode, nikkiService, nikkiServiceStatus, coreAction, CoreAction, queryDNS, webpage } from "./api"
+import { ProxyNodeConnections, loadProxyNodeConnections, ProxyTestTarget, ProxyNodeDetail, loadProxyNode, testProxyNode, proxyNodeError, Controller, Group, Conn, Rule, Provider, setRuleDisabled, closeRuleConnections, ruleToggleSupported, loadGroups, testGroup, selectProxy, loadProviders, updateProvider, loadRules, loadConnections, closeConnection, closeAllConnections, fmtBytes, fmtSpeed, fmtUptime, delayColor, loadRuntimeVersions, checkCoreUpdate, loadNikkiRuntime, NikkiRuntime, verifyCoreRestart, upgradeCoreAndVerify, lastControllerMode, loadConfig, setMode as setControllerMode, nikkiService, verifyNikkiService, nikkiServiceStatus, coreAction, CoreAction, queryDNS, webpage } from "./api"
 import { usePreferences, KernelConfigPage, updatePreference, Choice, ThresholdRange, Range, TestURLField } from "./settings-ui"
 import { NODE_SORT_OPTIONS, savePreferences, getPreferences, cachedIcon, readCachedIcon, feedback } from "./preferences"
 import { selectable, sortedNodes, historyFor, SceneVisibility, filterConnections, clientLabels, saveClientLabel, sourceKey, confirmed } from "./dashboard-model"
@@ -638,17 +638,33 @@ export function MorePage({active,onChanged,onClose,selected=true}:{active:Contro
   }
   async function service(action:"start"|"stop"|"restart"|"reload",title:string){
     if(!active||guard.busy)return
-    const source=sourceKey(active),current=()=>guard.alive&&guard.source===source
+    const controller={...active},source=sourceKey(controller),epoch=guard.epoch,sceneEpoch=scene.epoch
+    const current=()=>guard.alive&&guard.source===source&&guard.active&&guard.epoch===epoch&&scene.active&&scene.epoch===sceneEpoch
+    if(!current())return
     guard.busy=true;setBusy(true);setNotice("")
-    await attempt(async()=>{
+    try{await attempt(async()=>{
       if(!await Dialog.confirm({title:`${title}服务`,message:`确认要${title}相关服务吗？`,confirmLabel:`确认${title}`,cancelLabel:"取消"})||!current())return
-      await nikkiService(active,action)
+      setNoticeKind("progress");setNotice(`正在${title}服务…`)
+      let before:NikkiRuntime|null=null
+      if(action==="restart")try{before=await loadNikkiRuntime(controller)}catch{}
       if(!current())return
-      setNoticeKind("success");setNotice(`${title}服务请求已发送`);setRunning(null);setRuntime(null)
-      void nikkiServiceStatus(active).then(x=>{if(current())setRunning(x)}).catch(()=>{})
-      void loadNikkiRuntime(active).then(x=>{if(current())setRuntime(x)}).catch(()=>{})
-    })
-    guard.busy=false;if(guard.alive)setBusy(false)
+      try{await nikkiService(controller,action)}catch(error){
+        if(!current())return
+        setNoticeKind("warning");setNotice(`${title}服务请求失败或响应中断，尚未确认完成`)
+        throw error
+      }
+      if(!current())return
+      const checked=await verifyNikkiService(controller,action,before,current)
+      if(!current())return
+      if(checked.running!==null)setRunning(checked.running)
+      if(checked.runtime)setRuntime(checked.runtime)
+      if(checked.running===false)setRuntime(null)
+      setNoticeKind(checked.verified?"success":"warning")
+      setNotice(checked.verified?`${title}服务完成` : action==="reload"?"重载服务请求已发送，尚未确认应用完成":`尚未确认${title}服务完成，请检查运行状态`)
+    })}finally{
+      guard.busy=false
+      if(guard.alive){setBusy(false);if(current())setNoticeKind(k=>k==="progress"?"warning":k);else if(guard.source===source)setNotice("")}
+    }
   }
   const nikki=active?.kind==="openwrt"&&active.plugin==="nikki"
   const actions:[CoreAction,string,string,string][]=[["upgrade","升级核心","arrow.up.circle","将下载并替换核心，可能重启并短暂中断代理服务。"],["restart","重启核心","arrow.clockwise","会短暂中断代理服务及连接；禁用管理API的内核可能拒绝。"],["reload","重载配置","arrow.triangle.2.circlepath","强制重新读取当前核心配置并应用，可能断开连接；不会保存Nikki UCI。"],["geo","更新GEO数据库","globe","内核将从其配置的上游下载GEO文件并替换本地数据库，产生外部请求。"]]

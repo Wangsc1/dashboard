@@ -874,7 +874,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) { const lazy = ['proxies','rules'].includes(ids[i]) && ids[i] !== id; assert.equal(nodes(tree, types[i]).length, lazy ? 0 : 1); if (!lazy) assert.equal(nodes(tree, types[i])[0].props.selected, ids[i] === id) }
     }
-    assert.equal(api.VERSION, '1.99'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.100'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('独立导航栈保留业务owner和身份，只有选中页提供可见工具栏', () => {
     pref.savePreferences({ defaultPage: 'overview' })
@@ -1513,7 +1513,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     }finally{release();context.fetch=original}
   })
   await test('更多服务/核心弹窗文字、取消零请求、GEO免确认及成功横幅关闭/失败不报成功',async()=>{
-    const timers=[],original=context.setTimeout;context.setTimeout=(fn,ms)=>{timers.push({fn,ms});return timers.length}
+    const timers=[],original=context.setTimeout;context.setTimeout=(fn,ms)=>{if(ms===700){fn();return 0}timers.push({fn,ms});return timers.length}
     const n={...c,id:'alerts-nikki',kind:'openwrt',plugin:'nikki',auto:false,cport:9090}
     const respond=(url,init)=>({body:url.endsWith('/ubus')?{result:[0,JSON.parse(init.body).params[1]==='session'?{ubus_rpc_session:'alert-session'}:{app:'app',core:'core'}]}:{version:'core',mode:'rule'}})
     responder=respond
@@ -1536,7 +1536,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
         const prev=alerts.length;await button(tree,name).props.action();tree=render(pages.MorePage,{active:n,onChanged(){}});assert.ok(text(tree.props.overlay.content).includes(msg));assert.equal(alerts.length,prev);assert.equal(confirms.length,before);assert.equal(tree.props.overlay.content.props.animation,undefined);assert.equal(nodes(tree.props.overlay.content,'HStack')[0].props.transition,undefined)
       }
       context.confirmResult=true
-      const prev=alerts.length;await button(tree,'启动').props.action();tree=render(pages.MorePage,{active:n,onChanged(){}});assert.ok(text(tree.props.overlay.content).includes('启动服务请求已发送'));assert.equal(alerts.length,prev);await flush()
+      const prev=alerts.length;await button(tree,'启动').props.action();tree=render(pages.MorePage,{active:n,onChanged(){}});assert.ok(text(tree.props.overlay.content).includes('尚未确认启动服务完成'));assert.equal(alerts.length,prev);await flush()
       timers.at(-1).fn();tree=render(pages.MorePage,{active:n,onChanged(){}});assert.equal(text(tree.props.overlay?.content),'')
       responder=(url,init)=>url.endsWith('/configs/geo')?{throw:'failed'}:respond(url,init)
       await button(tree,'更新GEO数据库').props.action();tree=render(pages.MorePage,{active:n,onChanged(){}});assert.equal(text(tree.props.overlay?.content),'');assert.equal(alerts.at(-1).title,'操作未完成')
