@@ -874,7 +874,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) { const lazy = ['proxies','rules'].includes(ids[i]) && ids[i] !== id; assert.equal(nodes(tree, types[i]).length, lazy ? 0 : 1); if (!lazy) assert.equal(nodes(tree, types[i])[0].props.selected, ids[i] === id) }
     }
-    assert.equal(api.VERSION, '1.111'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.112'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('独立导航栈保留业务owner和身份，只有选中页提供可见工具栏', () => {
     pref.savePreferences({ defaultPage: 'overview' })
@@ -1830,12 +1830,12 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     let tree = await open(g1); await nodes(tree, 'Button').find(n => n.props.systemImage === 'bolt.fill').props.action(); await flush(); unmount()
     tree = await open(g2); assert.ok(text(tree).includes('77ms')); assert.ok(!text(tree).includes('未测速')); unmount(); responder = () => ({ status: 204 })
   })
-  await test('展开策略组时只对没有延迟的节点自动补测，已有延迟的不重复测', async () => {
+  await test('进入策略组时只对没有延迟的节点自动补测，已有延迟的不重复测', async () => {
     const g = { name: 'ProbeGroup', type: 'Selector', all: ['HAS', 'NOPE'], now: 'HAS', delays: { HAS: 20 } }
     responder = url => ({ body: url.includes('/proxies/NOPE/delay') ? { delay: 123 } : { delay: 1 } })
     calls.length = 0
     let t = render(pages.GroupSection, { c, g, onChanged() {} }, true); await flush()
-    assert.equal(calls.filter(x => x.url.includes('/delay')).length, 0)
+    assert.equal(calls.filter(x => x.url.includes('/delay')).length, 1)
     nodes(t, 'Button').find(n => n.props.frame?.alignment === 'leading').props.action(); t = render(pages.GroupSection, { c, g, onChanged() {} }); await flush(); await flush()
     const probes = calls.filter(x => x.url.includes('/delay')); assert.equal(probes.length, 1); assert.ok(probes[0].url.includes('/proxies/NOPE/delay'))
     t = render(pages.GroupSection, { c, g, onChanged() {} }); assert.ok(text(t).includes('123ms')); assert.ok(!text(t).includes('未测速')); unmount(); responder = () => ({ status: 204 })

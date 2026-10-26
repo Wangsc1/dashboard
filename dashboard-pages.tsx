@@ -50,7 +50,7 @@ export function ProviderCard({c,p,kind,onChanged}:{c:Controller;p:Provider;kind:
   const ago=(t:string)=>{const m=Math.max(0,Math.floor((Date.now()-Date.parse(t))/60000));return m<1?"刚刚":m<60?`${m}分钟前`:m<1440?`${Math.floor(m/60)}小时前`:`${Math.floor(m/1440)}天前`}
   return <Card><HStack alignment="top"><VStack alignment="leading" spacing={8}><Text font={16} fontWeight="semibold">{p.name}</Text><HStack spacing={12}><HStack spacing={4}><Image systemName="cloud.fill" font={12} foregroundStyle="secondaryLabel"/><Text font={12} foregroundStyle="secondaryLabel">{kind==="rules"&&p.behavior?`${label} · ${p.behavior}`:label}</Text></HStack><HStack spacing={4}><Image systemName="square.stack.3d.up" font={12} foregroundStyle="secondaryLabel"/><Text font={12} foregroundStyle="secondaryLabel">{p.count===null?"数量未提供":`${p.count} ${kind==="proxies"?"节点":"条规则"}`}</Text></HStack></HStack></VStack><Spacer/><VStack alignment="trailing" spacing={8}><Button disabled={busy || !refreshable} buttonStyle="plain" action={async()=>{if(busy)return;setBusy(true);await attempt(async()=>{await updateProvider(c,kind,p.name);if(guard.alive)onChanged()});if(guard.alive)setBusy(false)}}>{providerRefreshLabel(busy)}</Button><Text font={11} foregroundStyle="secondaryLabel">{p.updatedAt?`更新于 ${ago(p.updatedAt)}`:"更新时间未提供"}</Text></VStack></HStack>{!refreshable?<Hint>内联/兼容提供者不提供可下载订阅，更新不可用。</Hint>:null}</Card>
 }
-const testedDelays=new Map<string,Record<string,number>>(),testedNodes=new Map<string,number>(),probing=new Set<string>()
+const testedDelays=new Map<string,Record<string,number>>(),testedNodes=new Map<string,number>(),probing=new Map<string,object>()
 // Subscribers repaint same-source cards only; no persistent monitoring or refetch.
 const nodeDelayListeners=new Map<string,Set<(name:string,delay:number)=>void>>()
 function publishNodeDelay(c:Controller,name:string,delay:number) {
@@ -138,22 +138,25 @@ type ProxyNodeActions=ReturnType<typeof useProxyNodeActions>
 export function GroupChevron({expanded}:{expanded:boolean}) {
   return <Image systemName={expanded?"chevron.down":"chevron.right"} contentTransition="symbolEffect" font={12} foregroundStyle="tertiaryLabel" frame={{width:28,height:28}}/>
 }
-export function GroupSection({c,g,onChanged,expanded=false,nodeActions}:{c:Controller;g:Group;onChanged:()=>void;expanded?:boolean;nodeActions?:ProxyNodeActions}) {
+export function GroupSection({c,g,onChanged,expanded=false,nodeActions,autoTest=true,autoCurrent,autoEpoch=0}:{c:Controller;g:Group;onChanged:()=>void;expanded?:boolean;nodeActions?:ProxyNodeActions;autoTest?:boolean;autoCurrent?:()=>boolean;autoEpoch?:number}) {
   const prefs=usePreferences(),[busy,setBusy]=useState(false),storeKey=`${sourceKey(c)}|${g.name}`,merged=()=>{const o:Record<string,number>={...g.delays};for(const n of g.all){const v=testedNodes.get(`${sourceKey(c)}|${n}`);if(v!==undefined&&o[n]===undefined)o[n]=v}return{...o,...(testedDelays.get(storeKey)??{})}},[delays,setDelays]=useState(merged),[open,setOpen]=useState(false),[nodeLimit,setNodeLimit]=useState(40),[now,setNow]=useState(g.now),[failed,setFailed]=useState<Set<string>>(new Set()),[guard]=useState({alive:true});useEffect(()=>()=>{guard.alive=false},[])
   useEffect(()=>setDelays(merged()),[g.delays,storeKey]);useEffect(()=>setNow(g.now),[g.now]);const d=delays[now]
   const isOpen=expanded||open
   useEffect(()=>{
-    if(!isOpen)return
-    const missing=g.all.filter(n=>delays[n]===undefined&&!failed.has(n)&&!probing.has(`${storeKey}|${n}`))
+    if(!autoTest)return
+    let alive=true;const current=()=>alive&&guard.alive&&(autoCurrent?.()??true)
+    const missing=g.all.filter(n=>merged()[n]===undefined&&!failed.has(n)&&!probing.has(`${storeKey}|${n}`))
     if(!missing.length)return
-    for(const n of missing)probing.add(`${storeKey}|${n}`)
+    const token={};for(const n of missing)probing.set(`${storeKey}|${n}`,token)
+    const release=()=>{for(const n of missing)if(probing.get(`${storeKey}|${n}`)===token)probing.delete(`${storeKey}|${n}`)}
     const keep=(d:Record<string,number>)=>{const ok:Record<string,number>={};for(const[k,v]of Object.entries(d))if(v>0){ok[k]=v;testedNodes.set(`${sourceKey(c)}|${k}`,v)}if(Object.keys(ok).length)testedDelays.set(storeKey,{...(testedDelays.get(storeKey)??{}),...ok});return ok}
     ;(async()=>{
-      const ok=keep(await testGroup(c,{...g,all:missing},(k,v)=>{if(v>0){keep({[k]:v});if(guard.alive)setDelays(merged())}else if(guard.alive)setFailed(f=>new Set([...f,k]))}).catch(()=>({} as Record<string,number>)))
+      const ok=keep(await testGroup(c,{...g,all:missing},(k,v)=>{if(v>0){keep({[k]:v});if(guard.alive)setDelays(merged())}else if(guard.alive)setFailed(f=>new Set([...f,k]))},current).catch(()=>({} as Record<string,number>)))
       const still=missing.filter(n=>ok[n]===undefined)
-      if(guard.alive){setDelays(merged());if(still.length)setFailed(f=>new Set([...f,...still]))}
-    })().finally(()=>{for(const n of missing)probing.delete(`${storeKey}|${n}`)})
-  },[isOpen,storeKey,g.all.length])
+      if(current()){setDelays(merged());if(still.length)setFailed(f=>new Set([...f,...still]))}
+    })().finally(release)
+    return()=>{alive=false;release()}
+  },[autoTest,autoEpoch,storeKey,JSON.stringify(g.all)])
   // Cache notifications may outlive a preview; only actual component disposal
   // removes this subscriber. Menu actions themselves belong to the page owner.
   useEffect(()=>{
@@ -274,18 +277,18 @@ function usePageScene(){
   return {scene,revision}
 }
 export function ProxiesPage({active,version,onClose,selected=true}:{active:Controller|null;version:number;onClose?:()=>void;selected?:boolean}) {
-  const p=usePreferences(),cacheKey=active?sourceKey(active):"",cached=hydrateProxyCache(cacheKey),[groups,setGroups]=useState<Group[]>(cached?.groups??[]),[providers,setProviders]=useState<Provider[]>(cached?.providers??[]),[loaded,setLoaded]=useState(!!cached),[err,setErr]=useState(""),[tick,setTick]=useState(0),[expanded,setExpanded]=useState(false),[showProviders,setShowProviders]=useState(true),[limit,setLimit]=useState(40),[visible,setVisible]=useState(selected),[confirmedMode,setConfirmedMode]=useState<{key:string;mode:string|null}>(()=>({key:cacheKey,mode:proxyModeCache.get(cacheKey)??null})),globalMode=confirmedMode.key===cacheKey&&confirmedMode.mode==="global"
-  const {scene,revision}=usePageScene()
+  const p=usePreferences(),cacheKey=active?sourceKey(active):"",cached=hydrateProxyCache(cacheKey),[groups,setGroups]=useState<Group[]>(cached?.groups??[]),[groupSource,setGroupSource]=useState(cacheKey),[providers,setProviders]=useState<Provider[]>(cached?.providers??[]),[loaded,setLoaded]=useState(!!cached),[err,setErr]=useState(""),[tick,setTick]=useState(0),[expanded,setExpanded]=useState(false),[showProviders,setShowProviders]=useState(true),[limit,setLimit]=useState(40),[visible,setVisible]=useState(selected),[confirmedMode,setConfirmedMode]=useState<{key:string;mode:string|null}>(()=>({key:cacheKey,mode:proxyModeCache.get(cacheKey)??null})),globalMode=confirmedMode.key===cacheKey&&confirmedMode.mode==="global"
+  const {scene,revision}=usePageScene(),autoEpoch=scene.epoch
   const nodeActions=useProxyNodeActions(active,selected&&scene.active)
   scene.restore=()=>{if(selected)setVisible(true)}
   useEffect(()=>setVisible(selected),[selected])
-  useEffect(()=>{const c=hydrateProxyCache(cacheKey);setGroups(c?.groups??[]);setProviders(c?.providers??[]);setLoaded(!!c)},[cacheKey])
+  useEffect(()=>{const c=hydrateProxyCache(cacheKey);setGroups(c?.groups??[]);setGroupSource(cacheKey);setProviders(c?.providers??[]);setLoaded(!!c)},[cacheKey])
   useEffect(()=>{if(!active||!selected||!visible||!scene.active)return;let alive=true;const epoch=scene.epoch,current=()=>alive&&scene.active&&scene.epoch===epoch;setErr("");loadGroups(active,{includeGlobal:globalMode}).then(x=>{if(current()){setGroups(x);setLoaded(true);setErr("");setProxyCache(cacheKey,{groups:x,providers:proxyCache.get(cacheKey)?.providers??[]})}}).catch(()=>{if(current())setErr(safeError())});return()=>{alive=false}},[active&&sourceKey(active),version,tick,p.showHidden,p.showGlobal,globalMode,p.nestedDelay,selected,visible,revision])
   useEffect(()=>{if(!active||!showProviders||!selected||!visible||!scene.active)return;let alive=true;const epoch=scene.epoch,current=()=>alive&&scene.active&&scene.epoch===epoch;loadProviders(active,"proxies").then(x=>{if(current()){setProviders(x);setProxyCache(cacheKey,{groups:proxyCache.get(cacheKey)?.groups??[],providers:x})}}).catch(()=>{if(current())setErr("代理来源读取不可用：当前内核不支持或权限不足；显示的0是已加载数量，不代表远端总数。")});return()=>{alive=false}},[active&&sourceKey(active),tick,showProviders,selected,visible,revision])
   const remote=providers.filter(x=>x.vehicleType.toLowerCase()==="http")
-  const shownGroups=groups.filter(g=>g.name!=="GLOBAL"||p.showGlobal||globalMode)
+  const shownGroups=groupSource===cacheKey?groups.filter(g=>g.name!=="GLOBAL"||p.showGlobal||globalMode):[]
   const menu=<Menu label={<Image systemName="ellipsis.circle"/>}><Picker title="节点排序" pickerStyle="menu" value={p.nodeSort} onChanged={(v:string)=>savePreferences({nodeSort:v as any})}>{NODE_SORT_OPTIONS.map(([key, label]) => <Text key={key} tag={key}>{label}</Text>)}</Picker><Toggle title="展示全部代理组" value={expanded} onChanged={setExpanded}/><Toggle title="显示代理来源" value={showProviders} onChanged={setShowProviders}/><Toggle title="显示隐藏组" value={p.showHidden} onChanged={(v:boolean)=>savePreferences({showHidden:v})}/><Toggle key="customIcons" title="显示图标" value={p.customIcons} onChanged={(v:boolean)=>updatePreference({customIcons:v})}/><Toggle key="disconnectOnSwitch" title="自动断开旧连接" value={p.disconnectOnSwitch} onChanged={(v:boolean)=>updatePreference({disconnectOnSwitch:v})}/></Menu>
-  return Shell({title:active?.name??"代理",toolbar:rootToolbar("proxies",onClose,menu),navigationDestination:nodeActions.destination,onAppear:()=>{nodeActions.appear();scene.vis.appear();setVisible(true)},onDisappear:()=>{nodeActions.disappear();if(scene.vis.disappear(Date.now()))setVisible(false)},children:<>{!active?<Empty/>:<><ProxyModeControl key={JSON.stringify(active)} c={active} enabled={selected&&visible&&scene.active} version={version} resume={revision} onMode={mode=>setConfirmedMode({key:cacheKey,mode})}/><HStack><Text font={20} fontWeight="bold" padding={{top:6}}>策略组</Text><Spacer/></HStack>{err?<Hint>{err}</Hint>:null}{!err&&loaded&&shownGroups.length===0?<Hint>未读取到策略组</Hint>:null}{shownGroups.slice(0,limit).map(g=><GroupSection key={g.name} c={active} g={g} expanded={expanded} nodeActions={nodeActions} onChanged={()=>setTick(t=>t+1)}/>)}<Pages hideCount limit={limit} total={shownGroups.length} more={()=>setLimit(limit+40)}/>{showProviders?<><HStack><Text font={20} fontWeight="bold" padding={{top:6}}>代理来源</Text><Spacer/></HStack>{remote.slice(0,limit).map(p=><ProviderCard key={p.name} c={active} p={p} kind="proxies" onChanged={()=>setTick(t=>t+1)}/>)}<Pages hideCount limit={limit} total={remote.length} more={()=>setLimit(limit+40)}/></>:null}</>}<ProxyTestSettings /></>})
+  return Shell({title:active?.name??"代理",toolbar:rootToolbar("proxies",onClose,menu),navigationDestination:nodeActions.destination,onAppear:()=>{nodeActions.appear();scene.vis.appear();setVisible(true)},onDisappear:()=>{nodeActions.disappear();if(scene.vis.disappear(Date.now()))setVisible(false)},children:<>{!active?<Empty/>:<><ProxyModeControl key={JSON.stringify(active)} c={active} enabled={selected&&visible&&scene.active} version={version} resume={revision} onMode={mode=>setConfirmedMode({key:cacheKey,mode})}/><HStack><Text font={20} fontWeight="bold" padding={{top:6}}>策略组</Text><Spacer/></HStack>{err?<Hint>{err}</Hint>:null}{!err&&loaded&&shownGroups.length===0?<Hint>未读取到策略组</Hint>:null}{shownGroups.slice(0,limit).map(g=><GroupSection key={`${cacheKey}|${g.name}`} c={active} g={g} expanded={expanded} autoTest={selected&&visible&&scene.active} autoEpoch={autoEpoch} autoCurrent={()=>scene.active&&scene.epoch===autoEpoch} nodeActions={nodeActions} onChanged={()=>setTick(t=>t+1)}/>)}<Pages hideCount limit={limit} total={shownGroups.length} more={()=>setLimit(limit+40)}/>{showProviders?<><HStack><Text font={20} fontWeight="bold" padding={{top:6}}>代理来源</Text><Spacer/></HStack>{remote.slice(0,limit).map(p=><ProviderCard key={p.name} c={active} p={p} kind="proxies" onChanged={()=>setTick(t=>t+1)}/>)}<Pages hideCount limit={limit} total={remote.length} more={()=>setLimit(limit+40)}/></>:null}</>}<ProxyTestSettings /></>})
 }
 function ruleColor(type:string) { return /AND|OR|NOT|MATCH/.test(type)?"systemRed":/PROCESS/i.test(type)?"systemPurple":/IP|GEOIP/i.test(type)?"systemGreen":"systemBlue" }
 // Last-seen rules / connections are kept on this device and loaded at launch, so the first frame is not empty while the live request runs.

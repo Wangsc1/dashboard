@@ -1,7 +1,7 @@
 import { CpuSampler, CpuUsage, CpuMeta, parseCpuInfo, thermalCelsius } from "./openwrt-metrics"
 
 import { getPreferences, customHeaders, recordEvent, controllerHealth, feedback } from "./preferences"
-export const VERSION = "1.111"
+export const VERSION = "1.112"
 
 export type Kind = "clash" | "openwrt"
 export type Plugin = "openclash" | "nikki" | "mihomo"
@@ -551,14 +551,16 @@ function scheduleDelay(request: () => Promise<any>): Promise<any> {
     pumpDelayQueue()
   })
 }
-async function delayRequest(c: Controller, path: string, timeout: number): Promise<any> {
+async function delayRequest(c: Controller, path: string, timeout: number, canStart?: () => boolean): Promise<any> {
   const headers = customHeaders(), secret = getSecret(c.id)
   if (secret) headers["Authorization"] = "Bearer " + secret
   const key = JSON.stringify([c, headers, path, timeout])
   const previous = pendingDelayRequests.get(key)
   if (previous) return previous
-  const request = scheduleDelay(() => http(c, path, { timeout: Math.ceil(timeout / 1000) + 2, headers }))
-  pendingDelayRequests.set(key, request)
+  // Automatic queued work may be invalidated while waiting; do not let an
+  // explicit manual test attach to a cancellable queued request.
+  const request = scheduleDelay(() => canStart && !canStart() ? Promise.resolve(undefined) : http(c, path, { timeout: Math.ceil(timeout / 1000) + 2, headers }))
+  if (!canStart) pendingDelayRequests.set(key, request)
   try { return await request } finally { if (pendingDelayRequests.get(key) === request) pendingDelayRequests.delete(key) }
 }
 // Global proxies and provider-owned proxies have different lookup tables/routes.
@@ -568,14 +570,15 @@ function proxyNodePath(target: ProxyTestTarget): string {
 function proxyNodeDelayPath(target: ProxyTestTarget): string {
   return proxyNodePath(target) + (target.provider ? "/healthcheck" : "/delay")
 }
-async function probeNodes(c: Controller, names: string[], url: string, timeout: number, targets?: Record<string, ProxyTestTarget>, onProgress?: (name: string, delay: number) => void): Promise<Record<string, number>> {
+async function probeNodes(c: Controller, names: string[], url: string, timeout: number, targets?: Record<string, ProxyTestTarget>, onProgress?: (name: string, delay: number) => void, canStart?: () => boolean): Promise<Record<string, number>> {
   const res: Record<string, number> = {}
   await Promise.all([...new Set(names)].map(async n => {
     const target = targets?.[n] ?? { name: n }
     if (["reject", "rejectdrop", "reject-drop", "block"].includes(target.type?.toLowerCase() ?? "")) return
     const route = proxyNodeDelayPath(target)
     let d = 0
-    try { const j = await delayRequest(c, `${route}?url=${enc(url)}&timeout=${timeout}`, timeout); d = num(j.delay) } catch { d = 0 }
+    try { const j = await delayRequest(c, `${route}?url=${enc(url)}&timeout=${timeout}`, timeout, canStart); if (j === undefined) return; d = num(j.delay) } catch { d = 0 }
+    if (canStart && !canStart()) return
     res[n] = d
     try { onProgress?.(n, d) } catch {}
   }))
@@ -612,11 +615,11 @@ export async function testNodes(c0: Controller, names: string[]): Promise<Record
   const c = await cc(c0), prefs = getPreferences()
   return probeNodes(c, names, prefs.testURL, Math.min(2000, prefs.testTimeout))
 }
-export async function testGroup(c0: Controller, g: Group, onProgress?: (name: string, delay: number) => void): Promise<Record<string, number>> {
+export async function testGroup(c0: Controller, g: Group, onProgress?: (name: string, delay: number) => void, canStart?: () => boolean): Promise<Record<string, number>> {
   const c = await cc(c0)
   const prefs = getPreferences(), testURL = prefs.testURL, timeout = Math.min(2000, prefs.testTimeout)
   const names = [...new Set(g.now && g.all.includes(g.now) ? [g.now, ...g.all] : g.all)]
-  const res = await probeNodes(c, names, testURL, timeout, g.testTargets, onProgress)
+  const res = await probeNodes(c, names, testURL, timeout, g.testTargets, onProgress, canStart)
   recordEvent("test", Object.values(res).some(v => v > 0))
   return res
 }
