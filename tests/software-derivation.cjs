@@ -31,7 +31,8 @@ const checks=String.raw`
    updates=[{name:'pkg-999',upgradeTo:undefined},{name:'pkg-999',upgradeTo:'WRONG-LAST'}]
    available=Array.from({length:100},(_,i)=>({name:i===99?'missing':'pkg-'+(900+i),version:'2',desc:'',installed:false}))
    let tree=render(app.SoftwarePage,props,true)
-   nodes(tree,'Picker')[0].props.onChanged('available');reads=0
+   assert.equal(nodes(tree,'Picker').length,0);const tabs=nodes(tree,'HStack').find(h=>nodes(h,'Button').filter(b=>['可用','已安装','更新'].includes(text(b))).length===3);assert.ok(tabs);assert.equal(tabs.props.background,undefined);assert.ok(nodes(tree,'Section').some(s=>['可用','已安装','更新'].every(label=>nodes(s,'Button').some(b=>text(b)===label))));assert.equal(nodes(tabs,'Button').length,3)
+   nodes(tree,'Button').find(b=>text(b)==='可用').props.action();reads=0
    tree=render(app.SoftwarePage,props)
    assert.equal(reads,1000,'one installed traversal, not one scan per visible row')
    const rows=nodes(tree,app.PkgRow);assert.equal(rows.length,100)
@@ -41,8 +42,8 @@ const checks=String.raw`
    let row=nodes(tree,app.PkgRow)[0];assert.equal(row.props.p.upgradeTo,undefined);assert.deepEqual(Array.from(row.props.actions,a=>a.props.title),['卸载'])
    updates=[{name:'pkg-999',upgradeTo:'FIRST'},{name:'pkg-999',upgradeTo:'SECOND'}];tree=render(app.SoftwarePage,props)
    row=nodes(tree,app.PkgRow)[0];assert.equal(row.props.p.upgradeTo,'FIRST');assert.deepEqual(Array.from(row.props.actions,a=>a.props.title),['升级','卸载'])
-   nodes(tree,'Picker')[0].props.onChanged('installed');tree=render(app.SoftwarePage,props);assert.equal(nodes(tree,app.PkgRow)[0].props.p,installed[0])
-   nodes(tree,'Picker')[0].props.onChanged('updates');tree=render(app.SoftwarePage,props);assert.equal(nodes(tree,app.PkgRow)[0].props.p,updates[0])
+   nodes(tree,'Button').find(b=>text(b)==='已安装').props.action();tree=render(app.SoftwarePage,props);assert.equal(nodes(tree,app.PkgRow)[0].props.p,installed[0])
+   nodes(tree,'Button').find(b=>text(b)==='更新').props.action();tree=render(app.SoftwarePage,props);assert.equal(nodes(tree,app.PkgRow)[0].props.p,updates[0])
   }finally{unmount();details.useRouterDetail=read;api.upgradablePkgs=upgrade}
  })
  console.log(count+' software derivation groups passed (mock only).')

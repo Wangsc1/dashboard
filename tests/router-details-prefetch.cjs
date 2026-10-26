@@ -58,7 +58,7 @@ const valueIn=(tree,value)=>text(tree).includes(value)||nodes(tree,app.Row).some
   for(const [fn,p,check]of first){const o=owner(fn),t=o.render(p);assert.ok(check(t),fn.name+' first render must use snapshot');await settle();o.close()}
   // Parent object children perform no remote read at all.
   for(const [fn,p]of [[app.ImagePage,{active:c,x:details.peekDetail(c,'images')[0],onDone(){}}],[app.FrpCommonPage,{active:c,info:details.peekDetail(c,'frp'),onDone(){}}],[app.FrpProxyPage,{active:c,initial:details.peekDetail(c,'frp').proxies[0],onDone(){}}]]){const count=calls.length,o=owner(fn);o.render(p);await settle();assert.equal(calls.length,count,fn.name);o.close()}
-  const software=owner(app.SoftwarePage);let t=software.render({active:c});await settle();const segmented=nodes(t,'Picker').find(p=>p.props.pickerStyle==='segmented');segmented.props.onChanged('available');t=software.render({active:c});assert.ok(!text(t).includes('正在读取软件源'));segmented.props.onChanged('updates');t=software.render({active:c});assert.ok(!text(t).includes('正在读取软件源'));software.close()
+  const software=owner(app.SoftwarePage);let t=software.render({active:c});await settle();nodes(t,'Button').find(b=>text(b)==='可用').props.action();t=software.render({active:c});assert.ok(!text(t).includes('正在读取软件源'));nodes(t,'Button').find(b=>text(b)==='更新').props.action();t=software.render({active:c});assert.ok(!text(t).includes('正在读取软件源'));software.close()
   page.close();assert.equal(intervals.size,0);assert.equal(sceneListeners.size,0)
  })
  await test('silent refresh retains a cached first frame on failure and never overwrites dirty Docker settings',async()=>{
