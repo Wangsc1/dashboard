@@ -874,7 +874,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) { const lazy = ['proxies','rules'].includes(ids[i]) && ids[i] !== id; assert.equal(nodes(tree, types[i]).length, lazy ? 0 : 1); if (!lazy) assert.equal(nodes(tree, types[i])[0].props.selected, ids[i] === id) }
     }
-    assert.equal(api.VERSION, '1.101'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.102'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('独立导航栈保留业务owner和身份，只有选中页提供可见工具栏', () => {
     pref.savePreferences({ defaultPage: 'overview' })
@@ -1332,13 +1332,13 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     render(pages.ConnectionsPage,{active:c,version:0},true);await flush();let tree=render(pages.ConnectionsPage,{active:c,version:0});assert.equal(intervals.size,1);assert.ok(text(tree).includes('observed.invalid'))
     context.confirmResult=false;calls.length=0;await button(trailing(tree.props.toolbar),'打断全部连接').props.action();assert.equal(calls.length,0)
     assert.ok(!nodes(trailing(tree.props.toolbar),'Button').some(b=>/暂停监控|恢复监控/.test(b.props.title)));assert.ok(!text(tree).includes('Nikki / Mihomo'));assert.ok(!text(tree).includes('按实际采样间隔'));assert.equal(intervals.size,1)
-    tree=unwrap(render(pages.ConnectionsPage,{active:c,version:0}));tree.props.onDisappear();render(pages.ConnectionsPage,{active:c,version:0});await flush();assert.equal(intervals.size,0);context.confirmResult=true
+    tree=unwrap(render(pages.ConnectionsPage,{active:c,version:0}));tree.props.onDisappear();render(pages.ConnectionsPage,{active:c,version:0,selected:false});await flush();assert.equal(intervals.size,0);context.confirmResult=true
   })
   await test('1.5连接pending隔离：隐藏后旧结果不写历史，切换来源丢弃旧响应', async () => {
     let release;const wait=new Promise(r=>{release=r});const a={...c,id:'pending-a'},b={...c,id:'pending-b'}
     responder=()=>({wait,body:{connections:[{id:'old-pending',upload:999,download:999,metadata:{host:'old-result.invalid'}}]}})
     render(pages.ConnectionsPage,{active:a,version:0},true);await flush();let tree=render(pages.ConnectionsPage,{active:a,version:0})
-    tree.props.onDisappear();render(pages.ConnectionsPage,{active:a,version:0});await flush();release();await flush();tree=render(pages.ConnectionsPage,{active:a,version:0});assert.ok(!text(tree).includes('old-result.invalid'));assert.equal(model.historyFor(a).active.length,0);assert.equal(intervals.size,0)
+    tree.props.onDisappear();render(pages.ConnectionsPage,{active:a,version:0,selected:false});await flush();release();await flush();tree=render(pages.ConnectionsPage,{active:a,version:0,selected:false});assert.ok(!text(tree).includes('old-result.invalid'));assert.equal(model.historyFor(a).active.length,0);assert.equal(intervals.size,0)
     let release2;const wait2=new Promise(r=>{release2=r});responder=()=>({wait:wait2,body:{connections:[{id:'old-source',metadata:{host:'source-a.invalid'}}]}})
     render(pages.ConnectionsPage,{active:a,version:0},true);await flush();responder=()=>({body:{connections:[{id:'new-source',metadata:{host:'source-b.invalid'}}]}});render(pages.ConnectionsPage,{active:b,version:0});await flush();release2();await flush();tree=render(pages.ConnectionsPage,{active:b,version:0});assert.ok(text(tree).includes('source-b.invalid'));assert.ok(!text(tree).includes('source-a.invalid'));unmount();assert.equal(intervals.size,0)
   })
@@ -1976,8 +1976,8 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     const items=nodes(card.props.contextMenu.menuItems,'Button')
     assert.deepEqual(items.map(n=>n.props.title),['关闭连接','筛选同源连接','筛选同域名连接','复制连接信息'])
     await items[3].props.action();assert.ok(clipboard.includes('detail.invalid:443'));assert.ok(clipboard.includes('10.0.0.8:1234'))
-    const link=nodes(tree,'NavigationLink').find(n=>n.props.destination.type===pages.ConnectionDetailPage);assert.ok(link)
-    const x=link.props.destination.props.x
+    button(tree,'查看连接详情').props.action();tree=render(pages.ConnectionsPage,{active:c,version:0});await flush();assert.equal(tree.props.navigationDestination.isPresented,true)
+    const x=tree.props.navigationDestination.content.props.x
     unmount();tree=render(pages.ConnectionDetailPage,{x,onDisconnect(){}},true)
     assert.deepEqual(nodes(tree,'Section').map(n=>text(n.props.header)),['周期','目标地址','流量','源信息','规则','标识'])
     assert.equal(tree.props.toolbar.topBarTrailing.props.title,'断开');unmount()
@@ -2055,11 +2055,11 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
   })
   await test('连接重现：隐藏标签可无onAppear重启，详情隐藏仍暂停，后台返回后始终恢复监控', async () => {
     const props={active:{...c,id:'connections-reappear'},version:0,selected:true}
-    responder=()=>({body:{connections:[]}});let tree=render(pages.ConnectionsPage,props,true);await flush()
+    responder=()=>({body:{connections:[{id:"detail-pause",metadata:{host:"detail-pause.invalid"}}]}});let tree=render(pages.ConnectionsPage,props,true);await flush()
     tree.props.onDisappear();render(pages.ConnectionsPage,{...props,selected:false});await flush();assert.equal(intervals.size,0)
     render(pages.ConnectionsPage,props);await flush();tree=render(pages.ConnectionsPage,props);await flush();assert.ok([...intervals.values()].some(x=>x.ms===1500))
-    tree.props.onDisappear();now+=1000;emitScene('inactive');emitScene('active');render(pages.ConnectionsPage,props);await flush();assert.equal(intervals.size,0,'a push-style hide long before inactive stays hidden')
-    tree.props.onAppear();render(pages.ConnectionsPage,props);await flush();assert.ok([...intervals.values()].some(x=>x.ms===1500))
+    button(tree,'查看连接详情').props.action();tree=render(pages.ConnectionsPage,props);await flush();tree.props.onDisappear();now+=1000;emitScene('inactive');emitScene('active');render(pages.ConnectionsPage,props);await flush();assert.equal(intervals.size,0,'a push-style hide long before inactive stays hidden')
+    tree=render(pages.ConnectionsPage,props);tree.props.navigationDestination.onChanged(false);tree.props.onAppear();render(pages.ConnectionsPage,props);await flush();assert.ok([...intervals.values()].some(x=>x.ms===1500))
     tree=render(pages.ConnectionsPage,props);assert.ok(!nodes(trailing(tree.props.toolbar),'Button').some(b=>/暂停监控|恢复监控/.test(b.props.title)))
     emitScene('background');assert.equal(intervals.size,0);now+=3600000;emitScene('active');render(pages.ConnectionsPage,props);await flush();assert.ok([...intervals.values()].some(x=>x.ms===1500),'always monitoring after return');unmount()
   })
