@@ -21,21 +21,21 @@ function setup(c){store.set('neko_controllers_v1',[c]);store.set('neko_active_v1
   const c={...device,id:device.id+'-'+cached,url:device.url+'/'+cached};setup(c)
   if(cached)store.set('dashboard_connections_snapshot_v1',{key:model.sourceKey(c),at:now,conns:[conn]});else store.delete('dashboard_connections_snapshot_v1')
   const rootOwner=owner(app.Root),page=owner(pages.ConnectionsPage);let rootTree=rootOwner.render();let node=declaration(rootTree),tree=page.render(node.props);await settle();shell(tree,c.name);assert.equal(node.props.selected,false)
-  const before=reads;assert.equal([...intervals.values()].filter(x=>x.ms===1500).length,0)
+  const before=reads;assert.equal([...intervals.values()].filter(x=>x.ms===1000).length,0)
   emitScene('background');now+=7200000;emitScene('active');emitScene('inactive');emitScene('active');rootTree=rootOwner.render();node=declaration(rootTree);tree=page.render(node.props);await settle();assert.equal(reads,before,'resume on another tab must not poll connections')
   const key=node.props.key,selection=rootTree.props.selection
   // Native TabView can switch now; no Root render/effect/data completion yet.
   selection.setValue('connections');node=declaration(rootTree);assert.equal(node.props.key,key);assert.equal(node.props.selected,false);shell(tree,c.name)
   assert.equal(text(tree).includes(conn.host),cached,'cached rows or empty controls are already present, independent of request')
   tree.props.onAppear();rootTree=rootOwner.render();node=declaration(rootTree);assert.equal(node.props.key,key);assert.equal(node.props.selected,true)
-  tree=page.render(node.props);await settle();tree=page.render(node.props);await settle();shell(tree,c.name);assert.equal(reads,before+1);assert.equal([...intervals.values()].filter(x=>x.ms===1500).length,1)
+  tree=page.render(node.props);await settle();tree=page.render(node.props);await settle();shell(tree,c.name);assert.equal(reads,before+1);assert.equal([...intervals.values()].filter(x=>x.ms===1000).length,1)
   assert.equal(text(tree).includes(conn.host),cached,'uncompleted request cannot blank the shell or cached rows')
   // No user pause exists: leaving and returning to the tab always resumes monitoring.
   assert.ok(!nodes(tree.props.toolbar.topBarTrailing,'Button').some(b=>/暂停监控|恢复监控/.test(b.props.title)))
   selection.setValue('proxies');rootTree=rootOwner.render();tree.props.onDisappear();tree=page.render(declaration(rootTree).props);await settle()
   emitScene('background');now+=7200000;emitScene('active');rootTree=rootOwner.render();tree=page.render(declaration(rootTree).props);await settle()
   selection.setValue('connections');shell(tree,c.name);rootTree=rootOwner.render();tree.props.onAppear();tree=page.render(declaration(rootTree).props);await settle();shell(tree,c.name)
-  assert.ok(!nodes(tree.props.toolbar.topBarTrailing,'Button').some(b=>/暂停监控|恢复监控/.test(b.props.title)));assert.equal([...intervals.values()].filter(x=>x.ms===1500).length,1)
+  assert.ok(!nodes(tree.props.toolbar.topBarTrailing,'Button').some(b=>/暂停监控|恢复监控/.test(b.props.title)));assert.equal([...intervals.values()].filter(x=>x.ms===1000).length,1)
   page.close();rootOwner.close();for(const resolve of pending.splice(0))resolve([]);await settle();assert.equal(intervals.size,0);assert.equal(sceneListeners.size,0)
  })
  await test('source switch with same id: new connection owner first frame is isolated, recent/expired/no cache',async()=>{

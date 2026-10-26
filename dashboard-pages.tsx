@@ -486,10 +486,10 @@ export function ConnectionsPage({active,version,onClose,selected=true}:{active:C
     // One owner for poll and pull: a pull joins the unexpired in-flight read instead of duplicating it.
     function refresh():Promise<void>{
       if(request&&flight&&Date.now()-request.at<maxAge){diagnostic.add("join",{owner:diagnosticOwner});return flight}
-      diagnostic.add("schedule",{owner:diagnosticOwner,afterMs:1500})
+      diagnostic.add("schedule",{owner:diagnosticOwner,afterMs:1000})
       const p:Promise<void>=run().finally(()=>{if(flight===p)flight=undefined});flight=p;return p
     }
-    void refresh();const t=setInterval(refresh,1500)
+    void refresh();const t=setInterval(refresh,1000)
     scene.pull=refresh
     const stop=()=>{if(!alive)return;diagnostic.add("effect-stop",{owner:diagnosticOwner,reason:!scene.active?"scene-inactive":epoch!==scene.epoch?"epoch-changed":!scene.selected?"not-selected":scene.detail?"not-visible":"cleanup"});alive=false;if(scene.pull===refresh)scene.pull=undefined;request?.abort.abort();request=undefined;clearInterval(t);for(const timer of timers)clearTimeout(timer);timers.clear()}
     scene.stop=stop

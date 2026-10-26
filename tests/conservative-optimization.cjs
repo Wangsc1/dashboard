@@ -69,9 +69,9 @@ const c={id:'optimization-mock',kind:'openwrt',name:'Mock',url:'http://optimizat
     api.loadConnections=async()=>sample
     const device={...c,kind:'clash'},props={active:device,version:0,selected:true},connection=i=>({id:String(i),host:'host-'+i,src:'192.0.2.1',dst:'192.0.2.2',network:'TCP',rule:'',chain:'',up:0,down:0,start:now})
     try{
-      render(pages.ConnectionsPage,props,true);await settle();sample=Array.from({length:100},(_,i)=>connection(i));[...intervals.values()].find(t=>t.ms===1500).fn();await settle();assert.equal(timeouts.size,10,'100 arrivals share ten existing stagger deadlines')
+      render(pages.ConnectionsPage,props,true);await settle();sample=Array.from({length:100},(_,i)=>connection(i));[...intervals.values()].find(t=>t.ms===1000).fn();await settle();assert.equal(timeouts.size,10,'100 arrivals share ten existing stagger deadlines')
       const next={...props,version:1};render(pages.ConnectionsPage,next);await settle();assert.equal(timeouts.size,0,'restart releases old delays');assert.ok(text(render(pages.ConnectionsPage,next)).includes('host-0'),'fresh rows cannot remain hidden after cleanup')
-      sample=[...sample,connection(101)];[...intervals.values()].find(t=>t.ms===1500).fn();await settle();assert.ok(timeouts.size>0);unmount();assert.equal(timeouts.size,0,'unmount releases delays')
+      sample=[...sample,connection(101)];[...intervals.values()].find(t=>t.ms===1000).fn();await settle();assert.ok(timeouts.size>0);unmount();assert.equal(timeouts.size,0,'unmount releases delays')
     }finally{api.loadConnections=original;context.setTimeout=originalTimeout;context.clearTimeout=originalClear}
   })
   await check('connection batching preserves all 60..600ms insertion deadlines and releases completed timers',async()=>{
@@ -83,7 +83,7 @@ const c={id:'optimization-mock',kind:'openwrt',name:'Mock',url:'http://optimizat
     try{
       render(pages.ConnectionsPage,props,true);await settle()
       sample=Array.from({length:100},(_,i)=>({id:String(i),host:'fixture',src:'',dst:'',network:'TCP',rule:'',chain:'',up:0,down:0,start:now}))
-      ;[...intervals.values()].find(t=>t.ms===1500).fn();await settle()
+      ;[...intervals.values()].find(t=>t.ms===1000).fn();await settle()
       const deadlines=[...timeouts.entries()].sort((a,b)=>a[1].ms-b[1].ms)
       assert.deepEqual(deadlines.map(([,t])=>t.ms),Array.from({length:10},(_,i)=>(i+1)*60))
       const fresh=()=>hooks.find(x=>x&&Object.keys(x).some(k=>k.startsWith('a:')))
@@ -99,7 +99,7 @@ const c={id:'optimization-mock',kind:'openwrt',name:'Mock',url:'http://optimizat
     const original=api.loadConnections;let sample=[];api.loadConnections=async()=>sample
     const props={active:{...c,id:'bounded-seen',kind:'clash'},version:0,selected:true}
     try{
-      render(pages.ConnectionsPage,props,true);await settle();const timer=[...intervals.values()].find(t=>t.ms===1500)
+      render(pages.ConnectionsPage,props,true);await settle();const timer=[...intervals.values()].find(t=>t.ms===1000)
       for(let i=0;i<15;i++){sample=[{id:String(i),host:'fixture',src:'',dst:'',network:'TCP',rule:'',chain:'',up:0,down:0,start:now}];now+=3600001;timer.fn();await settle()}
       const tracker=hooks.find(x=>x?.seen&&typeof x.seen.size==='number');assert.ok(tracker);assert.ok(tracker.seen.size<=2,'expired history IDs must be released')
     }finally{api.loadConnections=original}

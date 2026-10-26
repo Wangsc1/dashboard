@@ -5,7 +5,7 @@ const checks=String.raw`
 const c={id:'native-lifecycle',kind:'clash',name:'Synthetic',url:'http://synthetic.invalid'}
 let selected=false,active=c,tree
 const draw=()=>tree=render(pages.ConnectionsPage,{active,selected,version:0})
-const poll=()=>[...intervals.values()].find(x=>x.ms===1500)
+const poll=()=>[...intervals.values()].find(x=>x.ms===1000)
 const deferred=()=>{let resolve;const promise=new Promise(r=>resolve=r);return {promise,resolve}}
 const copy=async()=>{await button(trailing(tree.props.toolbar),'复制刷新诊断').props.action();return JSON.parse(clipboard).events}
 ;(async()=>{
@@ -27,7 +27,7 @@ const copy=async()=>{await button(trailing(tree.props.toolbar),'复制刷新诊�
   }
   assert.ok(poll(),'selected foreground root must not remain not-visible after native disappear')
   const before=calls.length
-  for(let i=0;i<3;i++){bytes+=15;now+=1500;poll().fn();await flush();draw();assert.equal(model.historyFor(c).active[0].up,bytes);assert.ok(text(tree).includes('live.invalid'))}
+  for(let i=0;i<3;i++){bytes+=15;now+=1000;poll().fn();await flush();draw();assert.equal(model.historyFor(c).active[0].up,bytes);assert.ok(text(tree).includes('live.invalid'))}
   assert.equal(calls.length,before+3);const events=await copy();assert.ok(events.some(x=>x.event==='effect-start'));assert.ok(events.filter(x=>x.event==='publish').length>=3);assert.ok(events.some(x=>x.event==='render'&&x.snapshot>0));unmount()
  })
  await test('controlled detail push pauses immediately; disappear noise and background do not reopen it; native back resumes',async()=>{

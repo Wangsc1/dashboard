@@ -20,8 +20,8 @@ const deferred=()=>{let resolve;const promise=new Promise(r=>resolve=r);return {
   const output=await copied(t);assert.equal(calls.length,before);assert.deepEqual([...intervals.keys()],timers);assert.equal(confirms.length,n);assert.ok(haptics>=previousHaptics)
   const e=output.events,start=e.find(x=>x.event==='request-start'),end=e.find(x=>x.event==='request-end'),publish=e.find(x=>x.event==='publish'),rendered=e.find(x=>x.event==='render'&&x.snapshot===publish.snapshot)
   assert.ok(start&&end&&publish&&rendered);assert.equal(start.owner,publish.owner);assert.equal(start.request,publish.request);assert.equal(publish.count,1);assert.equal(publish.up,123);assert.equal(publish.down,456);assert.equal(rendered.count,1)
-  assert.ok(e.some(x=>x.event==='schedule'&&x.afterMs===1500));for(const secret of ['SECRET','192.0.2.99',device.url])assert.ok(!clipboard.includes(secret))
-  responder=()=>({body:{connections:[]}});now+=1500;[...intervals.values()].find(x=>x.ms===1500).fn();await flush();t=draw();const next=await copied(t);assert.equal(next.events.filter(x=>x.event==='publish').at(-1).count,0);assert.equal([...intervals.values()].filter(x=>x.ms===1500).length,1)
+  assert.ok(e.some(x=>x.event==='schedule'&&x.afterMs===1000));for(const secret of ['SECRET','192.0.2.99',device.url])assert.ok(!clipboard.includes(secret))
+  responder=()=>({body:{connections:[]}});now+=1500;[...intervals.values()].find(x=>x.ms===1000).fn();await flush();t=draw();const next=await copied(t);assert.equal(next.events.filter(x=>x.event==='publish').at(-1).count,0);assert.equal([...intervals.values()].filter(x=>x.ms===1000).length,1)
   unmount()
  })
  await test('scene stop and delayed-response drop preserve safe precise reasons; error text never copied',async()=>{
@@ -35,7 +35,7 @@ const deferred=()=>{let resolve;const promise=new Promise(r=>resolve=r);return {
   t.props.onDisappear();draw({...props,selected:false});await flush();t=draw({...props,selected:false});let e=(await copied(t)).events;assert.ok(e.some(x=>x.event==='disappear'));assert.ok(e.some(x=>x.event==='effect-skip'&&x.reason==='not-selected'));assert.equal(intervals.size,0)
   draw();await flush();draw();await flush();t=draw();const oldOwner=(await copied(t)).events.filter(x=>x.event==='effect-start').at(-1).owner
   const next={...props,active:{...device,url:'http://OTHER-SECRET.invalid'}};draw(next);await flush();t=draw(next);e=(await copied(t)).events;assert.ok(e.filter(x=>x.event==='effect-start').at(-1).owner>oldOwner);assert.ok(!clipboard.includes('OTHER-SECRET'))
-  for(let i=0;i<100;i++){now+=1500;[...intervals.values()].find(x=>x.ms===1500).fn();await flush();t=draw(next)}
+  for(let i=0;i<100;i++){now+=1500;[...intervals.values()].find(x=>x.ms===1000).fn();await flush();t=draw(next)}
   e=(await copied(t)).events;assert.equal(e.length,160);assert.ok(calls.every(x=>x.init.method==='GET'));unmount()
  })
  console.log(count+' diagnostic groups passed; native IO mocked.')

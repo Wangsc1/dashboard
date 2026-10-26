@@ -33,10 +33,10 @@ const homeRunning=t=>nodes(t,home.HomeDashboard)[0].props.running
   responder=()=>{reads++;return {body:{connections:[{id:'a',metadata:{host:'a.invalid'},upload:1,download:1}]}}}
   const page=owner(pages.ConnectionsPage);let tree=page.render(props);await settle();tree=page.render(props);assert.ok(text(tree).includes('a.invalid'))
   tree.props.onDisappear();emitScene('inactive');emitScene('background');page.render(props);await settle();assert.equal(intervals.size,0)
-  now+=7200000;const before=reads;emitScene('active');page.render(props);await settle();tree=page.render(props);assert.equal(reads,before+1);assert.ok([...intervals.values()].some(x=>x.ms===1500))
-  now+=9000;tree.props.onDisappear();now+=9000;emitScene('inactive');emitScene('active');page.render(props);await settle();assert.equal(intervals.size,0,'detail/push hide stays paused')
-  tree.props.onAppear();page.render(props);await settle();tree=page.render(props);assert.ok(!nodes(trailing(tree.props.toolbar),'Button').some(b=>/暂停监控|恢复监控/.test(b.props.title)))
-  emitScene('background');emitScene('active');page.render(props);await settle();assert.ok([...intervals.values()].some(x=>x.ms===1500),'monitoring always resumes')
+  now+=7200000;const before=reads;emitScene('active');page.render(props);await settle();tree=page.render(props);assert.equal(reads,before+1);assert.ok([...intervals.values()].some(x=>x.ms===1000))
+  now+=9000;nodes(tree,'Button').find(b=>b.props.accessibilityLabel==='查看连接详情').props.action();tree=page.render(props);tree.props.onDisappear();now+=9000;emitScene('inactive');emitScene('active');page.render(props);await settle();assert.equal(intervals.size,0,'detail/push hide stays paused')
+  tree=page.render(props);tree.props.navigationDestination.onChanged(false);tree.props.onAppear();page.render(props);await settle();tree=page.render(props);assert.ok(!nodes(trailing(tree.props.toolbar),'Button').some(b=>/暂停监控|恢复监控/.test(b.props.title)))
+  emitScene('background');emitScene('active');page.render(props);await settle();assert.ok([...intervals.values()].some(x=>x.ms===1000),'monitoring always resumes')
   page.close()
  })
  await test('proxies and more lock return refresh without onAppear',async()=>{
