@@ -78,3 +78,30 @@ export async function confirmed(target: string, effect: string, action: () => Pr
   if (!await Dialog.confirm({ title: "确认操作", message: `目标：${target}\n影响：${effect}`, confirmLabel: "继续", cancelLabel: "取消" })) return false
   await action(); return true
 }
+
+// Temporary connection refresh observation. Only fixed labels and primitive counters
+// enter the bounded memory ring; no controller/connection objects are serialized.
+type RefreshEvent = "view"|"scene"|"appear"|"disappear"|"source-change"|"effect-start"|"effect-skip"|"effect-stop"|"request-start"|"request-end"|"publish"|"drop"|"schedule"|"join"|"expire"|"render"
+type RefreshReason = "ok"|"owner-stopped"|"scene-inactive"|"epoch-changed"|"request-replaced"|"request-expired"|"no-source"|"not-selected"|"not-visible"|"not-foreground"|"cleanup"|"error"
+let refreshOwnerSerial=0
+export class ConnectionRefreshDiagnostic {
+  private rows:Record<string,string|number|boolean>[]=[]
+  private at=Date.now();private seq=0;private view="";private rendered=""
+  private snapshots=new WeakMap<Conn[],number>()
+  owner=0
+  start(){this.owner=++refreshOwnerSerial;this.add("effect-start");return this.owner}
+  add(event:RefreshEvent,fields:{owner?:number;request?:number;snapshot?:number;selected?:boolean;visible?:boolean;foreground?:boolean;scene?:boolean;epoch?:number;count?:number;up?:number;down?:number;shown?:number;fresh?:number;afterMs?:number;reason?:RefreshReason;status?:number}={}){
+    if(!["view","scene","appear","disappear","source-change","effect-start","effect-skip","effect-stop","request-start","request-end","publish","drop","schedule","join","expire","render"].includes(event))return
+    const row:Record<string,string|number|boolean>={seq:++this.seq,ms:Math.max(0,Date.now()-this.at),event,owner:this.owner}
+    // Runtime whitelist too: even malformed callers cannot append arbitrary text.
+    for(const key of ["owner","request","snapshot","epoch","count","up","down","shown","fresh","afterMs","status"] as const){const v=fields[key];if(typeof v==="number"&&Number.isFinite(v))row[key]=v}
+    for(const key of ["selected","visible","foreground","scene"] as const)if(typeof fields[key]==="boolean")row[key]=fields[key]!
+    if(fields.reason&&["ok","owner-stopped","scene-inactive","epoch-changed","request-replaced","request-expired","no-source","not-selected","not-visible","not-foreground","cleanup","error"].includes(fields.reason))row.reason=fields.reason
+    this.rows.push(row);if(this.rows.length>160)this.rows.shift()
+  }
+  observe(selected:boolean,visible:boolean,foreground:boolean,scene:boolean,epoch:number){const key=[selected,visible,foreground,scene,epoch].join();if(key!==this.view){this.view=key;this.add("view",{selected,visible,foreground,scene,epoch})}}
+  received(xs:Conn[],request:number,owner:number){let up=0,down=0;for(const x of xs){up+=x.up;down+=x.down}const totals={count:xs.length,up,down};this.add("request-end",{owner,request,reason:"ok",...totals});return totals}
+  publish(xs:Conn[],request:number,owner:number,totals:{count:number;up:number;down:number}){const snapshot=this.seq+1;this.snapshots.set(xs,snapshot);this.add("publish",{owner,request,snapshot,...totals})}
+  render(xs:Conn[],shown:number,fresh:number){const snapshot=this.snapshots.get(xs)??0,key=[snapshot,shown,fresh].join();if(key!==this.rendered){this.rendered=key;this.add("render",{snapshot,count:xs.length,shown,fresh})}}
+  copy(){return JSON.stringify({format:"connections-refresh-v1",limit:160,events:this.rows})}
+}
