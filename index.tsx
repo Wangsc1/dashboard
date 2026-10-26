@@ -679,8 +679,8 @@ function SoftwarePage({ active }: { active: Controller }) {
       <Button title="更新列表" disabled={busy} action={() => run("软件源", "刷新软件源索引，需联网，不安装任何软件。", () => detailWrite(active,"software",() => pkgUpdateLists(active)))} />
       {updates.length ? <Button title="升级全部" tint="systemRed" disabled={busy} action={() => run(`${updates.length} 个软件包`, "升级全部可更新的软件包；可能重启服务，系统核心包升级有风险。", () => detailWrite(active,"software",() => pkgUpgrade(active, updates.map(p => p.name))))} /> : null}
     </Section>
-    <Section listRowBackground={panelRowBackground()}>
-      <HStack spacing={0}>{([["available","可用"],["installed","已安装"],["updates","更新"]] as const).map(([value,title])=><Button key={value} buttonStyle="plain" action={()=>{setTab(value);setLimit(100)}}><Text fontWeight={tab===value?"semibold":"regular"} frame={{maxWidth:"infinity"}} padding={{vertical:8}} background={<RoundedRectangle cornerRadius={18} fill={tab===value?"tertiarySystemFill":"clear"}/>}>{title}</Text></Button>)}</HStack>
+    <Section listRowBackground="clear">
+      <HStack spacing={0} padding={4} frame={{height:44}} listRowInsets={0} glassEffect={{type:"rect",cornerRadius:22}}>{([["available","可用"],["installed","已安装"],["updates","更新"]] as const).map(([value,title])=><Button key={value} buttonStyle="plain" action={()=>{setTab(value);setLimit(100)}}><Text fontWeight={tab===value?"semibold":"regular"} foregroundStyle={tab===value?"systemBlue":"label"} frame={{maxWidth:"infinity",height:36}} glassEffect={tab===value?{type:"rect",cornerRadius:18}:false}>{title}</Text></Button>)}</HStack>
     </Section>
     <Section listRowBackground={panelRowBackground()} footer={<Text>{tab !== "installed" && !available ? "正在读取软件源（首次约十几秒）…" : shown.total > shown.items.length ? `显示 ${shown.items.length} / ${shown.total}，输入关键字缩小范围` : !installedData ? "正在读取…" : `共 ${shown.total} 项`}</Text>}>
       {shown.items.map(p => { const q = tab === "available" && installedNames.has(p.name) ? { ...p, installed: true, upgradeTo: updatesByName.get(p.name)?.upgradeTo } : p; return <PkgRow key={p.name + p.version} p={q} actions={swipeFor(q)} /> })}
