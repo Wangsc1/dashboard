@@ -1,7 +1,7 @@
 import { CpuSampler, CpuUsage, CpuMeta, parseCpuInfo, thermalCelsius } from "./openwrt-metrics"
 
 import { getPreferences, customHeaders, recordEvent, controllerHealth, feedback } from "./preferences"
-export const VERSION = "1.112"
+export const VERSION = "1.113"
 
 export type Kind = "clash" | "openwrt"
 export type Plugin = "openclash" | "nikki" | "mihomo"
@@ -1183,18 +1183,35 @@ export async function saveNikkiFile(c:Controller,key:string,original:string,text
     catch{return nikkiFail("文件保存或完整性核验失败，设备可能只写入部分内容。草稿仍保留，请勿重载服务；核对设备文件后恢复/重试")}
   })
 }
+// Only fixed protocol codes may be shown; transport/JSON-RPC text can contain secrets.
+function subscriptionFailureStatus(e:unknown) {
+  const message=e instanceof Error?e.message:""
+  if(message==="ACCESS")return "（ubus 权限拒绝）"
+  const http=message.match(/^请求失败 HTTP ([1-5]\d\d)$/)
+  if(http)return `（HTTP ${http[1]}）`
+  const ubus=message.match(/^ubus 调用失败，代码 (\d{1,3})$/)
+  return ubus?`（ubus 状态 ${ubus[1]}）`:""
+}
 export async function updateNikkiSubscription(c:Controller,id:string,base?:NikkiManagement) {
   requireNikki(c);nikkiID(id);await nikkiExclusive(c,async()=>{
     const snap=base?nikkiSnapshots.get(base):undefined
     if(base&&(!snap||snap.source!==nikkiSource(c)))return nikkiFail("来源已改变，请刷新后更新")
-    const changes=await nikkiRead(c,"uci","changes",{config:"nikki"})
+    // nikkiRead can reauthenticate internally, so failures here cannot reliably
+    // distinguish the UCI read from its authentication recovery.
+    const preflight=async(method:string,args:any)=>{try{return await nikkiRead(c,"uci",method,args)}catch(e){const step=method==="changes"?"暂存检查":"订阅读取";return nikkiFail(`订阅更新预检未完成（${step}或认证，具体阶段未知）${subscriptionFailureStatus(e)}；未发送更新请求`)}}
+    const changes=await preflight("changes",{config:"nikki"})
     if(!Array.isArray(changes.changes)||changes.changes.length)return nikkiFail("存在未提交的 Nikki 改动或无法核验，请先处理后再更新订阅")
-    const current=await nikkiRead(c,"uci","get",{config:"nikki",section:id})
+    const current=await preflight("get",{config:"nikki",section:id})
     if(current.values?.[".type"]!=="subscription")return nikkiFail("订阅已不存在或类型不符")
     const options=(v:any)=>Object.fromEntries(Object.entries(v??{}).filter(([k])=>!k.startsWith(".")))
     if(snap&&canonical(options(snap.values[id]))!==canonical(options(current.values)))return nikkiFail("订阅设置已改变，请刷新后更新")
-    const sid=await nikkiSession(c),j=await ubusRaw(c,sid,"luci.nikki","update_subscription",{section_id:id},Math.max(getPreferences().requestTimeout,30))
-    if(j.success!==true)return nikkiFail("Nikki报告订阅更新失败，请核对下载文件；不会自动重试")
+    let sid:string
+    try{sid=await nikkiSession(c)}catch(e){return nikkiFail(`订阅更新认证未完成${subscriptionFailureStatus(e)}；未发送更新请求`)}
+    let j:any
+    try{j=await ubusRaw(c,sid,"luci.nikki","update_subscription",{section_id:id},Math.max(getPreferences().requestTimeout,30))}
+    catch(e){return nikkiFail(`订阅更新调用未取得有效响应${subscriptionFailureStatus(e)}；结果未知，设备可能已执行，请先核实；不会自动重试`)}
+    if(j.success===false)return nikkiFail("Nikki报告订阅更新失败，请核对下载文件；不会自动重试")
+    if(j?.success!==true)return nikkiFail("订阅更新调用响应不完整；结果未知，设备可能已执行，请先核实；不会自动重试")
   })
 }
 export async function webpage(c: Controller, page: "home"|"profile"|"mixin"|"log"|"editor" = "home") {
