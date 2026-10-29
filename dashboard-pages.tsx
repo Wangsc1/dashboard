@@ -1,7 +1,7 @@
 import { NikkiManagement, NikkiSubscription, NikkiRule, NikkiFile, NikkiManagementError, NIKKI_RULE_TYPES, loadNikkiManagement, saveNikkiSubscription, deleteNikkiSubscription, updateNikkiSubscription, saveNikkiRule, deleteNikkiRule, setNikkiRulesEnabled, reorderNikkiRules, selectNikkiProfile, readNikkiFile, saveNikkiFile } from "./api"
 import { rootToolbar } from "./root-toolbar"
 import { AppEvents, Button, Divider, HStack, VStack, Text, Image, Circle, RoundedRectangle, Spacer, ScrollView, LazyVStack, NavigationLink, Menu, Picker, TextField, Toggle, Form, Section, ProgressView, Editor, ZStack, modifiers, Safari, useState, useEffect, useMemo } from "scripting"
-import { ProxyNodeConnections, loadProxyNodeConnections, ProxyTestTarget, ProxyNodeDetail, loadProxyNode, testProxyNode, proxyNodeError, Controller, Group, Conn, Rule, Provider, setRuleDisabled, closeRuleConnections, ruleToggleSupported, loadGroups, testGroup, selectProxy, loadProviders, updateProvider, loadRules, loadConnections, closeConnection, closeAllConnections, fmtBytes, fmtSpeed, fmtUptime, delayColor, loadRuntimeVersions, checkCoreUpdate, loadNikkiRuntime, NikkiRuntime, verifyCoreRestart, upgradeCoreAndVerify, lastControllerMode, loadConfig, setMode as setControllerMode, nikkiService, nikkiServiceErrorText, nikkiServiceNeedsVerification, verifyNikkiService, nikkiServiceStatus, coreAction, CoreAction, queryDNS, webpage } from "./api"
+import { ProxyNodeConnections, loadProxyNodeConnections, ProxyTestTarget, ProxyNodeDetail, loadProxyNode, testProxyNode, proxyNodeError, Controller, Group, Conn, Rule, Provider, setRuleDisabled, closeRuleConnections, ruleToggleSupported, loadGroups, testGroup, selectProxy, loadProviders, updateProvider, loadRules, loadConnections, closeConnection, closeAllConnections, fmtBytes, fmtSpeed, fmtUptime, delayColor, loadRuntimeVersions, checkCoreUpdate, loadNikkiRuntime, NikkiRuntime, verifyCoreRestart, upgradeCoreAndVerify, lastControllerMode, loadConfig, setMode as setControllerMode, nikkiService, coreActionMayHaveExecuted, nikkiServiceErrorText, nikkiServiceNeedsVerification, verifyNikkiService, nikkiServiceStatus, coreAction, CoreAction, queryDNS, webpage } from "./api"
 import { usePreferences, KernelConfigPage, updatePreference, Choice, ThresholdRange, Range, TestURLField } from "./settings-ui"
 import { NODE_SORT_OPTIONS, savePreferences, getPreferences, cachedIcon, readCachedIcon, feedback } from "./preferences"
 import { selectable, sortedNodes, historyFor, SceneVisibility, ConnectionRefreshDiagnostic, filterConnections, clientLabels, saveClientLabel, sourceKey, confirmed } from "./dashboard-model"
@@ -639,10 +639,18 @@ export function MorePage({active,onChanged,onClose,selected=true}:{active:Contro
         if(nikki)try{before=await loadNikkiRuntime(active)}catch{}
         if(!current())return
       }
-      try{await coreAction(active,action)}catch(error){if(action!=="restart")throw error}
+      let acknowledged=true
+      try{await coreAction(active,action)}catch(error){
+        if(!current())return
+        if(action!=="restart"||!coreActionMayHaveExecuted(error)){
+          if(action==="restart")setNotice("")
+          throw error
+        }
+        acknowledged=false
+      }
       if(!current())return
       if(action==="restart"){
-        const checked=await verifyCoreRestart(active,before,current)
+        const checked=await verifyCoreRestart(active,before,current,acknowledged)
         if(!current())return
         if(checked.runtime)setRuntime(checked.runtime)
         setNoticeKind(checked.verified?"success":"warning")
@@ -650,7 +658,7 @@ export function MorePage({active,onChanged,onClose,selected=true}:{active:Contro
         return
       }
       setNoticeKind("success")
-      setNotice(({restart:"核心重启成功",reload:"配置已重载",geo:"GEO 数据库更新成功",dns:"DNS 缓存已清除",fakeip:"FakeIP 缓存已清除"})[action])
+      setNotice(({restart:"核心重启成功",reload:"配置已重载",geo:"GEO 数据库更新成功",dns:"已提交 DNS 缓存清理请求",fakeip:"FakeIP 缓存清理接口已完成"})[action])
     })
     guard.busy=false;if(guard.alive){setBusy(false);setNoticeKind(k=>k==="progress"?"warning":k)}
   }

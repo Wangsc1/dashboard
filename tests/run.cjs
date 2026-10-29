@@ -874,7 +874,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) { const lazy = ['proxies','rules'].includes(ids[i]) && ids[i] !== id; assert.equal(nodes(tree, types[i]).length, lazy ? 0 : 1); if (!lazy) assert.equal(nodes(tree, types[i])[0].props.selected, ids[i] === id) }
     }
-    assert.equal(api.VERSION, '1.119'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.120'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('独立导航栈保留业务owner和身份，只有选中页提供可见工具栏', () => {
     pref.savePreferences({ defaultPage: 'overview' })
@@ -1350,7 +1350,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     context.confirmResult=false;calls.length=0;await model.confirmed(n.name,'更新订阅',()=>api.updateNikkiSubscription(n,'s1'));assert.equal(calls.length,0);context.confirmResult=true
   })
   await test('1.5核心/DNS真实端点、无路径猜测与错误日志秘密白名单', async () => {
-    responder=()=>({status:204});calls.length=0
+    responder=url=>url.endsWith('/restart')?{body:{status:'ok'}}:{status:204,text:''};calls.length=0
     for(const a of ['restart','reload','geo','dns','fakeip'])await api.coreAction(c,a)
     assert.deepEqual(calls.map(x=>[x.init.method,x.url.slice(c.url.length)]),[['POST','/restart'],['PUT','/configs?force=true'],['POST','/configs/geo'],['POST','/cache/dns/flush'],['POST','/cache/fakeip/flush']])
     responder=()=>({body:{Status:0,Answer:[{data:'answer-value',TTL:60,type:1}]}});calls.length=0;const r=await api.queryDNS(c,'example.invalid','A');assert.equal(r.answers[0].ttl,60);assert.ok(calls[0].url.endsWith('/dns/query?name=example.invalid&type=A'));await assert.rejects(()=>api.queryDNS(c,'bad/path','A'))
@@ -1485,7 +1485,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     assert.equal((await api.verifyCoreRestart(n,rt)).verified,false)
     let probes=0
     responder=(url,init)=>url.endsWith('/version')?(++probes===1?{throw:'restarting'}:{body:{version:'healthy'}}):full(url,init)
-    assert.equal((await api.verifyCoreRestart(n,null)).verified,true)
+    assert.equal((await api.verifyCoreRestart(n,null)).verified,false,'Nikki requires reliable generation evidence, not a transient health failure')
     calls.length=0;assert.equal((await api.verifyCoreRestart(n,rt,()=>false)).verified,false);assert.equal(calls.length,0)
     responder=full
     alive=false;assert.equal((await api.loadNikkiRuntime(n)).coreSeconds,null);denied=true;await assert.rejects(()=>api.loadNikkiRuntime(n));calls.length=0;await assert.rejects(()=>api.loadNikkiRuntime(c));assert.equal(calls.length,0)
@@ -1515,7 +1515,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
   await test('更多服务/核心弹窗文字、取消零请求、GEO免确认及成功横幅关闭/失败不报成功',async()=>{
     const timers=[],original=context.setTimeout;context.setTimeout=(fn,ms)=>{if(ms===700){fn();return 0}timers.push({fn,ms});return timers.length}
     const n={...c,id:'alerts-nikki',kind:'openwrt',plugin:'nikki',auto:false,cport:9090}
-    const respond=(url,init)=>({body:url.endsWith('/ubus')?{result:[0,JSON.parse(init.body).params[1]==='session'?{ubus_rpc_session:'alert-session'}:{app:'app',core:'core'}]}:{version:'core',mode:'rule'}})
+    const respond=(url,init)=>['/configs/geo','/cache/dns/flush','/cache/fakeip/flush'].some(p=>url.endsWith(p))?{status:204,text:''}:({body:url.endsWith('/ubus')?{result:[0,JSON.parse(init.body).params[1]==='session'?{ubus_rpc_session:'alert-session'}:{app:'app',core:'core'}]}:{version:'core',mode:'rule'}})
     responder=respond
     try{
       render(pages.MorePage,{active:n,onChanged(){}},true);await flush();let tree=render(pages.MorePage,{active:n,onChanged(){}})
@@ -1532,7 +1532,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       tree=render(pages.MorePage,{active:n,onChanged(){}});assert.equal(tree.props.overlay.alignment,'top');assert.ok(text(tree.props.overlay.content).includes('GEO 数据库更新成功'));await flush()
       nodes(tree.props.overlay.content,'Button')[0].props.action();tree=render(pages.MorePage,{active:n,onChanged(){}});assert.equal(text(tree.props.overlay?.content),'')
       context.confirmResult=false
-      for(const [name,msg] of [['刷新DNS缓存','DNS 缓存已清除'],['刷新FakeIP缓存','FakeIP 缓存已清除']]){
+      for(const [name,msg] of [['刷新DNS缓存','已提交 DNS 缓存清理请求'],['刷新FakeIP缓存','FakeIP 缓存清理接口已完成']]){
         const prev=alerts.length;await button(tree,name).props.action();tree=render(pages.MorePage,{active:n,onChanged(){}});assert.ok(text(tree.props.overlay.content).includes(msg));assert.equal(alerts.length,prev);assert.equal(confirms.length,before);assert.equal(tree.props.overlay.content.props.animation,undefined);assert.equal(nodes(tree.props.overlay.content,'HStack')[0].props.transition,undefined)
       }
       context.confirmResult=true

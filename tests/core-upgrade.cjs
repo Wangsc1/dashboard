@@ -50,9 +50,9 @@ context.setTimeout=(fn,ms)=>{if(ms===1000)fn();return 1} // finite waits immedia
   }
   scenario({post:{throw:'reset'},versions:[{throw:'down'},old]});const tree=await page();await button(tree,'升级核心').props.action();assert.equal(posts,1);assert.ok(message(draw()).startsWith('尚未确认'));unmount()
  })
- await test('definite unsupported/denied/failed HTTP is existing error alert with no retry or false success',async()=>{
-  for(const status of [404,405,403,500]){
-   scenario({post:{status}});const tree=await page();calls.length=0;const count=alerts.length;await button(tree,'升级核心').props.action()
+ await test('definite HTTP/invalid success contract is error alert with no recovery polling or false success',async()=>{
+  for(const post of [...[404,405,403,500].map(status=>({status})),{text:'<html>PRIVATE</html>'},{body:{message:'PRIVATE'}},{body:{}},{status:204,text:''}]){
+   scenario({post});const tree=await page();calls.length=0;const count=alerts.length;await button(tree,'升级核心').props.action()
    assert.equal(posts,1);assert.equal(versionCalls().length,1);assert.equal(alerts.length,count+1);assert.equal(alerts.at(-1).title,'操作未完成');assert.equal(message(draw()),'');assert.equal(button(draw(),'升级核心').props.disabled,false);unmount()
   }
  })

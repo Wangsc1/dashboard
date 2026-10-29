@@ -1,7 +1,7 @@
 import { CpuSampler, CpuUsage, CpuMeta, parseCpuInfo, thermalCelsius } from "./openwrt-metrics"
 
 import { getPreferences, customHeaders, recordEvent, controllerHealth, feedback } from "./preferences"
-export const VERSION = "1.119"
+export const VERSION = "1.120"
 
 export type Kind = "clash" | "openwrt"
 export type Plugin = "openclash" | "nikki" | "mihomo"
@@ -77,7 +77,7 @@ export function getActive(): Controller | null {
 export function setActive(id: string) { Storage.set(K_ACTIVE, id); feedback(); recordEvent("switch", true) }
 
 class ControllerHTTPError extends Error {}
-async function http(c: Controller, path: string, init: { method?: string; body?: any; timeout?: number; headers?: Record<string, string>; signal?: AbortController["signal"] } = {}): Promise<any> {
+async function http(c: Controller, path: string, init: { method?: string; body?: any; timeout?: number; headers?: Record<string, string>; signal?: AbortController["signal"]; response?: "ack"|"empty"|"dns" } = {}): Promise<any> {
   const secret = getSecret(c.id)
   const headers: Record<string, string> = init.headers ? { ...init.headers } : customHeaders()
   if (init.body !== undefined) headers["Content-Type"] = "application/json"
@@ -94,6 +94,17 @@ async function http(c: Controller, path: string, init: { method?: string; body?:
     throw new ControllerHTTPError(`请求失败 HTTP ${r.status}`)
   }
   const text = await r.text()
+  if(init.response){
+    if(init.response==="empty"){
+      if(r.status!==204||text.trim())throw new ControllerHTTPError("核心操作响应不符合接口契约，尚未确认完成")
+      return {}
+    }
+    let value:any
+    try{value=JSON.parse(text)}catch{throw new ControllerHTTPError("核心接口响应不是有效JSON")}
+    if(r.status!==200||!value||typeof value!=="object"||Array.isArray(value)||"error" in value||"message" in value)throw new ControllerHTTPError("核心接口响应结构异常")
+    if(init.response==="ack"&&value.status!=="ok")throw new ControllerHTTPError("核心操作未返回有效确认")
+    return value
+  }
   if (!text) return {}
   try { return JSON.parse(text) } catch { return {} }
 }
@@ -923,8 +934,9 @@ export async function loadNikkiRuntime(c: Controller,onUpdate?:(value:NikkiRunti
   result.measuredAt=Date.now()
   return result
 }
-export async function verifyCoreRestart(c:Controller,before:NikkiRuntime|null,current:()=>boolean=()=>true):Promise<{verified:boolean;runtime:NikkiRuntime|null}> {
+export async function verifyCoreRestart(c:Controller,before:NikkiRuntime|null,current:()=>boolean=()=>true,acknowledged=true):Promise<{verified:boolean;runtime:NikkiRuntime|null}> {
   let unavailable=false,last:NikkiRuntime|null=null
+  const nikki=c.kind==="openwrt"&&c.plugin==="nikki"
   const resolved=await cc(c)
   for(let attempt=0;attempt<6&&current();attempt++){
     await new Promise<void>(resolve=>setTimeout(resolve,700))
@@ -937,7 +949,7 @@ export async function verifyCoreRestart(c:Controller,before:NikkiRuntime|null,cu
     if(runtime)last=runtime
     if(!health){unavailable=true;continue}
     const changed=!!(before?.coreIdentity&&runtime?.coreIdentity&&before.coreIdentity!==runtime.coreIdentity)
-    if(changed||unavailable)return {verified:true,runtime:last}
+    if(changed||(!nikki&&acknowledged&&unavailable))return {verified:true,runtime:last}
   }
   return {verified:false,runtime:last}
 }
@@ -1030,17 +1042,21 @@ export async function nikkiService(c: Controller, action: "start"|"stop"|"restar
   catch(error) { throw serviceFailure(error,false) }
 }
 export type CoreAction = "upgrade"|"restart"|"reload"|"geo"|"dns"|"fakeip"
+// Definite HTTP/contract rejection must never be reinterpreted as a restart.
+export function coreActionMayHaveExecuted(error:unknown):boolean { return !(error instanceof ControllerHTTPError) }
 export async function coreAction(c: Controller, action: CoreAction) {
   // Mihomo hub/route/upgrade.go: POST /upgrade uses the core's default channel,
   // downloads/replaces its executable and schedules a restart (not a version probe).
   const paths = { upgrade: ["POST","/upgrade"], restart: ["POST","/restart"], reload: ["PUT","/configs?force=true"], geo: ["POST","/configs/geo"], dns: ["POST","/cache/dns/flush"], fakeip: ["POST","/cache/fakeip/flush"] }
   const entry = paths[action]; if (!entry) throw new Error("不支持的核心动作")
-  await http(await cc(c),entry[1],{method:entry[0], ...(action === "reload" ? {body:{}} : {})})
+  await http(await cc(c),entry[1],{method:entry[0],response:action==="upgrade"||action==="restart"?"ack":"empty", ...(action === "reload" ? {body:{}} : {})})
 }
 export async function queryDNS(c: Controller, name: string, type: string) {
   if (!/^(?=.{1,253}\.?$)[a-z0-9_*-]+(?:\.[a-z0-9_-]+)*\.?$/i.test(name) || !["A","AAAA","CNAME","TXT","MX","HTTPS"].includes(type)) throw new Error("域名或查询类型无效")
-  const j = await http(await cc(c),`/dns/query?name=${enc(name)}&type=${enc(type)}`)
-  return { status: num(j.Status), answers: (j.Answer ?? []).map((x:any) => ({ data:String(x.data ?? ""), type:num(x.type), ttl:num(x.TTL) })) }
+  const j = await http(await cc(c),`/dns/query?name=${enc(name)}&type=${enc(type)}`,{response:"dns"})
+  const uint=(v:unknown,max:number)=>typeof v==="number"&&Number.isInteger(v)&&v>=0&&v<=max
+  if(!uint(j.Status,4095)||("Answer" in j&&(!Array.isArray(j.Answer)||j.Answer.some((x:any)=>!x||typeof x!=="object"||typeof x.data!=="string"||!uint(x.TTL,4294967295)||!uint(x.type,65535)||x.type===0))))throw new ControllerHTTPError("DNS响应状态或答案结构异常")
+  return { status: j.Status, answers: (j.Answer ?? []).map((x:any) => ({ data:x.data, type:x.type, ttl:x.TTL })) }
 }
 // Nikki semantics: OpenWrt-nikki 78e1a751, tools/nikki.js + view/nikki/{app,profile,mixin,editor}.js.
 // All bodies, UCI snapshots and drafts stay in memory; never send them to recordEvent/Storage.
