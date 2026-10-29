@@ -664,7 +664,7 @@ export function MorePage({active,onChanged,onClose,selected=true}:{active:Contro
       if(!await Dialog.confirm({title:`${title}服务`,message:`确认要${title}相关服务吗？`,confirmLabel:`确认${title}`,cancelLabel:"取消"})||!current())return
       setNoticeKind("progress");setNotice(`正在${title}服务…`)
       let before:NikkiRuntime|null=null
-      if(action==="restart")try{before=await loadNikkiRuntime(controller)}catch{}
+      if(action==="restart"||action==="reload")try{before=await loadNikkiRuntime(controller)}catch{}
       if(!current())return
       let requestError:unknown=null
       try{await nikkiService(controller,action)}catch(error){

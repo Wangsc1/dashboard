@@ -1,7 +1,7 @@
 import { CpuSampler, CpuUsage, CpuMeta, parseCpuInfo, thermalCelsius } from "./openwrt-metrics"
 
 import { getPreferences, customHeaders, recordEvent, controllerHealth, feedback } from "./preferences"
-export const VERSION = "1.118"
+export const VERSION = "1.119"
 
 export type Kind = "clash" | "openwrt"
 export type Plugin = "openclash" | "nikki" | "mihomo"
@@ -972,12 +972,13 @@ export async function upgradeCoreAndVerify(c:Controller,current:()=>boolean=()=>
 // Read-only, bounded verification after a single explicit service command.
 export async function verifyNikkiService(c:Controller,action:"start"|"stop"|"restart"|"reload",before:NikkiRuntime|null,current:()=>boolean=()=>true):Promise<{verified:boolean;running:boolean|null;runtime:NikkiRuntime|null}> {
   let running:boolean|null=null,runtime:NikkiRuntime|null=null
-  // rc reload acknowledges dispatch only; there is no application-complete token.
-  if(action==="reload")return {verified:false,running,runtime}
+  // rc.init's callback ignores the script exit status. A [0] reply alone cannot
+  // prove reload applied; require a live core with a reliably changed generation.
+  if(action==="reload"&&!before?.coreIdentity)return {verified:false,running,runtime}
   for(let attempt=0;attempt<6&&current();attempt++){
     await new Promise<void>(resolve=>setTimeout(resolve,700))
     if(!current())break
-    if(action==="restart"){
+    if(action==="restart"||action==="reload"){
       runtime=await loadNikkiRuntime(c).catch(()=>null)
       if(!current())break
       running=runtime?.running??null
@@ -985,7 +986,12 @@ export async function verifyNikkiService(c:Controller,action:"start"|"stop"|"res
     }else{
       running=await nikkiServiceStatus(c).catch(()=>null)
       if(!current())break
-      if(running===(action==="start"))return {verified:true,running,runtime}
+      if(running===(action==="start")){
+        if(action==="start")runtime=await loadNikkiRuntime(c).catch(()=>null)
+        if(!current())break
+        if(action==="start"&&runtime?.running===false){running=false;continue}
+        return {verified:true,running,runtime}
+      }
     }
   }
   return {verified:false,running,runtime}

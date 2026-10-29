@@ -94,7 +94,7 @@ const original={runtime:api.loadNikkiRuntime,status:api.nikkiServiceStatus,verif
    assert.equal(reload.verified,false);assert.equal(calls.length,0,'running cannot prove reload applied')
   }finally{pref.savePreferences({requestTimeout:saved})}
  })
- await test('real verification uses bounded rc state reads, restart identity changes, no reload read or write',async()=>{
+ await test('real verification refreshes started runtime and requires changed generation for restart/reload without writes',async()=>{
   let running=true,identity='2000',reads=0
   responder=(url,init)=>{
    assert.ok(url.endsWith('/ubus'));const req=JSON.parse(init.body)
@@ -115,9 +115,40 @@ const original={runtime:api.loadNikkiRuntime,status:api.nikkiServiceStatus,verif
   r=await api.verifyNikkiService(c,'restart',before);assert.equal(r.verified,false,'same PID/start/stack is not a restart')
   identity='3000';r=await api.verifyNikkiService(c,'restart',before);assert.equal(r.verified,true)
   r=await api.verifyNikkiService(c,'restart',null);assert.equal(r.verified,false,'missing baseline is unknown')
-  calls.length=0;r=await api.verifyNikkiService(c,'reload',before);assert.equal(r.verified,false);assert.equal(calls.length,0)
+  calls.length=0;r=await api.verifyNikkiService(c,'reload',before);assert.equal(r.verified,true);assert.ok(calls.length>0)
+  const same=await api.loadNikkiRuntime(c);r=await api.verifyNikkiService(c,'reload',same);assert.equal(r.verified,false,'script exit or live old core cannot prove reload applied')
+  calls.length=0;r=await api.verifyNikkiService(c,'reload',null);assert.equal(r.verified,false);assert.equal(calls.length,0,'no reliable baseline remains unknown')
   calls.length=0;r=await api.verifyNikkiService(c,'start',null,()=>false);assert.equal(calls.length,0);assert.equal(r.verified,false)
   responder=()=>({status:503});r=await api.verifyNikkiService(c,'stop',null);assert.equal(r.verified,false);assert.equal(r.running,null)
+ })
+ await test('stopped -> start refreshes real core/service ages immediately; unavailable files never invent durations',async()=>{
+  const reads={runtime:api.loadNikkiRuntime,versions:api.loadRuntimeVersions,config:api.loadConfig}
+  api.loadNikkiRuntime=original.runtime
+  api.loadRuntimeVersions=async()=>({core:'v1',app:'p1',failed:false});api.loadConfig=async()=>({mode:'rule'})
+  const aux=require('node:buffer').Buffer.alloc(32);aux.writeBigUInt64LE(17n,0);aux.writeBigUInt64LE(100n,8)
+  try{
+   for(const denied of [false,true]){
+    const active={...c,id:'start-real-runtime-'+denied};let running=false,writes=0
+    responder=(_url,init)=>{const [,obj,method,args]=JSON.parse(init.body).params
+     if(obj==='session')return {body:{result:[0,{ubus_rpc_session:'runtime-session'}]}}
+     if(method==='init'){writes++;running=true;return {body:{result:[0]}}}
+     if(obj==='rc')return {body:{result:[0,{nikki:{running}}]}}
+     if(obj==='service')return {body:{result:[0,{nikki:{instances:running?{nikki:{running:true,pid:10126}}:{}}}]}}
+     if(obj==='system')return {body:{result:[0,{localtime:1793290456,uptime:4901814}]}}
+     if(denied)return {body:{result:[6]}}
+     if(method==='stat')return {body:{result:[0,{type:'file',mtime:1793261518}]}}
+     const values={'/etc/TZ':'CST-8\n','/proc/uptime':'4901814 0','/proc/self/auxv':aux.toString('base64'),'/proc/10126/comm':'mihomo\n','/proc/10126/stat':'10126 (mihomo) S '+Array.from({length:26},(_,i)=>i===18?'490180000':i===24?'2000':'1').join(' ')}
+     return {body:{result:[0,{data:values[args.path]}]}}
+    }
+    render(pages.MorePage,{active,onChanged(){}},true);await flush()
+    let tree=render(pages.MorePage,{active,onChanged(){}});assert.ok(text(tree).includes('Nikki 服务 · 未运行'))
+    await button(tree,'启动').props.action();tree=render(pages.MorePage,{active,onChanged(){}})
+    assert.equal(writes,1);assert.equal(message(tree),'启动服务完成')
+    if(denied){assert.ok(text(tree).includes('Nikki 服务（运行时间：未提供）'))}
+    else{assert.ok(text(tree).includes('运行时间：'+api.fmtUptime(14,true)));assert.ok(text(tree).includes('Nikki 服务（运行时间：'+api.fmtUptime(138,true)+'）'))}
+    unmount()
+   }
+  }finally{api.loadNikkiRuntime=reads.runtime;api.loadRuntimeVersions=reads.versions;api.loadConfig=reads.config;unmount()}
  })
  await test('four-button alerts report trusted numeric categories and session/request stages without secrets or replay',async()=>{
   const privateText='PRIVATE-SECRET-http://private.invalid-sid-password-body'
@@ -165,22 +196,24 @@ const original={runtime:api.loadNikkiRuntime,status:api.nikkiServiceStatus,verif
    assert.ok(!api.nikkiServiceErrorText(new Error(privateText)).includes(privateText))
   }finally{api.loadNikkiRuntime=reads.runtime;api.loadRuntimeVersions=reads.versions;api.loadConfig=reads.config;unmount()}
  })
- await test('transport failure after one write still verifies state; restart needs identity change and reload stays unknown',async()=>{
+ await test('single write verifies after success/disconnect; reload needs a new generation, not an old running core or [0] alone',async()=>{
   const reads={runtime:api.loadNikkiRuntime,versions:api.loadRuntimeVersions,config:api.loadConfig}
   api.loadRuntimeVersions=async()=>({core:'v1',app:'p1',failed:false});api.loadConfig=async()=>({mode:'rule'})
   try{
    let serial=0
-   for(const [action,title,identity,baseline,readFailure,verified] of [
+   for(const [action,title,identity,baseline,readFailure,verified,responseOK] of [
     ['start','启动','same',true,false,true],['stop','停止','same',true,false,true],
     ['restart','重启','new',true,false,true],['restart','重启','old',true,false,false],
-    ['restart','重启','new',false,false,false],['reload','重载','new',true,false,false],
+    ['restart','重启','new',false,false,false],['reload','重载','new',true,false,true],
+    ['reload','重载','old',true,false,false],['reload','重载','new',false,false,false],
     ['start','启动','new',true,true,false],
+    ['reload','重载','new',true,false,true,true],['reload','重载','old',true,false,false,true],
    ]){
     const active={...c,id:'transport-recovery-'+serial++};let writes=0,rcReads=0
     api.loadNikkiRuntime=async()=>!writes&&!baseline?null:({running:true,coreIdentity:'42:1000:2000',coreSeconds:10,serviceSeconds:20,measuredAt:now})
     responder=(_url,init)=>{const [,obj,method,args]=JSON.parse(init.body).params
      if(obj==='session')return {body:{result:[0,{ubus_rpc_session:'safe-session'}]}}
-     if(obj==='rc'&&method==='init'){writes++;return {throw:'synthetic PRIVATE disconnect'}}
+     if(obj==='rc'&&method==='init'){writes++;return responseOK?{body:{result:[0]}}:{throw:'synthetic PRIVATE disconnect'}}
      if(obj==='rc'&&method==='list'){rcReads++;return readFailure?{throw:'unavailable'}:{body:{result:[0,{nikki:{running:action!=='stop'}}]}}}
      if(obj==='service')return {body:{result:[0,{nikki:{instances:{core:{running:true,pid:42}}}}]}}
      if(obj==='file'&&args.path==='/proc/42/comm')return {body:{result:[0,{data:'mihomo'}]}}
@@ -190,10 +223,10 @@ const original={runtime:api.loadNikkiRuntime,status:api.nikkiServiceStatus,verif
     render(pages.MorePage,{active,onChanged(){}},true);await flush()
     const tree=render(pages.MorePage,{active,onChanged(){}}),n=alerts.length
     await button(tree,title).props.action();const final=render(pages.MorePage,{active,onChanged(){}})
-    assert.equal(writes,1);assert.equal(alerts.length,n+(verified?0:1))
+    assert.equal(writes,1);assert.equal(alerts.length,n+(verified||responseOK?0:1))
     assert.equal(nodes(final.props.overlay.content,'Image')[0].props.systemName,verified?'checkmark.circle.fill':'exclamationmark.circle.fill')
     if(verified)assert.equal(message(final),title+'服务完成')
-    else{assert.ok(message(final).includes('尚未确认'));assert.ok(alerts.at(-1).message.includes('网络、传输或本地异常'));assert.ok(!alerts.at(-1).message.includes('PRIVATE'))}
+    else{assert.ok(message(final).includes('尚未确认'));if(!responseOK){assert.ok(alerts.at(-1).message.includes('网络、传输或本地异常'));assert.ok(!alerts.at(-1).message.includes('PRIVATE'))}}
     if(action==='stop')assert.ok(text(final).includes('Nikki 服务 · 未运行'))
     if(action==='reload')assert.equal(rcReads,0)
     unmount()
