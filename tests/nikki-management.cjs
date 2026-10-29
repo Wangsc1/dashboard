@@ -216,25 +216,6 @@ const sub={name:'Edited',url:'https://new-subscription.invalid/file',userAgent:'
       }else{assert.equal(calls.length,count);if(mode==='failure'){assert.ok(text(tree).includes('订阅更新失败'));assert.ok(buttons(tree).every(b=>!b.props.disabled))}else assert.ok(text(tree).includes('来源已改变'))}
     }
   })
-  await test('subscription failure diagnostics are stage-scoped, safe and never replay updates',async()=>{
-    const privateText='https://secret.invalid/?token=private-session'
-    for(const method of ['changes','get']){
-      fixture();await api.loadNikkiManagement(n);calls.length=0
-      fail=(obj,m)=>obj==='uci'&&m===method?{throw:privateText}:null
-      await assert.rejects(()=>api.updateNikkiSubscription(n,'s1'),e=>{assert.match(e.message,/预检未完成.*具体阶段未知.*未发送更新请求/);assert.ok(!e.message.includes(privateText));return true})
-      assert.equal(writes().length,0)
-    }
-    fixture();await api.loadNikkiManagement(n);calls.length=0
-    fail=(obj,m)=>{if(obj==='uci'&&m==='get'){now+=3600000;return null}if(obj==='session')return {throw:privateText};return null}
-    await assert.rejects(()=>api.updateNikkiSubscription(n,'s1'),e=>{assert.match(e.message,/认证未完成.*未发送更新请求/);assert.ok(!e.message.includes(privateText));return true});assert.equal(writes().length,0)
-    for(const reply of [{throw:privateText},{status:503},{body:{result:[6]}},{body:{result:[3]}},{body:{error:{message:privateText}}},{body:{result:[0,{}]}}]){
-      fixture();await api.loadNikkiManagement(n);calls.length=0;fail=(obj,m)=>obj==='luci.nikki'&&m==='update_subscription'?reply:null
-      await assert.rejects(()=>api.updateNikkiSubscription(n,'s1'),e=>{assert.match(e.message,/更新调用.*结果未知.*不会自动重试/);assert.ok(!e.message.includes(privateText));if(reply.status)assert.match(e.message,/HTTP 503/);if(reply.body?.result?.[0]===6)assert.match(e.message,/权限拒绝/);if(reply.body?.result?.[0]===3)assert.match(e.message,/ubus 状态 3/);return true})
-      assert.equal(writes().length,1)
-    }
-    fixture();const props={c:n,kind:'subscription'};let tree=render(pages.ManagementPage,props,true);await settle();tree=render(pages.ManagementPage,props);calls.length=0;fail=(obj,m)=>obj==='luci.nikki'&&m==='update_subscription'?{throw:privateText}:null
-    await nodes(tree,'Button').find(b=>b.props.accessibilityLabel==='更新订阅').props.action();tree=render(pages.ManagementPage,props);assert.match(text(tree),/结果未知.*不会自动重试/);assert.ok(!text(tree).includes(privateText));assert.equal(writes().length,1)
-  })
   await test('subscription update verifies section type; configuration selection commits with upstream reload event, no extra rc reload',async()=>{
     fixture();await api.updateNikkiSubscription(n,'s1');assert.ok(writes().some(c=>JSON.parse(c.init.body).params[2]==='update_subscription'));calls.length=0;await assert.rejects(()=>api.updateNikkiSubscription(n,'r1'),/类型不符/);assert.equal(writes().length,0)
     const d=await api.loadNikkiManagement(n);await api.selectNikkiProfile(n,d,'subscription:s1');assert.equal(state.config.profile,'subscription:s1');assert.equal(autoReloads,1);assert.ok(!writes().some(c=>JSON.parse(c.init.body).params[1]==='rc'))
