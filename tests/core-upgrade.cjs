@@ -27,7 +27,7 @@ context.setTimeout=(fn,ms)=>{if(ms===1000)fn();return 1} // finite waits immedia
 ;(async()=>{
  await test('upgrade remains first arrow.up.circle; unchanged one-layer confirmation; cancellation has zero requests',async()=>{
   scenario();let tree=await page();const panel=rawNodes(tree,'MorePanel').find(n=>rawNodes(n,'MoreLine').some(x=>x.props.title==='升级核心')),lines=rawNodes(panel,'MoreLine')
-  assert.equal(JSON.stringify(lines.map(x=>x.props.title)),JSON.stringify(['升级核心','重启核心','重载配置','更新GEO数据库']));assert.equal(lines[0].props.icon,'arrow.up.circle')
+  assert.equal(JSON.stringify(lines.map(x=>x.props.title)),JSON.stringify(['升级核心','重启核心','重载配置','更新GEO']));assert.equal(lines[0].props.icon,'arrow.up.circle')
   calls.length=0;context.confirmResult=false;const count=confirms.length;await button(tree,'升级核心').props.action();assert.equal(calls.length,0);assert.equal(confirms.length,count+1)
   assert.equal(JSON.stringify(confirms.at(-1)),JSON.stringify({title:'升级核心',message:'将下载并替换核心，可能重启并短暂中断代理服务。是否继续？',confirmLabel:'确认升级',cancelLabel:'取消'}));assert.equal(button(draw(),'升级核心').props.disabled,false)
   assert.ok(!text(draw(null,true)).includes('升级核心'));context.confirmResult=true;unmount()

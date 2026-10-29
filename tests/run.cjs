@@ -874,7 +874,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) { const lazy = ['proxies','rules'].includes(ids[i]) && ids[i] !== id; assert.equal(nodes(tree, types[i]).length, lazy ? 0 : 1); if (!lazy) assert.equal(nodes(tree, types[i])[0].props.selected, ids[i] === id) }
     }
-    assert.equal(api.VERSION, '1.114'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.115'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('独立导航栈保留业务owner和身份，只有选中页提供可见工具栏', () => {
     pref.savePreferences({ defaultPage: 'overview' })
@@ -1528,7 +1528,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
         calls.length=0;await button(tree,name).props.action();assert.equal(calls.length,0);assert.equal(confirms.at(-1).title,name);assert.equal(confirms.at(-1).confirmLabel,label)
       }
       const before=confirms.length
-      calls.length=0;await button(tree,'更新GEO数据库').props.action();assert.equal(confirms.length,before);assert.ok(calls.some(x=>x.url.endsWith('/configs/geo')))
+      calls.length=0;await button(tree,'更新GEO').props.action();assert.equal(confirms.length,before);assert.ok(calls.some(x=>x.url.endsWith('/configs/geo')))
       tree=render(pages.MorePage,{active:n,onChanged(){}});assert.equal(tree.props.overlay.alignment,'top');assert.ok(text(tree.props.overlay.content).includes('GEO 数据库更新成功'));await flush()
       nodes(tree.props.overlay.content,'Button')[0].props.action();tree=render(pages.MorePage,{active:n,onChanged(){}});assert.equal(text(tree.props.overlay?.content),'')
       context.confirmResult=false
@@ -1539,7 +1539,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       const prev=alerts.length;await button(tree,'启动').props.action();tree=render(pages.MorePage,{active:n,onChanged(){}});assert.ok(text(tree.props.overlay.content).includes('尚未确认启动服务完成'));assert.equal(alerts.length,prev);await flush()
       timers.at(-1).fn();tree=render(pages.MorePage,{active:n,onChanged(){}});assert.equal(text(tree.props.overlay?.content),'')
       responder=(url,init)=>url.endsWith('/configs/geo')?{throw:'failed'}:respond(url,init)
-      await button(tree,'更新GEO数据库').props.action();tree=render(pages.MorePage,{active:n,onChanged(){}});assert.equal(text(tree.props.overlay?.content),'');assert.equal(alerts.at(-1).title,'操作未完成')
+      await button(tree,'更新GEO').props.action();tree=render(pages.MorePage,{active:n,onChanged(){}});assert.equal(text(tree.props.overlay?.content),'');assert.equal(alerts.at(-1).title,'操作未完成')
       unmount()
     }finally{context.setTimeout=original;context.confirmResult=true;unmount()}
   })

@@ -9,6 +9,53 @@ const draw=(active=c,reset=false,selected=true)=>render(pages.MorePage,{active,s
 const message=t=>text(t.props.overlay?.content).trim()
 const original={runtime:api.loadNikkiRuntime,status:api.nikkiServiceStatus,verify:api.verifyNikkiService,service:api.nikkiService,versions:api.loadRuntimeVersions,config:api.loadConfig}
 ;(async()=>{
+ await test('Nikki 1.26.2 service contract sends rc.init name/action for all four actions (mock only)',async()=>{
+  // Official v1.26.2 tools/nikki.js uses rc.init('nikki', action), not luci.nikki.
+  responder=(url,init)=>{
+   assert.equal(url,c.url+'/ubus');const req=JSON.parse(init.body)
+   assert.equal(req.method,'call')
+   if(req.params[1]==='session')return {body:{result:[0,{ubus_rpc_session:'synthetic'}]}}
+   assert.equal(req.params[1],'rc');assert.equal(req.params[2],'init')
+   return {body:{result:[0]}} // rpcd rc.init succeeds without a response payload.
+  }
+  for(const action of ['start','stop','restart','reload']){
+   calls.length=0;await api.nikkiService(c,action)
+   const writes=calls.map(x=>JSON.parse(x.init.body)).filter(x=>x.params[1]!=='session')
+   assert.equal(writes.length,1);assert.deepEqual(writes[0].params,['synthetic','rc','init',{name:'nikki',action}])
+  }
+  for(const reply of [{status:404},{body:{result:[4]}},{body:{result:[7]}},{throw:'synthetic timeout'}]){
+   responder=()=>reply;calls.length=0
+   await assert.rejects(()=>api.nikkiService(c,'restart'))
+   assert.equal(calls.length,1,'no automatic replay on missing method, timeout or interruption')
+  }
+  calls.length=0;await assert.rejects(()=>api.nikkiService(c,'unsupported'));assert.equal(calls.length,0)
+  await assert.rejects(()=>api.nikkiService({...c,plugin:'openclash'},'start'));assert.equal(calls.length,0)
+ })
+ await test('effective timeout is preference seconds; login lifetime is not fetch timeout; authentication/error paths stay distinct',async()=>{
+  const saved=pref.getPreferences().requestTimeout
+  try{
+   pref.savePreferences({requestTimeout:4})
+   for(const action of ['start','stop','restart','reload']){
+    const fresh={...c,id:'auth-timeout-'+action};let sequence=[]
+    responder=(url,init)=>{
+     const req=JSON.parse(init.body);sequence.push(req.params[1]+'.'+req.params[2]);assert.equal(init.timeout,4)
+     if(req.params[1]==='session'){
+      assert.equal(req.params[3].timeout,3600);assert.equal(req.params[0],'00000000000000000000000000000000')
+      return {body:{result:[0,{ubus_rpc_session:'fresh'}]}}
+     }
+     assert.equal(req.params[0],'fresh');return {body:{result:[0]}}
+    }
+    await api.nikkiService(fresh,action);assert.deepEqual(sequence,['session.login','rc.init'])
+    for(const [reply,pattern] of [[{status:403},/HTTP 403/],[{status:404},/HTTP 404/],[{text:'<html>login</html>'},/不是 ubus 接口/],[{body:{error:{message:'Access denied'}}},/ubus 错误/],[{body:{result:[7]}},/代码 7/]]){
+     calls.length=0;responder=()=>reply;await assert.rejects(()=>api.nikkiService(fresh,action),pattern)
+     assert.equal(calls.length,1,'HTTP/JSON-RPC/transport errors are not ubus status 6')
+    }
+    calls.length=0;responder=(_url,init)=>{const req=JSON.parse(init.body);return {body:req.params[1]==='session'?{result:[0,{ubus_rpc_session:'renewed'}]}:{result:[6]}}}
+    await assert.rejects(()=>api.nikkiService(fresh,action),/没有权限访问 rc.init/)
+    assert.deepEqual(calls.map(x=>JSON.parse(x.init.body).params[1]),['rc','session','rc'])
+   }
+  }finally{pref.savePreferences({requestTimeout:saved})}
+ })
  await test('real verification uses bounded rc state reads, restart identity changes, no reload read or write',async()=>{
   let running=true,identity='2000',reads=0
   responder=(url,init)=>{
