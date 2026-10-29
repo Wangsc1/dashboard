@@ -31,6 +31,16 @@ const original={runtime:api.loadNikkiRuntime,status:api.nikkiServiceStatus,verif
   calls.length=0;await assert.rejects(()=>api.nikkiService(c,'unsupported'));assert.equal(calls.length,0)
   await assert.rejects(()=>api.nikkiService({...c,plugin:'openclash'},'start'));assert.equal(calls.length,0)
  })
+ await test('service response parser accepts status-only success, but rejects absent status/body without replay',async()=>{
+  for(const result of [[0],[0,{}],[0,null]]){
+   calls.length=0;responder=()=>({body:{jsonrpc:'2.0',id:1,result}})
+   await api.nikkiService(c,'reload');assert.equal(calls.length,1)
+  }
+  for(const reply of [{status:204,text:''},{text:''},{body:{result:[]}},{body:{}},{body:{result:null}},{text:'null'}]){
+   calls.length=0;responder=()=>reply
+   await assert.rejects(()=>api.nikkiService(c,'reload'));assert.equal(calls.length,1)
+  }
+ })
  await test('effective timeout is preference seconds; login lifetime is not fetch timeout; authentication/error paths stay distinct',async()=>{
   const saved=pref.getPreferences().requestTimeout
   try{
@@ -46,13 +56,13 @@ const original={runtime:api.loadNikkiRuntime,status:api.nikkiServiceStatus,verif
      assert.equal(req.params[0],'fresh');return {body:{result:[0]}}
     }
     await api.nikkiService(fresh,action);assert.deepEqual(sequence,['session.login','rc.init'])
-    for(const [reply,pattern] of [[{status:403},/HTTP 403/],[{status:404},/HTTP 404/],[{text:'<html>login</html>'},/不是 ubus 接口/],[{body:{error:{message:'Access denied'}}},/ubus 错误/],[{body:{result:[7]}},/代码 7/]]){
+    for(const [reply,pattern] of [[{status:403},/HTTP 403/],[{status:404},/HTTP 404/],[{text:'<html>login</html>'},/响应正文读取或解析失败/],[{body:{error:{message:'Access denied'}}},/JSONRPC/],[{body:{result:[7]}},/ubus 7/]]){
      calls.length=0;responder=()=>reply;await assert.rejects(()=>api.nikkiService(fresh,action),pattern)
      assert.equal(calls.length,1,'HTTP/JSON-RPC/transport errors are not ubus status 6')
     }
     calls.length=0;responder=(_url,init)=>{const req=JSON.parse(init.body);return {body:req.params[1]==='session'?{result:[0,{ubus_rpc_session:'renewed'}]}:{result:[6]}}}
-    await assert.rejects(()=>api.nikkiService(fresh,action),/没有权限访问 rc.init/)
-    assert.deepEqual(calls.map(x=>JSON.parse(x.init.body).params[1]),['rc','session','rc'])
+    await assert.rejects(()=>api.nikkiService(fresh,action),/ubus 6/)
+    assert.deepEqual(calls.map(x=>JSON.parse(x.init.body).params[1]),['rc'],'service writes never retry even on ACCESS')
    }
   }finally{pref.savePreferences({requestTimeout:saved})}
  })
@@ -81,6 +91,51 @@ const original={runtime:api.loadNikkiRuntime,status:api.nikkiServiceStatus,verif
   calls.length=0;r=await api.verifyNikkiService(c,'start',null,()=>false);assert.equal(calls.length,0);assert.equal(r.verified,false)
   responder=()=>({status:503});r=await api.verifyNikkiService(c,'stop',null);assert.equal(r.verified,false);assert.equal(r.running,null)
  })
+ await test('four-button alerts report trusted numeric categories and session/request stages without secrets or replay',async()=>{
+  const privateText='PRIVATE-SECRET-http://private.invalid-sid-password-body'
+  const reads={runtime:api.loadNikkiRuntime,versions:api.loadRuntimeVersions,config:api.loadConfig}
+  api.loadNikkiRuntime=async()=>({running:true,coreSeconds:1,serviceSeconds:1,measuredAt:now})
+  api.loadRuntimeVersions=async()=>({core:'v1',app:'p1',failed:false});api.loadConfig=async()=>({mode:'rule'})
+  const cases=[
+   [{status:403,text:privateText},'HTTP 403'],
+   [{status:404,text:privateText},'HTTP 404'],
+   [{body:{result:[6],privateText}},'ubus 6'],
+   [{body:{result:[7],privateText}},'ubus 7'],
+   [{body:{error:{code:-32002,message:privateText,data:privateText}}},'JSONRPC -32002'],
+   [{body:{error:{code:privateText,message:privateText}}},'JSONRPC'],
+   [{text:privateText},'响应正文读取或解析失败'],
+   [{body:{result:[],privateText}},'响应结构异常'],
+   [{body:{result:[privateText]}},'响应结构异常'],
+   [{throw:privateText},'网络、传输或本地异常'],
+  ]
+  try{
+   let serial=0
+   for(const [action,title] of [['start','启动'],['stop','停止'],['restart','重启'],['reload','重载']])for(const session of [true,false])for(const [reply,category] of cases){
+    const active={...c,id:'private-stage-'+serial++}
+    secrets.set('neko_secret_'+active.id,privateText)
+    responder=(_url,init)=>{const req=JSON.parse(init.body)
+     if(req.params[1]==='session'&&!session)return {body:{result:[0,{ubus_rpc_session:privateText}]}}
+     return reply
+    }
+    render(pages.MorePage,{active,onChanged(){}},true);await flush()
+    const tree=render(pages.MorePage,{active,onChanged(){}}),n=alerts.length;calls.length=0
+    await button(tree,title).props.action()
+    assert.equal(alerts.length,n+1);assert.equal(alerts.at(-1).title,'操作未完成')
+    const msg=alerts.at(-1).message
+    assert.ok(msg.includes(session?'会话获取失败，未发送服务动作':'可能已执行；不会自动重试'));assert.ok(msg.includes('类别：'+category))
+    assert.ok(!msg.includes(privateText));assert.ok(!JSON.stringify(pref.getLogs()).includes(privateText))
+    const rpc=calls.map(x=>JSON.parse(x.init.body))
+    assert.equal(rpc.filter(x=>x.params[1]==='rc'&&x.params[2]==='init').length,session?0:1)
+    assert.equal(rpc.filter(x=>x.params[1]==='session').length,1)
+    assert.ok(!rpc.some(x=>x.params[1]==='rc'&&x.params[2]==='list'),'no verification after failure')
+    unmount()
+   }
+   const fresh={...c,id:'missing-login-session'}
+   responder=()=>({body:{result:[0,{}]}})
+   await assert.rejects(()=>api.nikkiService(fresh,'start'),/会话获取失败.*登录未取得有效会话/)
+   assert.ok(!api.nikkiServiceErrorText(new Error(privateText)).includes(privateText))
+  }finally{api.loadNikkiRuntime=reads.runtime;api.loadRuntimeVersions=reads.versions;api.loadConfig=reads.config;unmount()}
+ })
  api.loadRuntimeVersions=async()=>({core:'v1',app:'p1',failed:false});api.loadConfig=async()=>({mode:'rule'})
  api.loadNikkiRuntime=async()=>({running:true,coreIdentity:'old',coreSeconds:10,serviceSeconds:20,measuredAt:now})
  api.nikkiServiceStatus=async()=>true
@@ -98,6 +153,20 @@ const original={runtime:api.loadNikkiRuntime,status:api.nikkiServiceStatus,verif
    assert.equal(nodes(t.props.overlay.content,'Image')[0].props.systemName,action==='reload'?'exclamationmark.circle.fill':'checkmark.circle.fill')
    nodes(t.props.overlay.content,'Button')[0].props.action();assert.equal(message(draw()),'');unmount()
   }
+ })
+ await test('runtime pre-read failure is swallowed; other page read failures do not enter the service catch',async()=>{
+  const runtime=api.loadNikkiRuntime,versions=api.loadRuntimeVersions,config=api.loadConfig,verify=api.verifyNikkiService
+  try{
+   api.loadNikkiRuntime=async()=>{throw Error('synthetic read failure')}
+   api.loadRuntimeVersions=async()=>{throw Error('synthetic version failure')}
+   api.loadConfig=async()=>{throw Error('synthetic config failure')}
+   api.verifyNikkiService=async()=>({verified:false,running:null,runtime:null})
+   for(const title of ['启动','停止','重启','重载']){
+    const tree=await page(),n=alerts.length;await button(tree,title).props.action()
+    assert.equal(commands.length,1);assert.equal(alerts.length,n)
+    assert.ok(!message(draw()).includes('请求失败或响应中断'));unmount()
+   }
+  }finally{api.loadNikkiRuntime=runtime;api.loadRuntimeVersions=versions;api.loadConfig=config;api.verifyNikkiService=verify}
  })
  await test('command failure stays warning with existing error alert, never retries or verifies',async()=>{
   for(const title of ['启动','停止','重启','重载']){let t=await page();fail=true;const n=alerts.length;await button(t,title).props.action();t=draw();assert.equal(commands.length,1);assert.equal(verification,0);assert.ok(message(t).includes('尚未确认'));assert.equal(alerts.length,n+1);assert.equal(alerts.at(-1).title,'操作未完成');assert.equal(button(t,title).props.disabled,false);unmount()}

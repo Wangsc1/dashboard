@@ -1,7 +1,7 @@
 import { CpuSampler, CpuUsage, CpuMeta, parseCpuInfo, thermalCelsius } from "./openwrt-metrics"
 
 import { getPreferences, customHeaders, recordEvent, controllerHealth, feedback } from "./preferences"
-export const VERSION = "1.115"
+export const VERSION = "1.116"
 
 export type Kind = "clash" | "openwrt"
 export type Plugin = "openclash" | "nikki" | "mihomo"
@@ -127,20 +127,27 @@ async function ubusRaw(c: Controller, sid: string, obj: string, method: string, 
   try { return await ubusRequest(c, sid, obj, method, params, timeout) }
   catch (e) { recordEvent("ubus", false); throw e }
 }
+type RpcFailureKind = "http"|"ubus"|"jsonrpc"|"body"|"shape"|"session"
+const rpcFailures = new WeakMap<Error,{kind:RpcFailureKind;code?:number}>()
+function rpcFailure(message:string,kind:RpcFailureKind,code?:unknown):Error {
+  const error=new Error(message)
+  rpcFailures.set(error,{kind,code:typeof code==="number"&&Number.isSafeInteger(code)&&Math.abs(code)<=2147483648?code:undefined})
+  return error
+}
 async function ubusRequest(c: Controller, sid: string, obj: string, method: string, params: any, timeout?: number): Promise<any> {
   const r = await fetch(c.url + "/ubus", {
     method: "POST", headers: { ...customHeaders(), "Content-Type": "application/json" }, allowInsecureRequest: true, timeout: timeout ?? getPreferences().requestTimeout,
     body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "call", params: [sid, obj, method, params] }),
   } as any)
-  if (r.status === 404) throw new Error("HTTP 404：该地址不是 OpenWrt 的 LuCI 地址，请检查端口")
-  if (!r.ok) throw new Error(`请求失败 HTTP ${r.status}`)
+  if (r.status === 404) throw rpcFailure("HTTP 404：该地址不是 OpenWrt 的 LuCI 地址，请检查端口","http",404)
+  if (!r.ok) throw rpcFailure(`请求失败 HTTP ${r.status}`,"http",r.status)
   let j: any
-  try { j = JSON.parse(await r.text()) } catch { throw new Error("返回内容不是 ubus 接口，请确认地址是 LuCI 后台（如 http://路由器IP）") }
-  if (j.error) throw new Error("ubus 错误：" + (j.error.message ?? "未知"))
+  try { j = JSON.parse(await r.text()) } catch { throw rpcFailure("返回内容不是 ubus 接口，请确认地址是 LuCI 后台（如 http://路由器IP）","body") }
+  if (j.error) throw rpcFailure("ubus 错误：" + (j.error.message ?? "未知"),"jsonrpc",j.error.code)
   const res = j.result
-  if (!Array.isArray(res)) throw new Error("ubus 返回异常")
-  if (res[0] === 6) throw new Error("ACCESS")
-  if (res[0] !== 0) throw new Error("ubus 调用失败，代码 " + res[0])
+  if (!Array.isArray(res)) throw rpcFailure("ubus 返回异常","shape")
+  if (res[0] === 6) throw rpcFailure("ACCESS","ubus",6)
+  if (res[0] !== 0) throw rpcFailure("ubus 调用失败，代码 " + res[0],typeof res[0]==="number"?"ubus":"shape",res[0])
   recordEvent("ubus", true)
   return res[1] ?? {}
 }
@@ -157,13 +164,13 @@ async function wrtLoginOnce(c: Controller): Promise<string> {
   try {
     const r = await ubusRaw(c, NULL_SID, "session", "login", { username: user, password: getSecret(c.id), timeout: 3600 })
     const sid = r.ubus_rpc_session
-    if (!sid) throw new Error("登录失败")
+    if (!sid) throw rpcFailure("登录失败","session")
     recordEvent("login", true)
     sessions[c.id] = { sid, at: Date.now(), source, auth }
     return sid
   } catch (e: any) {
     recordEvent("login", false)
-    if (String(e?.message) === "ACCESS") throw new Error("登录失败，请检查用户名和密码")
+    if (String(e?.message) === "ACCESS") throw rpcFailure("登录失败，请检查用户名和密码","ubus",6)
     throw e
   }
 }
@@ -983,7 +990,29 @@ export async function verifyNikkiService(c:Controller,action:"start"|"stop"|"res
   }
   return {verified:false,running,runtime}
 }
-export async function nikkiService(c: Controller, action: "start"|"stop"|"restart"|"reload") { requireNikki(c); if (!["start","stop","restart","reload"].includes(action)) throw new Error("不支持的服务动作"); await ubus(c,"rc","init",{name:"nikki",action}) }
+const serviceFailures = new WeakMap<Error,string>()
+function serviceFailure(error:unknown,session:boolean):Error {
+  const info=error instanceof Error?rpcFailures.get(error):undefined
+  const labels:Record<RpcFailureKind,string>={http:"HTTP",ubus:"ubus",jsonrpc:"JSONRPC",body:"响应正文读取或解析失败",shape:"响应结构异常",session:"登录未取得有效会话"}
+  const category=info?labels[info.kind]+(info.code===undefined?"":` ${info.code}`):"网络、传输或本地异常"
+  const message=(session?"会话获取失败，未发送服务动作":"动作请求或响应未确认，可能已执行；不会自动重试")+`。类别：${category}`
+  const safe=new Error(message);serviceFailures.set(safe,message);return safe
+}
+// Only trusted, locally constructed categories reach the four service-button alerts.
+export function nikkiServiceErrorText(error:unknown):string {
+  return (error instanceof Error?serviceFailures.get(error):undefined)??"动作请求或响应未确认，可能已执行；不会自动重试。类别：未知异常"
+}
+export async function nikkiService(c: Controller, action: "start"|"stop"|"restart"|"reload") {
+  requireNikki(c); if (!["start","stop","restart","reload"].includes(action)) throw new Error("不支持的服务动作")
+  let sid:string
+  try {
+    const cached=sessions[c.id]
+    sid=cached?.sid&&cached.auth===overviewSource(c)&&Date.now()-cached.at<=50*60*1000?cached.sid:await wrtLogin(c)
+  } catch(error) { throw serviceFailure(error,true) }
+  // Never replay a service write, including when its response is ACCESS.
+  try { await ubusRaw(c,sid,"rc","init",{name:"nikki",action}) }
+  catch(error) { throw serviceFailure(error,false) }
+}
 export type CoreAction = "upgrade"|"restart"|"reload"|"geo"|"dns"|"fakeip"
 export async function coreAction(c: Controller, action: CoreAction) {
   // Mihomo hub/route/upgrade.go: POST /upgrade uses the core's default channel,

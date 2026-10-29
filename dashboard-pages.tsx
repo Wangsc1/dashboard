@@ -1,7 +1,7 @@
 import { NikkiManagement, NikkiSubscription, NikkiRule, NikkiFile, NikkiManagementError, NIKKI_RULE_TYPES, loadNikkiManagement, saveNikkiSubscription, deleteNikkiSubscription, updateNikkiSubscription, saveNikkiRule, deleteNikkiRule, setNikkiRulesEnabled, reorderNikkiRules, selectNikkiProfile, readNikkiFile, saveNikkiFile } from "./api"
 import { rootToolbar } from "./root-toolbar"
 import { AppEvents, Button, Divider, HStack, VStack, Text, Image, Circle, RoundedRectangle, Spacer, ScrollView, LazyVStack, NavigationLink, Menu, Picker, TextField, Toggle, Form, Section, ProgressView, Editor, ZStack, modifiers, Safari, useState, useEffect, useMemo } from "scripting"
-import { ProxyNodeConnections, loadProxyNodeConnections, ProxyTestTarget, ProxyNodeDetail, loadProxyNode, testProxyNode, proxyNodeError, Controller, Group, Conn, Rule, Provider, setRuleDisabled, closeRuleConnections, ruleToggleSupported, loadGroups, testGroup, selectProxy, loadProviders, updateProvider, loadRules, loadConnections, closeConnection, closeAllConnections, fmtBytes, fmtSpeed, fmtUptime, delayColor, loadRuntimeVersions, checkCoreUpdate, loadNikkiRuntime, NikkiRuntime, verifyCoreRestart, upgradeCoreAndVerify, lastControllerMode, loadConfig, setMode as setControllerMode, nikkiService, verifyNikkiService, nikkiServiceStatus, coreAction, CoreAction, queryDNS, webpage } from "./api"
+import { ProxyNodeConnections, loadProxyNodeConnections, ProxyTestTarget, ProxyNodeDetail, loadProxyNode, testProxyNode, proxyNodeError, Controller, Group, Conn, Rule, Provider, setRuleDisabled, closeRuleConnections, ruleToggleSupported, loadGroups, testGroup, selectProxy, loadProviders, updateProvider, loadRules, loadConnections, closeConnection, closeAllConnections, fmtBytes, fmtSpeed, fmtUptime, delayColor, loadRuntimeVersions, checkCoreUpdate, loadNikkiRuntime, NikkiRuntime, verifyCoreRestart, upgradeCoreAndVerify, lastControllerMode, loadConfig, setMode as setControllerMode, nikkiService, nikkiServiceErrorText, verifyNikkiService, nikkiServiceStatus, coreAction, CoreAction, queryDNS, webpage } from "./api"
 import { usePreferences, KernelConfigPage, updatePreference, Choice, ThresholdRange, Range, TestURLField } from "./settings-ui"
 import { NODE_SORT_OPTIONS, savePreferences, getPreferences, cachedIcon, readCachedIcon, feedback } from "./preferences"
 import { selectable, sortedNodes, historyFor, SceneVisibility, ConnectionRefreshDiagnostic, filterConnections, clientLabels, saveClientLabel, sourceKey, confirmed } from "./dashboard-model"
@@ -669,7 +669,8 @@ export function MorePage({active,onChanged,onClose,selected=true}:{active:Contro
       try{await nikkiService(controller,action)}catch(error){
         if(!current())return
         setNoticeKind("warning");setNotice(`${title}服务请求失败或响应中断，尚未确认完成`)
-        throw error
+        await Dialog.alert({title:"操作未完成",message:nikkiServiceErrorText(error)})
+        return
       }
       if(!current())return
       const checked=await verifyNikkiService(controller,action,before,current)
