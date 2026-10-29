@@ -124,16 +124,52 @@ const original={runtime:api.loadNikkiRuntime,status:api.nikkiServiceStatus,verif
     const msg=alerts.at(-1).message
     assert.ok(msg.includes(session?'会话获取失败，未发送服务动作':'可能已执行；不会自动重试'));assert.ok(msg.includes('类别：'+category))
     assert.ok(!msg.includes(privateText));assert.ok(!JSON.stringify(pref.getLogs()).includes(privateText))
-    const rpc=calls.map(x=>JSON.parse(x.init.body))
+    const rpc=calls.filter(x=>x.url.endsWith('/ubus')).flatMap(x=>{const req=JSON.parse(x.init.body);return Array.isArray(req)?req:[req]})
     assert.equal(rpc.filter(x=>x.params[1]==='rc'&&x.params[2]==='init').length,session?0:1)
     assert.equal(rpc.filter(x=>x.params[1]==='session').length,1)
-    assert.ok(!rpc.some(x=>x.params[1]==='rc'&&x.params[2]==='list'),'no verification after failure')
+    const uncertain=!session&&['响应正文读取或解析失败','响应结构异常','网络、传输或本地异常'].includes(category)
+    assert.equal(rpc.filter(x=>x.params[1]==='rc'&&x.params[2]==='list').length,uncertain&&['start','stop'].includes(action)?6:0,'only uncertain dispatched actions get bounded read-only verification')
     unmount()
    }
    const fresh={...c,id:'missing-login-session'}
    responder=()=>({body:{result:[0,{}]}})
    await assert.rejects(()=>api.nikkiService(fresh,'start'),/会话获取失败.*登录未取得有效会话/)
    assert.ok(!api.nikkiServiceErrorText(new Error(privateText)).includes(privateText))
+  }finally{api.loadNikkiRuntime=reads.runtime;api.loadRuntimeVersions=reads.versions;api.loadConfig=reads.config;unmount()}
+ })
+ await test('transport failure after one write still verifies state; restart needs identity change and reload stays unknown',async()=>{
+  const reads={runtime:api.loadNikkiRuntime,versions:api.loadRuntimeVersions,config:api.loadConfig}
+  api.loadRuntimeVersions=async()=>({core:'v1',app:'p1',failed:false});api.loadConfig=async()=>({mode:'rule'})
+  try{
+   let serial=0
+   for(const [action,title,identity,baseline,readFailure,verified] of [
+    ['start','启动','same',true,false,true],['stop','停止','same',true,false,true],
+    ['restart','重启','new',true,false,true],['restart','重启','old',true,false,false],
+    ['restart','重启','new',false,false,false],['reload','重载','new',true,false,false],
+    ['start','启动','new',true,true,false],
+   ]){
+    const active={...c,id:'transport-recovery-'+serial++};let writes=0,rcReads=0
+    api.loadNikkiRuntime=async()=>!writes&&!baseline?null:({running:true,coreIdentity:'42:1000:2000',coreSeconds:10,serviceSeconds:20,measuredAt:now})
+    responder=(_url,init)=>{const [,obj,method,args]=JSON.parse(init.body).params
+     if(obj==='session')return {body:{result:[0,{ubus_rpc_session:'safe-session'}]}}
+     if(obj==='rc'&&method==='init'){writes++;return {throw:'synthetic PRIVATE disconnect'}}
+     if(obj==='rc'&&method==='list'){rcReads++;return readFailure?{throw:'unavailable'}:{body:{result:[0,{nikki:{running:action!=='stop'}}]}}}
+     if(obj==='service')return {body:{result:[0,{nikki:{instances:{core:{running:true,pid:42}}}}]}}
+     if(obj==='file'&&args.path==='/proc/42/comm')return {body:{result:[0,{data:'mihomo'}]}}
+     if(obj==='file'&&args.path==='/proc/42/stat')return {body:{result:[0,{data:'42 (mihomo) S '+Array.from({length:26},(_,i)=>i===18?'1000':i===24?(identity==='new'?'3000':'2000'):'1').join(' ')}]}}
+     return {body:{result:[0,{}]}}
+    }
+    render(pages.MorePage,{active,onChanged(){}},true);await flush()
+    const tree=render(pages.MorePage,{active,onChanged(){}}),n=alerts.length
+    await button(tree,title).props.action();const final=render(pages.MorePage,{active,onChanged(){}})
+    assert.equal(writes,1);assert.equal(alerts.length,n+(verified?0:1))
+    assert.equal(nodes(final.props.overlay.content,'Image')[0].props.systemName,verified?'checkmark.circle.fill':'exclamationmark.circle.fill')
+    if(verified)assert.equal(message(final),title+'服务完成')
+    else{assert.ok(message(final).includes('尚未确认'));assert.ok(alerts.at(-1).message.includes('网络、传输或本地异常'));assert.ok(!alerts.at(-1).message.includes('PRIVATE'))}
+    if(action==='stop')assert.ok(text(final).includes('Nikki 服务 · 未运行'))
+    if(action==='reload')assert.equal(rcReads,0)
+    unmount()
+   }
   }finally{api.loadNikkiRuntime=reads.runtime;api.loadRuntimeVersions=reads.versions;api.loadConfig=reads.config;unmount()}
  })
  api.loadRuntimeVersions=async()=>({core:'v1',app:'p1',failed:false});api.loadConfig=async()=>({mode:'rule'})

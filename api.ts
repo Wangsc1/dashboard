@@ -1,7 +1,7 @@
 import { CpuSampler, CpuUsage, CpuMeta, parseCpuInfo, thermalCelsius } from "./openwrt-metrics"
 
 import { getPreferences, customHeaders, recordEvent, controllerHealth, feedback } from "./preferences"
-export const VERSION = "1.116"
+export const VERSION = "1.117"
 
 export type Kind = "clash" | "openwrt"
 export type Plugin = "openclash" | "nikki" | "mihomo"
@@ -990,17 +990,23 @@ export async function verifyNikkiService(c:Controller,action:"start"|"stop"|"res
   }
   return {verified:false,running,runtime}
 }
-const serviceFailures = new WeakMap<Error,string>()
+const serviceFailures = new WeakMap<Error,{message:string;verify:boolean}>()
 function serviceFailure(error:unknown,session:boolean):Error {
   const info=error instanceof Error?rpcFailures.get(error):undefined
   const labels:Record<RpcFailureKind,string>={http:"HTTP",ubus:"ubus",jsonrpc:"JSONRPC",body:"响应正文读取或解析失败",shape:"响应结构异常",session:"登录未取得有效会话"}
   const category=info?labels[info.kind]+(info.code===undefined?"":` ${info.code}`):"网络、传输或本地异常"
   const message=(session?"会话获取失败，未发送服务动作":"动作请求或响应未确认，可能已执行；不会自动重试")+`。类别：${category}`
-  const safe=new Error(message);serviceFailures.set(safe,message);return safe
+  const safe=new Error(message)
+  serviceFailures.set(safe,{message,verify:!session&&(!info||info.kind==="body"||info.kind==="shape")})
+  return safe
 }
 // Only trusted, locally constructed categories reach the four service-button alerts.
 export function nikkiServiceErrorText(error:unknown):string {
-  return (error instanceof Error?serviceFailures.get(error):undefined)??"动作请求或响应未确认，可能已执行；不会自动重试。类别：未知异常"
+  return (error instanceof Error?serviceFailures.get(error)?.message:undefined)??"动作请求或响应未确认，可能已执行；不会自动重试。类别：未知异常"
+}
+// Session failures and explicit HTTP/RPC rejections must not turn an old running state into success.
+export function nikkiServiceNeedsVerification(error:unknown):boolean {
+  return error instanceof Error&&serviceFailures.get(error)?.verify===true
 }
 export async function nikkiService(c: Controller, action: "start"|"stop"|"restart"|"reload") {
   requireNikki(c); if (!["start","stop","restart","reload"].includes(action)) throw new Error("不支持的服务动作")

@@ -22,13 +22,28 @@ const checks=String.raw`
   release({coreSeconds:130,serviceSeconds:3610,measuredAt:now,running:true});await flush()
   tree=render(pages.MorePage,{active:c,selected:true,onChanged(){}})
   assert.ok(coreText(tree).includes(api.fmtUptime(130,true)))
+  assert.ok(text(tree).includes('Nikki 服务（运行时间：'+api.fmtUptime(3610,true)+'）'))
   // Refresh failures preserve the last known value, but a completed stopped result is authoritative.
   const poll=[...intervals.values()].find(x=>x.ms===30000)
   api.loadNikkiRuntime=async()=>{throw Error('unavailable')};await poll.fn();await flush()
   tree=render(pages.MorePage,{active:c,selected:true,onChanged(){}});assert.ok(coreText(tree).includes(api.fmtUptime(130,true)))
   api.loadNikkiRuntime=async()=>({coreSeconds:null,serviceSeconds:null,measuredAt:now,running:false});await poll.fn();await flush()
   tree=render(pages.MorePage,{active:c,selected:true,onChanged(){}});assert.ok(coreText(tree).includes('未运行'))
-  console.log('PASS partial response does not clear runtime; complete sample updates; failure preserves; stopped result replaces')
+  assert.ok(text(tree).includes('Nikki 服务 · 未运行'));assert.ok(!text(tree).includes('Nikki 服务（运行时间：未运行）'))
+  api.loadNikkiRuntime=async()=>({coreSeconds:null,serviceSeconds:null,measuredAt:now,running:null});await poll.fn();await flush()
+  tree=render(pages.MorePage,{active:c,selected:true,onChanged(){}})
+  assert.ok(text(tree).includes('Nikki 服务（运行时间：未提供）'));assert.ok(!text(tree).includes('未运行'))
+  // A late stopped sample from the old source cannot label the new source as stopped.
+  let finishOld
+  api.loadNikkiRuntime=async()=>new Promise(r=>{finishOld=r})
+  const pending=poll.fn();await flush()
+  const other={...c,id:'runtime-other',url:'http://runtime-other.invalid'}
+  api.loadNikkiRuntime=async()=>({coreSeconds:null,serviceSeconds:null,measuredAt:now,running:null})
+  render(pages.MorePage,{active:other,selected:true,onChanged(){}});await flush()
+  finishOld({coreSeconds:null,serviceSeconds:null,measuredAt:now,running:false});await pending;await flush()
+  tree=render(pages.MorePage,{active:other,selected:true,onChanged(){}})
+  assert.ok(text(tree).includes('Nikki 服务（运行时间：未提供）'));assert.ok(!text(tree).includes('未运行'))
+  console.log('PASS runtime refresh preserves durations; confirmed stop labels plugin stopped; unknown and late other-source stop never fake stopped')
  }finally{unmount();api.loadNikkiRuntime=original;api.loadRuntimeVersions=versions;api.loadConfig=config}
 })().catch(e=>{console.error(e);process.exitCode=1})
 `
