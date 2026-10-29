@@ -41,14 +41,14 @@ const original={runtime:api.loadNikkiRuntime,status:api.nikkiServiceStatus,verif
    await assert.rejects(()=>api.nikkiService(c,'reload'));assert.equal(calls.length,1)
   }
  })
- await test('effective timeout is preference seconds; login lifetime is not fetch timeout; authentication/error paths stay distinct',async()=>{
+ await test('service-only timeout is 65s; login/reads keep preference seconds; auth lifetime remains separate',async()=>{
   const saved=pref.getPreferences().requestTimeout
   try{
    pref.savePreferences({requestTimeout:4})
    for(const action of ['start','stop','restart','reload']){
     const fresh={...c,id:'auth-timeout-'+action};let sequence=[]
     responder=(url,init)=>{
-     const req=JSON.parse(init.body);sequence.push(req.params[1]+'.'+req.params[2]);assert.equal(init.timeout,4)
+     const req=JSON.parse(init.body);sequence.push(req.params[1]+'.'+req.params[2]);assert.equal(init.timeout,req.params[1]==='session'?4:65)
      if(req.params[1]==='session'){
       assert.equal(req.params[3].timeout,3600);assert.equal(req.params[0],'00000000000000000000000000000000')
       return {body:{result:[0,{ubus_rpc_session:'fresh'}]}}
@@ -64,6 +64,34 @@ const original={runtime:api.loadNikkiRuntime,status:api.nikkiServiceStatus,verif
     await assert.rejects(()=>api.nikkiService(fresh,action),/ubus 6/)
     assert.deepEqual(calls.map(x=>JSON.parse(x.init.body).params[1]),['rc'],'service writes never retry even on ACCESS')
    }
+  }finally{pref.savePreferences({requestTimeout:saved})}
+ })
+ await test('29-second synchronous service fits its budget; over-budget/disconnect stays unknown with one write; empty status read is unknown',async()=>{
+  const saved=pref.getPreferences().requestTimeout
+  try{
+   pref.savePreferences({requestTimeout:8})
+   for(const action of ['start','stop','restart','reload']){
+    for(const seconds of [29,59,66]){
+     calls.length=0
+     responder=(_url,init)=>{
+      const req=JSON.parse(init.body);assert.equal(req.params[2],'init');assert.equal(init.timeout,65)
+      if(seconds>init.timeout)return {throw:'synthetic TimeoutError private details'}
+      return {body:{result:[0]}}
+     }
+     if(seconds<=65)await api.nikkiService(c,action)
+     else await assert.rejects(()=>api.nikkiService(c,action),/可能已执行；不会自动重试/)
+     assert.equal(calls.length,1)
+     assert.equal(pref.getPreferences().requestTimeout,8)
+    }
+   }
+   responder=(_url,init)=>{assert.equal(init.timeout,8);return {body:{result:[0]}}}
+   assert.equal(await api.nikkiServiceStatus(c),null,'status-only success cannot invent a running state')
+   for(const action of ['start','stop']){
+    calls.length=0;const checked=await api.verifyNikkiService(c,action,null)
+    assert.equal(checked.running,null);assert.equal(checked.verified,false);assert.equal(calls.length,6)
+   }
+   calls.length=0;const reload=await api.verifyNikkiService(c,'reload',null)
+   assert.equal(reload.verified,false);assert.equal(calls.length,0,'running cannot prove reload applied')
   }finally{pref.savePreferences({requestTimeout:saved})}
  })
  await test('real verification uses bounded rc state reads, restart identity changes, no reload read or write',async()=>{

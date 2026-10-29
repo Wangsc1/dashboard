@@ -1,7 +1,7 @@
 import { CpuSampler, CpuUsage, CpuMeta, parseCpuInfo, thermalCelsius } from "./openwrt-metrics"
 
 import { getPreferences, customHeaders, recordEvent, controllerHealth, feedback } from "./preferences"
-export const VERSION = "1.117"
+export const VERSION = "1.118"
 
 export type Kind = "clash" | "openwrt"
 export type Plugin = "openclash" | "nikki" | "mihomo"
@@ -1008,6 +1008,10 @@ export function nikkiServiceErrorText(error:unknown):string {
 export function nikkiServiceNeedsVerification(error:unknown):boolean {
   return error instanceof Error&&serviceFailures.get(error)?.verify===true
 }
+// rc.init waits for the init script to exit (including remote subscription download).
+// uhttpd ubus.c bounds it by script_timeout: 60s on the supported device; allow
+// 5s to receive that response rather than aborting at the ordinary read timeout.
+const NIKKI_SERVICE_TIMEOUT = 65
 export async function nikkiService(c: Controller, action: "start"|"stop"|"restart"|"reload") {
   requireNikki(c); if (!["start","stop","restart","reload"].includes(action)) throw new Error("不支持的服务动作")
   let sid:string
@@ -1016,7 +1020,7 @@ export async function nikkiService(c: Controller, action: "start"|"stop"|"restar
     sid=cached?.sid&&cached.auth===overviewSource(c)&&Date.now()-cached.at<=50*60*1000?cached.sid:await wrtLogin(c)
   } catch(error) { throw serviceFailure(error,true) }
   // Never replay a service write, including when its response is ACCESS.
-  try { await ubusRaw(c,sid,"rc","init",{name:"nikki",action}) }
+  try { await ubusRaw(c,sid,"rc","init",{name:"nikki",action},NIKKI_SERVICE_TIMEOUT) }
   catch(error) { throw serviceFailure(error,false) }
 }
 export type CoreAction = "upgrade"|"restart"|"reload"|"geo"|"dns"|"fakeip"
