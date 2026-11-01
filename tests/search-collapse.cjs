@@ -10,13 +10,13 @@ const magnifier=t=>nodes(t,'Button').find(b=>nodes(b,'Image').some(i=>i.props.sy
   api.loadProviders=async()=>[{name:'alpha-provider',type:'Rule',vehicleType:'HTTP'},{name:'beta-provider',type:'Rule',vehicleType:'HTTP'}]
   try{
    let t=render(pages.RulesPage,props,true);await flush();t=render(pages.RulesPage,props);calls.length=0
-   button(t,'搜索规则与提供者').props.action();t=render(pages.RulesPage,props);nodes(t,'TextField')[0].props.onChanged('beta');t=render(pages.RulesPage,props);assert.ok(text(t).includes('#2'));assert.ok(!text(t).includes('#1'));assert.ok(!text(t).includes('alpha.invalid'))
-   const providerTab=nodes(t,'Button').find(b=>nodes(b,'Text').some(n=>text(n)==='提供者'));providerTab.props.action();t=render(pages.RulesPage,props);nodes(t,'TextField')[0].props.onChanged('beta');t=render(pages.RulesPage,props)
+   button(t,'搜索规则与提供者').props.action();t=render(pages.RulesPage,props);assert.equal(nodes(t,'TextField')[0].props.autofocus,true);nodes(t,'TextField')[0].props.onChanged('beta');t=render(pages.RulesPage,props);assert.ok(text(t).includes('#2'));assert.ok(!text(t).includes('#1'));assert.ok(!text(t).includes('alpha.invalid'))
+   const providerTab=nodes(t,'Button').find(b=>nodes(b,'Text').some(n=>text(n)==='提供者'));providerTab.props.action();t=render(pages.RulesPage,props);assert.equal(nodes(t,'TextField')[0].props.autofocus,true);nodes(t,'TextField')[0].props.onChanged('beta');t=render(pages.RulesPage,props)
    button(t,'搜索规则与提供者').props.action();t=render(pages.RulesPage,props);assert.equal(nodes(t,'TextField').length,0)
    function providerNames(t){const out=[];function visit(n){if(n?.type?.name==='ProviderCard')out.push(n.props.p.name);for(const c of n?.props?.children??[])visit(c)}visit(t);return out}
    assert.equal(providerNames(t).join(','),'alpha-provider,beta-provider')
-   button(t,'搜索规则与提供者').props.action();t=render(pages.RulesPage,props);assert.equal(nodes(t,'TextField')[0].props.value,'')
-   nodes(t,'Button').find(b=>nodes(b,'Text').some(n=>text(n)==='规则')).props.action();t=render(pages.RulesPage,props);assert.equal(nodes(t,'TextField')[0].props.value,'');assert.ok(text(t).includes('alpha.invalid'));assert.ok(text(t).includes('beta.invalid'));assert.ok(text(t).includes('#1'));assert.ok(text(t).includes('#2'));assert.equal(calls.length,0)
+   button(t,'搜索规则与提供者').props.action();t=render(pages.RulesPage,props);assert.equal(nodes(t,'TextField')[0].props.autofocus,true);assert.equal(nodes(t,'TextField')[0].props.value,'')
+   nodes(t,'Button').find(b=>nodes(b,'Text').some(n=>text(n)==='规则')).props.action();t=render(pages.RulesPage,props);assert.equal(nodes(t,'TextField')[0].props.autofocus,true);assert.equal(nodes(t,'TextField')[0].props.value,'');assert.ok(text(t).includes('alpha.invalid'));assert.ok(text(t).includes('beta.invalid'));assert.ok(text(t).includes('#1'));assert.ok(text(t).includes('#2'));assert.equal(calls.length,0)
   }finally{unmount();api.loadRules=beforeRules;api.loadProviders=beforeProviders}
  })
  await test('connection collapse clears only query; restores rows, preserves client/sort and does not restart poll',async()=>{
@@ -24,9 +24,9 @@ const magnifier=t=>nodes(t,'Button').find(b=>nodes(b,'Image').some(i=>i.props.sy
   let t=render(pages.ConnectionsPage,props,true);await flush();t=render(pages.ConnectionsPage,props);calls.length=0;const pollIds=[...intervals.keys()]
   button(nodes(t,'VStack').find(n=>n.props.contextMenu).props.contextMenu.menuItems,'筛选同源连接').props.action();t=render(pages.ConnectionsPage,props)
   button(t,'累计流量').props.action();t=render(pages.ConnectionsPage,props)
-  magnifier(t).props.action();t=render(pages.ConnectionsPage,props);nodes(t,'TextField')[0].props.onChanged('beta');t=render(pages.ConnectionsPage,props);assert.ok(!text(t).includes('alpha.invalid'));assert.ok(text(t).includes('beta.invalid'))
+  magnifier(t).props.action();t=render(pages.ConnectionsPage,props);assert.equal(nodes(t,'TextField')[0].props.autofocus,true);nodes(t,'TextField')[0].props.onChanged('beta');t=render(pages.ConnectionsPage,props);assert.ok(!text(t).includes('alpha.invalid'));assert.ok(text(t).includes('beta.invalid'))
   magnifier(t).props.action();t=render(pages.ConnectionsPage,props);await flush();assert.equal(nodes(t,'TextField').length,0);assert.ok(text(t).includes('alpha.invalid'));assert.ok(text(t).includes('beta.invalid'));assert.ok(!text(t).includes('other-client.invalid'));assert.equal(button(t,'✓ 累计流量').props.title,'✓ 累计流量')
-  magnifier(t).props.action();t=render(pages.ConnectionsPage,props);assert.equal(nodes(t,'TextField')[0].props.value,'');assert.equal(calls.length,0);assert.deepEqual([...intervals.keys()],pollIds)
+  magnifier(t).props.action();t=render(pages.ConnectionsPage,props);assert.equal(nodes(t,'TextField')[0].props.autofocus,true);assert.equal(nodes(t,'TextField')[0].props.value,'');assert.equal(calls.length,0);assert.deepEqual([...intervals.keys()],pollIds)
   unmount()
  })
  console.log(count+' search-collapse groups passed (mock only).')
