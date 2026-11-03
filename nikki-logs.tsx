@@ -41,6 +41,6 @@ export function NikkiLogPage({c,kind}:{c:Controller;kind:NikkiLogKind}){
       {shown?.mtime!==null&&shown?.mtime!==undefined?<Text>更新时间：{new Date(shown.mtime*1000).toLocaleString()}</Text>:null}
       <Button title="刷新" disabled={!supported||!!shown?.busy} action={()=>owner.refresh()}/>
     </Section>
-    <Section><ScrollView><Text font={12}>{shown?.loaded?shown.text||"（空日志）":"尚无可显示的日志"}</Text></ScrollView></Section>
+    <Section>{shown?.loaded&&shown.text?<ScrollView><Text font={12}>{shown.text}</Text></ScrollView>:<Text font={12} frame={{maxWidth:"infinity",minHeight:32,alignment:"leading"}}>{shown?.loaded?"（空日志）":"尚无可显示的日志"}</Text>}</Section>
   </Form>
 }
