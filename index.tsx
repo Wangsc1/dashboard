@@ -335,7 +335,7 @@ function OverviewPage({ active, version, onSwitch, onClose, selected = true }: {
     <ScrollView background={HOME_BG}>
       <VStack spacing={16} padding={{horizontal:16,top:12,bottom:24}}>
         {all.length>1?<Card><Picker title="当前路由器" pickerStyle="menu" value={active.id} onChanged={(v:string)=>{setActive(v);onSwitch()}}>{all.map(c=><Text key={c.id} tag={c.id}>{c.name}</Text>)}</Picker></Card>:null}
-        {shownError?<Text font={12} foregroundStyle="systemRed">{shownError}</Text>:null}
+        {shownError&&!/^请求超时[。.!！]?$/.test(shownError.trim())?<Text font={12} foregroundStyle="systemRed">{shownError}</Text>:null}
         {homeContent}
         <Card><HStack><Badge icon="link" color="#A855F7"/><Text font={13}>活动连接</Text><Spacer/><Text font={13}>{shownOv?String(shownOv.connCount):"--"}</Text></HStack>{hosts.length?<Text font={10} foregroundStyle="secondaryLabel" lineLimit={1}>{hosts.join(" · ")}</Text>:null}</Card>
       </VStack>
