@@ -32,7 +32,7 @@ function respond(url,init){
   t=render(ui.KernelConfigPage,{c:{...c,kind:'clash'}},true);links=nodes(t,'NavigationLink').filter(x=>x.props.destination?.type===logs.NikkiLogPage);assert.ok(links.every(x=>x.props.disabled));unmount()
  })
  await test('page loads actual snapshots, refreshes, retains navigation; hidden/background pauses and source isolates',async()=>{
-  responder=respond;render(logs.NikkiLogPage,{c,kind:'app'},true);await flush();let t=render(logs.NikkiLogPage,{c,kind:'app'});assert.ok(text(t).includes(body))
+  responder=respond;render(logs.NikkiLogPage,{c,kind:'app'},true);await flush();let t=render(logs.NikkiLogPage,{c,kind:'app'});assert.ok(text(t).includes(body));assert.ok(text(t).includes('更新时间：'));assert.ok(!text(t).includes('文件修改时间'));assert.ok(!text(t).includes('已读取日志快照'));assert.ok(!text(t).includes('/var/log/nikki'));assert.ok(nodes(t,'Section').every(x=>!x.props.footer))
   t.props.onDisappear();let n=calls.length;await button(t,'刷新').props.action();await flush();assert.equal(calls.length,n)
   t.props.onAppear();await flush();assert.ok(calls.length>n)
   for(const fn of [...sceneListeners])fn('background');n=calls.length;await button(render(logs.NikkiLogPage,{c,kind:'app'}),'刷新').props.action();await flush();assert.equal(calls.length,n)

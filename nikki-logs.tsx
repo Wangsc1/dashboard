@@ -19,7 +19,7 @@ export function NikkiLogPage({c,kind}:{c:Controller;kind:NikkiLogKind}){
       setView(v=>({...v,source,busy:true,status:"读取中…"}))
       try{
         const result=await readNikkiLog(c,kind,()=>valid(at))
-        if(valid(at))setView({source,text:result.text,loaded:true,busy:false,status:result.text?"已读取日志快照":"日志文件为空",mtime:result.mtime})
+        if(valid(at))setView({source,text:result.text,loaded:true,busy:false,status:result.text?"":"日志文件为空",mtime:result.mtime})
       }catch{
         if(valid(at))setView(v=>({...v,source,busy:false,status:"读取失败：文件不存在、无权限、超过2MiB或响应无效。已有内容（如有）是旧快照，未生成或清理日志。"}))
       }finally{
@@ -36,10 +36,9 @@ export function NikkiLogPage({c,kind}:{c:Controller;kind:NikkiLogKind}){
   },[source,page,supported])
   const shown=view.source===source?view:null
   return <Form navigationTitle={nikkiLogTitles[kind]} navigationBarTitleDisplayMode="inline" onAppear={page.onAppear} onDisappear={page.onDisappear}>
-    <Section footer={<Text>{kind==="debug"?"仅读取已有 debug.log，不生成调试包；可能陈旧或不存在。官方生成操作可能改配置并重启服务，故不调用。":"读取设备 Nikki 日志快照，不是本脚本应用日志；手动刷新或恢复页面时更新。"} 日志可能包含域名和敏感配置，仅在当前页面内存显示，不保存、不自动复制。</Text>}>
-      <Text>{c.name} · {supported?`/var/log/nikki/${kind}.log`:"当前来源不支持"}</Text>
-      <Text>{shown?.status??"尚未读取"}</Text>
-      {shown?.mtime!==null&&shown?.mtime!==undefined?<Text>文件修改时间：{new Date(shown.mtime*1000).toLocaleString()}</Text>:null}
+    <Section>
+      {shown?.status?<Text>{shown.status}</Text>:null}
+      {shown?.mtime!==null&&shown?.mtime!==undefined?<Text>更新时间：{new Date(shown.mtime*1000).toLocaleString()}</Text>:null}
       <Button title="刷新" disabled={!supported||!!shown?.busy} action={()=>owner.refresh()}/>
     </Section>
     <Section><ScrollView><Text font={12}>{shown?.loaded?shown.text||"（空日志）":"尚无可显示的日志"}</Text></ScrollView></Section>
