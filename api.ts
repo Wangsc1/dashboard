@@ -1,7 +1,7 @@
 import { CpuSampler, CpuUsage, CpuMeta, parseCpuInfo, thermalCelsius } from "./openwrt-metrics"
 
 import { getPreferences, customHeaders, recordEvent, controllerHealth, feedback } from "./preferences"
-export const VERSION = "1.121"
+export const VERSION = "1.122"
 
 export type Kind = "clash" | "openwrt"
 export type Plugin = "openclash" | "nikki" | "mihomo"
@@ -1229,6 +1229,32 @@ export async function readNikkiFile(c:Controller,key:string):Promise<string> {
   if(utf8Length(text)!==before.size||before.size!==after.size||before.mtime!==after.mtime)return nikkiFail("文件未完整读取、编码不是UTF-8或读取期间已改变，请重试")
   if(text.includes("\u0000"))return nikkiFail("文件不是可编辑的UTF-8文本")
   return text
+}
+export type NikkiLogKind="app"|"core"|"debug"
+// Official tools/nikki.js paths. Never invoke luci.nikki.debug: it writes a file
+// and can change UCI/restart a disabled service. Only inspect an existing log.
+export async function readNikkiLog(c:Controller,kind:NikkiLogKind,current:()=>boolean=()=>true):Promise<{text:string;mtime:number|null}> {
+  requireNikki(c)
+  if(!["app","core","debug"].includes(kind))throw new Error("不支持的日志类型")
+  const path=`/var/log/nikki/${kind}.log`
+  try{
+    if(!current())throw new Error("stale")
+    const info=await nikkiRead(c,"file","stat",{path})
+    if(!current())throw new Error("stale")
+    if(info.type!=="file"||!Number.isInteger(info.size)||info.size<0)throw new Error("shape")
+    if(info.size>2*1024*1024)throw new Error("large")
+    const sid=await nikkiSession(c)
+    if(!current())throw new Error("stale")
+    const r=await fetch(c.url+"/cgi-bin/cgi-download",{method:"POST",headers:{...customHeaders(),"Content-Type":"application/x-www-form-urlencoded"},body:"sessionid="+enc(sid)+"&path="+enc(path),allowInsecureRequest:true,timeout:getPreferences().requestTimeout} as any)
+    if(!r.ok)throw new Error("read")
+    const text=await r.text()
+    if(utf8Length(text)>2*1024*1024)throw new Error("large")
+    if(text.includes("\u0000")||/^\s*<(?:!doctype html|html)/i.test(text))throw new Error("shape")
+    return {text,mtime:typeof info.mtime==="number"&&Number.isFinite(info.mtime)?info.mtime:null}
+  }catch(error){
+    // Never surface/log remote exception bodies, URLs or session IDs.
+    throw new Error(error instanceof Error&&error.message==="large"?"日志超过2MiB，未读取；请在设备官方页面查看":"无法读取日志：文件可能不存在、无权限或响应无效；未生成或清理日志")
+  }
 }
 function utf8Length(s:string) {let n=0;for(const ch of s){const cp=ch.codePointAt(0)!;n+=cp<0x80?1:cp<0x800?2:cp<0x10000?3:4}return n}
 export async function saveNikkiFile(c:Controller,key:string,original:string,text:string) {

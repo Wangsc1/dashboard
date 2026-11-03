@@ -1,5 +1,6 @@
+import { NikkiLogPage, nikkiLogTitles } from "./nikki-logs"
 import { useDetailPage } from "./router-details"
-import { AppEvents, Device, useColorScheme, ScrollView, Button, Circle, GeometryReader, ZStack, RoundedRectangle, gradient, Form, HStack, Image, Menu, Picker, Section, Spacer, Text, TextField, Toggle, VStack, useEffect, useState } from "scripting"
+import { NavigationLink, AppEvents, Device, useColorScheme, ScrollView, Button, Circle, GeometryReader, ZStack, RoundedRectangle, gradient, Form, HStack, Image, Menu, Picker, Section, Spacer, Text, TextField, Toggle, VStack, useEffect, useState } from "scripting"
 import { Controller, ClashConfig, LOG_LEVELS, TUN_STACKS, tunStackLabel, loadConfig, cachedKernelConfig, forgetKernelConfig, patchConfig, validateConfigPatch } from "./api"
 import { Preferences, AppLog, LogLevel, getPreferences, savePreferences, subscribePreferences, feedback, getLogs, clearLogs, exportLogs, logTime, getHeaderText, saveHeaders, clearImageCache } from "./preferences"
 
@@ -351,6 +352,10 @@ export function KernelConfigPage({ c }: { c: Controller }) {
           {LOG_LEVELS.map(value => <Button key={value} title={({silent:"静默",error:"错误",warning:"警告",info:"信息",debug:"调试"} as Record<string,string>)[value]??value} action={() => change("log-level", value)} />)}
         </Menu>
       </HStack>)}
+      {card(<VStack spacing={0}>{(["app","core","debug"] as const).map((kind,i)=><VStack key={kind} spacing={0}>
+        {i?separator():null}
+        <NavigationLink disabled={c.kind!=="openwrt"||c.plugin!=="nikki"} destination={<NikkiLogPage c={c} kind={kind}/>}><HStack spacing={12} padding={{vertical:12}}>{icon("doc.text", "systemGray")}<Text>{nikkiLogTitles[kind]}</Text><Spacer/><Text foregroundStyle="secondaryLabel">{c.kind==="openwrt"&&c.plugin==="nikki"?"":"仅支持 Nikki"}</Text><Image systemName="chevron.right" font={12}/></HStack></NavigationLink>
+      </VStack>)}</VStack>)}
       <VStack alignment="leading" spacing={4} frame={{minHeight:20,maxWidth:"infinity",alignment:"leading"}}>
         {busy ? <Text font={13} foregroundStyle="secondaryLabel">读取中…</Text> : null}
         {session.saving && !session.tunSaving ? <Text font={13} foregroundStyle="secondaryLabel">保存中…</Text> : null}
