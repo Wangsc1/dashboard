@@ -471,7 +471,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'ZStack').filter(n => n.props.frame?.width === 20 && n.props.frame?.height === 20).length, 0)
       assert.equal(nodes(tree, 'VStack').filter(n => n.props.frame?.minHeight === 20).length, 1)
       const cards = nodes(tree, 'VStack').filter(n => n.props.background?.props?.cornerRadius === 16)
-      assert.equal(cards.length, 5); assert.ok(cards.every(n => n.props.frame.maxWidth === 'infinity'))
+      assert.equal(cards.length, 4); assert.ok(cards.every(n => n.props.frame.maxWidth === 'infinity'))
     }
     api.forgetKernelConfig(c) // earlier tests share this source; this case covers the uncached first frame
     let tree = render(ui.KernelConfigPage, { c }, true); check(tree)
@@ -552,7 +552,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     }
     assert.ok(nodes(tree, 'TextField').every(n => n.props.background.style.light === '#E5E5EA'))
     const cards = nodes(tree, 'VStack').filter(n => n.props.background?.props?.cornerRadius === 16)
-    assert.equal(cards.length, 5); assert.ok(cards.every(n => n.props.background.props.fill.light === '#F2F2F7' && n.props.background.props.fill.dark === '#1C1C1E'))
+    assert.equal(cards.length, 4); assert.ok(cards.every(n => n.props.background.props.fill.light === '#F2F2F7' && n.props.background.props.fill.dark === '#1C1C1E'))
     assert.ok(!nodes(tree, 'Button').some(n => ['规则模式', '全局模式', '直连模式'].includes(text(n))))
     const actions = [
       [() => nodes(tree, 'Toggle').find(n => n.props.title === 'IPv6').props.onChanged(false), { ipv6: false }],
@@ -874,7 +874,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) { const lazy = ['proxies','rules'].includes(ids[i]) && ids[i] !== id; assert.equal(nodes(tree, types[i]).length, lazy ? 0 : 1); if (!lazy) assert.equal(nodes(tree, types[i])[0].props.selected, ids[i] === id) }
     }
-    assert.equal(api.VERSION, '1.124'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.125'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('独立导航栈保留业务owner和身份，只有选中页提供可见工具栏', () => {
     pref.savePreferences({ defaultPage: 'overview' })

@@ -16,7 +16,7 @@ export function NikkiLogPage({c,kind}:{c:Controller;kind:NikkiLogKind}){
       if(!alive||!page.alive||!page.visible||!foreground||!supported)return
       if(busy){pending=true;return}
       busy=true;pending=false;const at=epoch
-      setView(v=>({...v,source,busy:true,status:"读取中…"}))
+      setView(v=>({...v,source,busy:true,status:""}))
       try{
         const result=await readNikkiLog(c,kind,()=>valid(at))
         if(valid(at))setView({source,text:result.text,loaded:true,busy:false,status:result.text?"":"日志文件为空",mtime:result.mtime})

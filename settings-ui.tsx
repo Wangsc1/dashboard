@@ -347,13 +347,13 @@ export function KernelConfigPage({ c }: { c: Controller }) {
         </HStack>
       </>)}
       {heading("日志")}
-      {card(<HStack spacing={12} padding={{ vertical: 12 }}>{icon("doc.text", "systemGray")}<Text>日志级别</Text><Spacer />
+      {card(<VStack spacing={0}><HStack spacing={12} padding={{ vertical: 12 }}>{icon("doc.text", "systemGray")}<Text>日志级别</Text><Spacer />
         <Menu disabled={busy || !provided("log-level")} label={<HStack spacing={6}><Text foregroundStyle="secondaryLabel">{({silent:"静默",error:"错误",warning:"警告",info:"信息",debug:"调试"} as Record<string,string>)[dirty["log-level"] ?? cfg?.["log-level"] ?? ""] ?? (busy ? "" : "未提供")}</Text><Image systemName="chevron.up.chevron.down" font={12} foregroundStyle="secondaryLabel" /></HStack>}>
           {LOG_LEVELS.map(value => <Button key={value} title={({silent:"静默",error:"错误",warning:"警告",info:"信息",debug:"调试"} as Record<string,string>)[value]??value} action={() => change("log-level", value)} />)}
         </Menu>
-      </HStack>)}
-      {card(<VStack spacing={0}>{(["app","core","debug"] as const).map((kind,i)=><VStack key={kind} spacing={0}>
-        {i?separator():null}
+      </HStack>
+      {(["app","core","debug"] as const).map(kind=><VStack key={kind} spacing={0}>
+        {separator()}
         <NavigationLink disabled={c.kind!=="openwrt"||c.plugin!=="nikki"} destination={<NikkiLogPage c={c} kind={kind}/>}><HStack spacing={12} padding={{vertical:12}}>{icon("doc.text", "systemGray")}<Text>{nikkiLogTitles[kind]}</Text><Spacer/><Text foregroundStyle="secondaryLabel">{c.kind==="openwrt"&&c.plugin==="nikki"?"":"仅支持 Nikki"}</Text><Image systemName="chevron.right" font={12}/></HStack></NavigationLink>
       </VStack>)}</VStack>)}
       <VStack alignment="leading" spacing={4} frame={{minHeight:20,maxWidth:"infinity",alignment:"leading"}}>
