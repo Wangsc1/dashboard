@@ -37,7 +37,7 @@ function respond(url,init){
   t.props.onAppear();await flush();assert.ok(calls.length>n)
   for(const fn of [...sceneListeners])fn('background');n=calls.length;await button(render(logs.NikkiLogPage,{c,kind:'app'}),'刷新').props.action();await flush();assert.equal(calls.length,n)
   for(const fn of [...sceneListeners])fn('active');await flush();assert.ok(calls.length>n)
-  failure=true;await button(render(logs.NikkiLogPage,{c,kind:'app'}),'刷新').props.action();await flush();t=render(logs.NikkiLogPage,{c,kind:'app'});assert.ok(text(t).includes('读取失败'));assert.ok(text(t).includes(body));failure=false
+  failure=true;await button(render(logs.NikkiLogPage,{c,kind:'app'}),'刷新').props.action();await flush();t=render(logs.NikkiLogPage,{c,kind:'app'});assert.ok(text(t).includes('暂无日志'));assert.ok(text(t).includes(body));failure=false
   t=render(logs.NikkiLogPage,{c:{...c,id:'unsupported',plugin:'other'},kind:'debug'});assert.ok(!text(t).includes(body));await flush();assert.ok(text(render(logs.NikkiLogPage,{c:{...c,id:'unsupported',plugin:'other'},kind:'debug'})).includes('不支持'));unmount()
  })
  await test('background during stat prevents subsequent download; no debug generation or remote writes',async()=>{

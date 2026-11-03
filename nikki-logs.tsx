@@ -21,7 +21,7 @@ export function NikkiLogPage({c,kind}:{c:Controller;kind:NikkiLogKind}){
         const result=await readNikkiLog(c,kind,()=>valid(at))
         if(valid(at))setView({source,text:result.text,loaded:true,busy:false,status:result.text?"":"日志文件为空",mtime:result.mtime})
       }catch{
-        if(valid(at))setView(v=>({...v,source,busy:false,status:"读取失败：文件不存在、无权限、超过2MiB或响应无效。已有内容（如有）是旧快照，未生成或清理日志。"}))
+        if(valid(at))setView(v=>({...v,source,busy:false,status:"暂无日志"}))
       }finally{
         busy=false
         if(alive&&owner.source===source&&page.visible&&foreground&&(pending||at!==epoch))void refresh()
