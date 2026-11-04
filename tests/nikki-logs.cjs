@@ -26,6 +26,11 @@ function respond(url,init){
   assert.equal((await api.readNikkiLog(c,'app')).text,'');body='PRIVATE log body'
   responder=()=>({body:{result:[4]}});await assert.rejects(()=>api.readNikkiLog(c,'app'));responder=respond
  })
+ await test('all three log pages keep a system page background and adaptive gray grouped rows',()=>{
+  for(const kind of ['app','core','debug']){
+   const t=render(logs.NikkiLogPage,{c,kind},true);assert.equal(t.props.background,'systemBackground');assert.equal(t.props.scrollContentBackground,'hidden');const sections=nodes(t,'Section');assert.equal(sections.length,2);assert.ok(sections.every(s=>s.props.listRowBackground.type==='RoundedRectangle'&&s.props.listRowBackground.props.fill==='secondarySystemBackground'));unmount()
+  }
+ })
  await test('settings exposes ordered Nikki-only destinations beneath log level',async()=>{
   render(ui.KernelConfigPage,{c},true);await flush();let t=render(ui.KernelConfigPage,{c});let links=nodes(t,'NavigationLink').filter(x=>x.props.destination?.type===logs.NikkiLogPage)
   assert.equal(links.length,3);assert.ok(nodes(t,'VStack').filter(n=>n.props.background?.props?.cornerRadius===16).some(n=>text(n).includes('日志级别')&&nodes(n,'NavigationLink').filter(x=>x.props.destination?.type===logs.NikkiLogPage).length===3));assert.deepEqual(links.map(x=>x.props.destination.props.kind),['app','core','debug']);assert.ok(links.every(x=>!x.props.disabled));unmount()
@@ -45,6 +50,6 @@ function respond(url,init){
   render(logs.NikkiLogPage,{c,kind:'debug'},true);await flush();let d=downloads;for(const fn of [...sceneListeners])fn('background');release();await flush();assert.equal(downloads,d);unmount()
   assert.ok(!calls.some(x=>x.url.endsWith('/ubus')&&['debug','exec','write','remove'].includes(JSON.parse(x.init.body).params[2])))
  })
- console.log('All 5 Nikki log groups passed (mock IO only).')
+ console.log('All 6 Nikki log groups passed (mock IO only).')
 })().catch(e=>{console.error(e);process.exitCode=1})
 `,{require,__dirname,console,process},{filename:__filename})

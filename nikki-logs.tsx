@@ -1,4 +1,4 @@
-import { AppEvents, Button, Form, Section, Text, ScrollView, useEffect, useState } from "scripting"
+import { AppEvents, Button, Form, Section, Text, ScrollView, RoundedRectangle, useEffect, useState } from "scripting"
 import { Controller, NikkiLogKind, readNikkiLog } from "./api"
 import { useDetailPage } from "./router-details"
 
@@ -35,12 +35,12 @@ export function NikkiLogPage({c,kind}:{c:Controller;kind:NikkiLogKind}){
     return()=>{alive=false;epoch++;page.listeners.delete(visibility);AppEvents.scenePhase.removeListener(phase)}
   },[source,page,supported])
   const shown=view.source===source?view:null
-  return <Form navigationTitle={nikkiLogTitles[kind]} navigationBarTitleDisplayMode="inline" onAppear={page.onAppear} onDisappear={page.onDisappear}>
-    <Section>
+  return <Form background="systemBackground" scrollContentBackground="hidden" navigationTitle={nikkiLogTitles[kind]} navigationBarTitleDisplayMode="inline" onAppear={page.onAppear} onDisappear={page.onDisappear}>
+    <Section listRowBackground={<RoundedRectangle cornerRadius={0} fill="secondarySystemBackground"/>}>
       {shown?.status?<Text>{shown.status}</Text>:null}
       {shown?.mtime!==null&&shown?.mtime!==undefined?<Text>更新时间：{new Date(shown.mtime*1000).toLocaleString()}</Text>:null}
       <Button title="刷新" disabled={!supported||!!shown?.busy} action={()=>owner.refresh()}/>
     </Section>
-    <Section>{shown?.loaded&&shown.text?<ScrollView><Text font={12}>{shown.text}</Text></ScrollView>:<Text font={12} frame={{maxWidth:"infinity",minHeight:32,alignment:"leading"}}>{shown?.loaded?"（空日志）":"尚无可显示的日志"}</Text>}</Section>
+    <Section listRowBackground={<RoundedRectangle cornerRadius={0} fill="secondarySystemBackground"/>}>{shown?.loaded&&shown.text?<ScrollView><Text font={12}>{shown.text}</Text></ScrollView>:<Text font={12} frame={{maxWidth:"infinity",minHeight:32,alignment:"leading"}}>{shown?.loaded?"（空日志）":"尚无可显示的日志"}</Text>}</Section>
   </Form>
 }
