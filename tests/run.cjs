@@ -874,7 +874,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) { const lazy = ['proxies','rules'].includes(ids[i]) && ids[i] !== id; assert.equal(nodes(tree, types[i]).length, lazy ? 0 : 1); if (!lazy) assert.equal(nodes(tree, types[i])[0].props.selected, ids[i] === id) }
     }
-    assert.equal(api.VERSION, '1.128'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.129'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('独立导航栈保留业务owner和身份，只有选中页提供可见工具栏', () => {
     pref.savePreferences({ defaultPage: 'overview' })
@@ -1262,6 +1262,17 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     const memory = render(app.StatCard, { icon: 'link', color: '#3B82F6', title: '内存使用', parts: ['1', 'MB'] }, true); assert.equal(nodes(memory, app.Spark).length, 0)
     const large = render(app.RateChart, { down: [10, 20], up: [20, 10] }, true); assert.ok(nodes(large, 'SVG').some(n => n.props.frame.height === 120))
   })
+  await test('双列节点名称保持单行且标准和简约字号均缩小一号', () => {
+    const names=['🇭🇰 FLOWER-HK-SZCT-长节点名称完整显示','🇯🇵 FLOWER-JP-SZTX-ABCDEFGHIJKLMNOPQRSTUVWXYZ','短名称']
+    for(const style of ['compact','standard']){
+      pref.savePreferences({proxyStyle:style})
+      const tree=render(pages.GroupSection,{c,g:{name:'long-node-layout',type:'Selector',now:names[0],all:names,delays:{}},expanded:true,onChanged(){}},true)
+      const buttons=nodes(tree,'Button').filter(n=>n.props.frame?.maxWidth==='infinity'&&!n.props.frame.alignment)
+      assert.equal(buttons.length,3)
+      for(const name of names){const label=nodes(tree,'Text').find(n=>text(n)===name&&n.props.fontWeight==='semibold');assert.ok(label);assert.equal(label.props.lineLimit,1);assert.equal(label.props.font,style==='compact'?11:12);assert.equal(label.props.fixedSize,undefined);assert.deepEqual(clone(label.props.frame),{maxWidth:'infinity',alignment:'leading'})}
+      unmount()
+    }
+  })
   await test('代理节点排序/长按折叠/简约样式实际改变视图', () => {
     pref.savePreferences({ nodeSort: 'delay', proxyStyle: 'compact', collapseGesture: true })
     const props = { c, g: { name: 'G', type: 'Selector', now: 'A', all: ['A', 'B', 'C'], delays: { A: 100, B: 10, C: 0 } }, onChanged() {} }
@@ -1269,7 +1280,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     nodes(tree,'HStack')[0].props.onLongPressGesture(); tree = render(app.GroupSection, props)
     const rows = nodes(tree, 'Button').filter(n => n.props.children?.length && n.props.frame?.maxWidth === 'infinity' && !n.props.frame.alignment)
     assert.equal(rows.length, 3); assert.ok(text(rows[0]).includes('B')); assert.ok(text(rows[2]).includes('C'))
-    assert.ok(nodes(rows[0], 'Text').some(t => t.props.font === 12))
+    assert.ok(nodes(rows[0], 'Text').some(t => t.props.font === 11 && t.props.fontWeight === 'semibold'))
   })
   await test('连接标准/简约真实切换信息行；日志级别与搜索实际过滤', async () => {
     pref.savePreferences({ connectionStyle: 'compact' })
