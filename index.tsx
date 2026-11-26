@@ -1,42 +1,25 @@
 import { detailReads, useDetailPage, useRouterDetail, peekDetail, prefetchRouterDetails, detailWrite, observeDetailsPhase, selectDetailsSource } from "./router-details"
-import { HOME_BG, HomeDashboard, CpuDetails, LiveCpuDetails, createCpuDetailFeed } from "./home-ui"
+import { HOME_BG, HomeDashboard, LiveCpuDetails, createCpuDetailFeed } from "./home-ui"
 import { newHistory, appendHistory, OverviewHistory } from "./openwrt-metrics"
 import { rootToolbar } from "./root-toolbar"
-import { prefetchMoreVersions, prefetchProxies, prefetchRules, prefetchConnections, ProxiesPage, ConnectionsPage, RulesPage, GroupSection, MorePage as DashboardMorePage } from "./dashboard-pages"
+import { prefetchMoreVersions, prefetchProxies, prefetchRules, prefetchConnections, ProxiesPage, ConnectionsPage, RulesPage, MorePage as DashboardMorePage } from "./dashboard-pages"
 import {
-  AppEvents, Animation, Transition, Button, ForEach, Form, HStack, Label, Navigation, NavigationLink, NavigationStack, Picker, Script, Section, SecureField, Spacer,
-  Image, Menu, RoundedRectangle, Circle, ScrollView, SVG, Text, ZStack, modifiers, TextField, Toggle, VStack, TabView, Tab, useObservable, useEffect, useState, useMemo,
+  AppEvents, Button, Form, HStack, Label, Navigation, NavigationLink, NavigationStack, Picker, Script, Section, SecureField, Spacer,
+  Image, RoundedRectangle, Circle, ScrollView, Text, ZStack, modifiers, TextField, Toggle, VStack, TabView, Tab, useObservable, useEffect, useState, useMemo,
 } from "scripting"
 import {
-  VERSION, Controller, Group, Conn, Rule, Overview, Plugin, PLUGINS, listControllers, saveController, removeController, getActive, setActive, getSecret, getClashSecret,
-  loadOverview, overviewSource, resetOverviewSampling, loadClashOverview, loadWrtInterfaces, loadWrtLeases, WrtIface, WrtLease, loadGroups, selectProxy, testGroup, loadConnections, loadConnectionHosts, closeConnection,
-  closeAllConnections, loadRules, DockerContainer, FrpInfo, FrpProxy, DockerSettings, loadDiskUsage, loadInstalledPkgs, loadAvailablePkgs, upgradablePkgs, filterPkgs, pkgUpdateLists, pkgInstall, pkgRemove, pkgUpgrade, Pkg, loadDockerContainers, loadContainerDetail, dockerContainerOp, DockerContainerDetail, loadDockerImages, dockerImageRemove, DockerImage, loadDockerOverview, DockerOverview, dockerAction, loadFrp, frpAction, saveFrpCommon, saveFrpProxy, deleteFrpProxy, loadDockerSettings, saveDockerSettings, loadContainerPolicy, saveContainerPolicy, fmtBytes, fmtSpeed, fmtParts, fmtUptime, fmtDuration, delayColor,
+  VERSION, Controller, Overview, Plugin, PLUGINS, listControllers, saveController, removeController, getActive, setActive, getSecret, getClashSecret,
+  loadOverview, overviewSource, resetOverviewSampling, loadClashOverview, loadConnectionHosts,
+  DockerContainer, FrpInfo, FrpProxy, DockerSettings, upgradablePkgs, filterPkgs, pkgUpdateLists, pkgInstall, pkgRemove, pkgUpgrade, Pkg, loadContainerDetail, dockerContainerOp, DockerContainerDetail, dockerImageRemove, DockerImage, dockerAction, frpAction, saveFrpCommon, saveFrpProxy, deleteFrpProxy, saveDockerSettings, saveContainerPolicy, fmtUptime,
 } from "./api"
 
 import { confirmed, sourceKey, SceneVisibility } from "./dashboard-model"
 import { DOCKER_PNG_BASE64 } from "./docker-icon"
-import { useSmoothPlot } from "./chart-ui"
 import { requestPlotKick } from "./plot-view"
-import { CHART_HISTORY } from "./chart"
-import { panelRowBackground, PanelSettingsSections, LogsPage, KernelConfigPage, usePageColorScheme, usePreferences } from "./settings-ui"
-import { getPreferences, controllerHealth, cachedIcon, feedback, recordEvent } from "./preferences"
+import { panelRowBackground, PanelSettingsSections, LogsPage, usePageColorScheme, usePreferences } from "./settings-ui"
+import { getPreferences, controllerHealth, recordEvent } from "./preferences"
 
 const msg = (e: any) => String(e?.message ?? e ?? "未知错误")
-
-function useInterval(fn: (current: () => boolean) => Promise<void>, ms: number, deps: any[]) {
-  useEffect(() => {
-    let alive = true, busy = false
-    const current = () => alive
-    async function refresh() {
-      if (!alive || busy) return
-      busy = true
-      try { await fn(current) } finally { busy = false }
-    }
-    void refresh()
-    const t = setInterval(refresh, ms)
-    return () => { alive = false; clearInterval(t) }
-  }, deps)
-}
 
 function NoController() {
   return <Section><Text foregroundStyle="secondaryLabel">尚未添加控制器，请到“设置”页添加 OpenWrt 路由器。</Text></Section>
@@ -52,105 +35,6 @@ function Badge({ icon, color }: { icon: string; color: string }) {
   return <ZStack modifiers={modifiers().frame({ width: 20, height: 20 }).background(<RoundedRectangle cornerRadius={6} fill={`rgba(${parseInt(color.slice(1,3),16)},${parseInt(color.slice(3,5),16)},${parseInt(color.slice(5,7),16)},0.15)`} />)}>
     <Image systemName={icon} resizable scaleToFit foregroundStyle={color as any} frame={{ width: 11, height: 11 }} />
   </ZStack>
-}
-function Big({ parts }: { parts: [string, string] | null }) {
-  const target = parts?.[0] ?? "-", unit = parts?.[1] ?? ""
-  const [shown, setShown] = useState(target)
-  const [track] = useState({ value: target, unit, at: Date.now() })
-  useEffect(() => {
-    const start = Number(track.value), end = Number(target)
-    if (!Number.isFinite(start) || !Number.isFinite(end) || track.unit !== unit) {
-      track.value = target; track.unit = unit; setShown(target); return
-    }
-    if (track.value === target) return
-    const at = Date.now(), decimals = target.includes(".") ? target.split(".")[1].length : 0
-    const span = Math.max(300, Math.min(2500, at - track.at)); track.at = at
-    const t = setInterval(() => {
-      const p = Math.min(1, (Date.now() - at) / span)
-      const next = (start + (end - start) * (p * p * (3 - 2 * p))).toFixed(decimals)
-      if (track.value !== next) { track.value = next; setShown(next) }
-      if (p === 1) clearInterval(t)
-    }, 16)
-    return () => clearInterval(t)
-  }, [target, unit])
-
-  return <Text font={24} fontWeight="bold" foregroundStyle={MAIN_FG} lineLimit={1}
-    frame={{ maxWidth: "infinity", minHeight: 34, alignment: "leading" }}>
-    {`${shown}${unit ? " " + unit : ""}`}
-  </Text>
-}
-const HIST = CHART_HISTORY
-const STAT_HEIGHT = 104
-function Spark({ data, color, floor = 1024, enabled = true }: { data: number[]; color: string; floor?: number; enabled?: boolean }) {
-  const W = 100, H = STAT_HEIGHT
-  const plot = useSmoothPlot(data, undefined, enabled, W, H, floor, 0)
-  const line = plot.paths[0]
-  const code = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"><path d="${line}" fill="none" stroke="${color}" stroke-opacity="0.28" stroke-width="1.4" stroke-linecap="round"/></svg>`
-  return <SVG code={code} resizable frame={{ maxWidth: "infinity", height: STAT_HEIGHT }} />
-}
-function StatCard({ icon, color, title, parts, spark, floor, droplets, connectionHosts, enabled = true }: { icon: string; color: string; title: string; parts: [string, string] | null; spark?: number[]; floor?: number; droplets?: boolean; connectionHosts?: string[]; enabled?: boolean }) {
-  const p = usePreferences()
-  const [phase, setPhase] = useState(0), [rippleAt, setRippleAt] = useState(0), [wave, setWave] = useState(0)
-  useEffect(() => {
-    if (!enabled || (!(p.droplets && droplets) && !(p.connectionBackground && connectionHosts?.length))) return
-    const t = setInterval(() => setPhase(v => (v + 1) % 7200), 120)
-    return () => clearInterval(t)
-  }, [p.droplets, p.connectionBackground, droplets, connectionHosts?.length, enabled])
-  useEffect(() => {
-    if (!enabled || !rippleAt || !p.ripple) return
-    const t = setInterval(() => {
-      const age = Date.now() - rippleAt
-      if (age > 650) { setRippleAt(0); setWave(0); clearInterval(t) } else setWave(age / 650)
-    }, 35)
-    return () => clearInterval(t)
-  }, [rippleAt, p.ripple, enabled])
-  const dropletSVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 100">${[0, 1, 2, 3].map(i => `<path d="M ${24+i*34} ${(phase*3+i*24)%115-12} q -9 12 0 14 q 9 -2 0 -14" fill="${color}" opacity="0.10"/>`).join("")}</svg>`
-  const rippleSVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 104"><circle cx="80" cy="52" r="${wave * 100}" stroke="${color}" fill="none" stroke-width="3" opacity="${(1-wave)*0.25}"/></svg>`
-  return <ZStack alignment="bottom" frame={{ maxWidth: "infinity", height: STAT_HEIGHT }}
-    onTapGesture={() => { if (p.ripple) { setRippleAt(Date.now()); feedback() } }}
-    clipShape={{ type: "rect", cornerRadius: 22 }}>
-    <RoundedRectangle cornerRadius={22} fill={CARD_BG} />
-    {spark ? <Spark data={spark} color={color} floor={floor} enabled={enabled} /> : null}
-    {p.droplets && droplets ? <SVG code={dropletSVG} resizable frame={{ maxWidth: "infinity", height: 100 }} /> : null}
-    {p.connectionBackground && connectionHosts?.length ? <Text font={10} foregroundStyle="tertiaryLabel" lineLimit={1} padding={{ bottom: 5 }} offset={{ x: 60 - (phase % 60) * 3, y: 0 }}>{connectionHosts[Math.floor(phase / 60) % connectionHosts.length]}</Text> : null}
-    {p.ripple && rippleAt ? <SVG code={rippleSVG} resizable frame={{ maxWidth: "infinity", height: STAT_HEIGHT }} /> : null}
-    <VStack alignment="leading" spacing={10} foregroundStyle={MAIN_FG}
-      modifiers={modifiers().frame({ maxWidth: "infinity", height: 78, alignment: "topLeading" }).padding({ horizontal: 14, vertical: 11 })}>
-      <HStack spacing={8}><Badge icon={icon} color={color} /><Text font={13} foregroundStyle="secondaryLabel">{title}</Text></HStack>
-      <Big parts={parts} />
-      <Spacer />
-    </VStack>
-  </ZStack>
-}
-function InfoItem({ icon, color, title, value }: { icon: string; color: string; title: string; value: string }) {
-  return <HStack spacing={8} frame={{ maxWidth: "infinity", alignment: "leading" as any }}>
-    <Badge icon={icon} color={color} />
-    <VStack alignment="leading" spacing={1}><Text font={13} foregroundStyle="secondaryLabel">{title}</Text><Text fontWeight="semibold">{value}</Text></VStack>
-  </HStack>
-}
-function RateChart({ down, up, enabled = true }: { down: number[]; up: number[]; enabled?: boolean }) {
-  const W = 300, H = 120
-  const plot = useSmoothPlot(down, up, enabled, W, H, undefined, undefined, true)
-  const max = plot.scale
-  const line = (i: number, color: string) => plot.paths[i] ? `<path d="${plot.paths[i]}" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round"/>` : ""
-  const code = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">${line(0, "#3B82F6")}${line(1, "#34C759")}</svg>`
-  const label = (f: number) => fmtSpeed(max * f)
-  return <Card>
-    <HStack>
-      <HStack spacing={8}><Badge icon="chart.xyaxis.line" color="#6366F1" /><Text fontWeight="semibold" font={15}>速度</Text></HStack>
-      <Spacer />
-      <HStack spacing={4}><Circle fill="#3B82F6" frame={{ width: 5, height: 5 }} /><Text font={12} foregroundStyle="secondaryLabel">下载</Text></HStack><HStack spacing={4}><Circle fill="#34C759" frame={{ width: 5, height: 5 }} /><Text font={12} foregroundStyle="secondaryLabel">上传</Text></HStack>
-    </HStack>
-    <HStack alignment="top" spacing={8} frame={{ maxWidth: "infinity" }}>
-      <VStack alignment="leading" spacing={0} frame={{ width: 72, height: H }}>
-        {[1, 0.75, 0.5, 0.25].map(f => <VStack key={String(f)} spacing={0}>
-          <HStack spacing={0}><Text font={11} lineLimit={1} fixedSize={{ horizontal: true, vertical: false }} foregroundStyle="secondaryLabel">{label(f)}</Text><Spacer /></HStack>
-          <Spacer />
-        </VStack>)}
-      </VStack>
-      <SVG code={code} resizable frame={{ maxWidth: "infinity", height: H }} />
-    </HStack>
-  </Card>
 }
 
 function useForeground() {

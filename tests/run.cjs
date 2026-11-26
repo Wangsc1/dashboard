@@ -66,7 +66,7 @@ function load(name) {
   if (cache.has(name)) return cache.get(name)
   const file = path.join(root, name + (name === 'nikki-logs' || name === 'index' || name === 'settings-ui' || name === 'dashboard-pages' || name === 'root-toolbar' || name === 'home-ui' || name === 'plot-view' ? '.tsx' : '.ts'))
   let source = fs.readFileSync(file, 'utf8')
-  if (name === 'index') source = source.replace(/\nrun\(\)\s*$/, '') + '\nexport { EditController, OverviewPage, InfoItem, SettingsPage, ConnectionsPage, ProxiesPage, RulesPage, Spark, RateChart, StatCard, GroupSection, MorePage, Root, AppearanceRoot };'
+  if (name === 'index') source = source.replace(/\nrun\(\)\s*$/, '') + '\nexport { EditController, OverviewPage, SettingsPage, ConnectionsPage, ProxiesPage, RulesPage, MorePage, Root, AppearanceRoot };'
   if (name === 'settings-ui') source += '\nexport { Choice };'
   const code = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020, jsx: ts.JsxEmit.React, jsxFactory: 'h' } }).outputText
   const module = { exports: {} }; cache.set(name, module.exports)
@@ -874,7 +874,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) { const lazy = ['proxies','rules'].includes(ids[i]) && ids[i] !== id; assert.equal(nodes(tree, types[i]).length, lazy ? 0 : 1); if (!lazy) assert.equal(nodes(tree, types[i])[0].props.selected, ids[i] === id) }
     }
-    assert.equal(api.VERSION, '1.130'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.131'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('独立导航栈保留业务owner和身份，只有选中页提供可见工具栏', () => {
     pref.savePreferences({ defaultPage: 'overview' })
@@ -1253,14 +1253,15 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     assert.ok(!body.includes('全局配置')); assert.ok(body.indexOf('<PanelSettingsSections') > body.lastIndexOf('title="运行日志"')); assert.ok(body.indexOf('title="软件管理"') < body.indexOf('title="运行日志"', body.indexOf('title="软件管理"')))
     assert.ok(!src.includes('page === "appearance"') && !src.includes('page === "global"') && !src.includes('setPage("appearance")') && !src.includes('setPage("global")'))
   })
-  await test('六卡104pt；速率SVG全高背景且前景文字最后绘制；连接内存无曲线', () => {
-    const tree = render(app.StatCard, { icon: 'link', color: '#3B82F6', title: '下载速率', parts: ['1', 'KB/s'], spark: [10, 20] }, true)
-    assert.equal(tree.props.frame.height, 104); assert.equal(tree.props.clipShape.cornerRadius, 22)
-    assert.equal(tree.props.children.at(-1).type, 'VStack')
-    const spark = nodes(tree, app.Spark)[0]; assert.ok(spark)
-    const svg = render(app.Spark, spark.props, true); assert.equal(svg.props.frame.height, 104); assert.ok(!svg.props.code.includes('fill-opacity')); assert.ok(!svg.props.code.includes('<polygon')); assert.ok(svg.props.code.includes('stroke-opacity="0.28"'))
-    const memory = render(app.StatCard, { icon: 'link', color: '#3B82F6', title: '内存使用', parts: ['1', 'MB'] }, true); assert.equal(nodes(memory, app.Spark).length, 0)
-    const large = render(app.RateChart, { down: [10, 20], up: [20, 10] }, true); assert.ok(nodes(large, 'SVG').some(n => n.props.frame.height === 120))
+  await test('偏好按字段订阅过滤无关变更并跳过冗余序列化，订阅字段变更仍即时响应', async () => {
+    pref.savePreferences({ interruptOnRuleDisable: false, proxyStyle: 'standard' })
+    function Watcher() { const p = ui.usePreferences(['interruptOnRuleDisable']); return { type: 'Text', props: { children: [String(p.interruptOnRuleDisable)] } } }
+    let tree = render(Watcher, {}, true); await flush(); assert.equal(text(tree), 'false')
+    const before = hooks[0]
+    pref.savePreferences({ proxyStyle: 'compact', delayGreen: 180 }); assert.strictEqual(hooks[0], before)
+    pref.savePreferences({ interruptOnRuleDisable: true }); assert.equal(hooks[0].interruptOnRuleDisable, true)
+    tree = render(Watcher, {}); assert.equal(text(tree), 'true')
+    unmount(); pref.savePreferences({ interruptOnRuleDisable: false, proxyStyle: 'standard', delayGreen: 200 })
   })
   await test('双列节点名称保持单行且标准和简约字号均缩小半号', () => {
     const names=['🇭🇰 FLOWER-HK-SZCT-长节点名称完整显示','🇯🇵 FLOWER-JP-SZTX-ABCDEFGHIJKLMNOPQRSTUVWXYZ','短名称']
@@ -1276,8 +1277,8 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
   await test('代理节点排序/长按折叠/简约样式实际改变视图', () => {
     pref.savePreferences({ nodeSort: 'delay', proxyStyle: 'compact', collapseGesture: true })
     const props = { c, g: { name: 'G', type: 'Selector', now: 'A', all: ['A', 'B', 'C'], delays: { A: 100, B: 10, C: 0 } }, onChanged() {} }
-    let tree = render(app.GroupSection, props, true)
-    nodes(tree,'HStack')[0].props.onLongPressGesture(); tree = render(app.GroupSection, props)
+    let tree = render(pages.GroupSection, props, true)
+    nodes(tree,'HStack')[0].props.onLongPressGesture(); tree = render(pages.GroupSection, props)
     const rows = nodes(tree, 'Button').filter(n => n.props.children?.length && n.props.frame?.maxWidth === 'infinity' && !n.props.frame.alignment)
     assert.equal(rows.length, 3); assert.ok(text(rows[0]).includes('B')); assert.ok(text(rows[2]).includes('C'))
     assert.ok(nodes(rows[0], 'Text').some(t => t.props.font === 11.5 && t.props.fontWeight === 'semibold'))
@@ -2245,9 +2246,13 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     assert.deepEqual(Array.from(api.fmtParts(128 * 1048576)), ['128.00', 'MB'])
     assert.ok(fs.readFileSync(path.join(root,'home-ui.tsx'),'utf8').includes('RamCard'))
   })
-  await test('首页关键行为（速度图表、数字动画）', () => {
+  await test('首页关键行为（原生曲线组件，清理旧死代码）', () => {
     const source=fs.readFileSync(path.join(root,'index.tsx'),'utf8')
-    assert.ok(!source.includes('title="下载速率"'));assert.ok(!source.includes('title="上传速率"'));assert.ok(source.includes('>速度</Text>'));assert.ok(source.includes('<HomeDashboard overview={homeFrame.overview}'));assert.ok(fs.readFileSync(path.join(root,'home-ui.tsx'),'utf8').includes('<InlineCanvasPlot {...props}/>'));assert.ok(source.includes('(Date.now() - at) / span'));assert.ok(source.includes('}, 16)'))
+    const home=fs.readFileSync(path.join(root,'home-ui.tsx'),'utf8')
+    assert.ok(!source.includes('title="下载速率"'));assert.ok(!source.includes('title="上传速率"'))
+    assert.ok(!source.includes('function RateChart('));assert.ok(!source.includes('function StatCard('));assert.ok(!source.includes('function Big('))
+    assert.ok(source.includes('<HomeDashboard overview={homeFrame.overview}'))
+    assert.ok(home.includes('<InlineCanvasPlot {...props}/>'))
   })
   console.log(`\n${count} tests passed. All fetch, Storage, Keychain, iCloud and UI bindings were mocked; no device/remote effects executed.`)
 })().catch(e => { console.error(e); process.exitCode = 1 })

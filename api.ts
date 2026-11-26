@@ -1,7 +1,7 @@
 import { CpuSampler, CpuUsage, CpuMeta, parseCpuInfo, thermalCelsius } from "./openwrt-metrics"
 
 import { getPreferences, customHeaders, recordEvent, controllerHealth, feedback } from "./preferences"
-export const VERSION = "1.130"
+export const VERSION = "1.131"
 
 export type Kind = "clash" | "openwrt"
 export type Plugin = "openclash" | "nikki" | "mihomo"
@@ -389,55 +389,6 @@ async function resolveClashOnce(c: Controller): Promise<Controller> {
 }
 async function cc(c: Controller): Promise<Controller> { return c.kind === "clash" ? c : resolveClash(c) }
 
-function wsUrl(c: Controller, path: string): string {
-  const s = getSecret(c.id)
-  const base = c.url.replace(/^http/i, "ws")
-  return base + path + (s ? (path.includes("?") ? "&" : "?") + "token=" + enc(s) : "")
-}
-
-export function subscribeClash(c0: Controller, path: string, onMsg: (j: any) => void): () => void {
-  let closed = false, controller: AbortController | null = null, timer: any = null
-  const later = (ms: number) => { if (!closed) timer = setTimeout(run, ms) }
-  async function run() {
-    if (closed) return
-    try {
-      const c = await cc(c0)
-      if (closed) return
-      if (path.startsWith("/connections")) {
-        const j = await http(c, "/connections")
-        if (!closed) onMsg(j)
-        later(1500); return
-      }
-      controller = new AbortController()
-      const r = await fetch(c.url + path, { headers: { ...customHeaders(), Authorization: "Bearer " + getSecret(c.id) }, allowInsecureRequest: true, signal: controller.signal, timeout: getPreferences().requestTimeout } as any)
-      if (!r.ok) throw new Error("HTTP " + r.status)
-      const reader = r.body.getReader(), decoder = new TextDecoder()
-      let pending = ""
-      try {
-        while (!closed) {
-          const { done, value } = await reader.read()
-          if (done) break
-          pending += decoder.decode(value, { stream: true })
-          let n: number
-          while ((n = pending.indexOf("\n")) >= 0) {
-            const line = pending.slice(0,n).trim(); pending = pending.slice(n+1)
-            if (line && !closed) onMsg(JSON.parse(line))
-          }
-        }
-      } finally { try { await reader.cancel() } catch {} }
-      later(2000)
-    } catch { later(2000) }
-  }
-  run()
-  return () => { closed = true; if (timer) clearTimeout(timer); controller?.abort() }
-}
-export const subscribeTraffic = (c: Controller, onData: (t: Traffic) => void) =>
-  subscribeClash(c, "/traffic", j => onData({ up: num(j.up), down: num(j.down), upTotal: typeof j.upTotal === "number" ? j.upTotal : undefined, downTotal: typeof j.downTotal === "number" ? j.downTotal : undefined }))
-export const subscribeMemory = (c: Controller, onData: (inuse: number) => void) =>
-  subscribeClash(c, "/memory", j => { if (typeof j.inuse === "number") onData(j.inuse) })
-export const subscribeConnCount = (c: Controller, onData: (n: number) => void) =>
-  subscribeClash(c, "/connections", j => { if (Array.isArray(j.connections)) onData(j.connections.length) })
-
 export async function loadOverview(c: Controller): Promise<Overview> {
   try {
     let o:Overview
@@ -468,7 +419,6 @@ export async function loadClashOverview(c0: Controller): Promise<Overview> {
 }
 
 export const CLASH_MODES = [["rule", "规则"], ["global", "全局"], ["direct", "直连"]]
-export const modesOf = (_k: Kind) => CLASH_MODES
 export async function setMode(c: Controller, mode: string) { await patchConfig(c, { mode }); feedback() }
 
 export async function loadGroups(c0: Controller, options: { includeGlobal?: boolean } = {}): Promise<Group[]> {

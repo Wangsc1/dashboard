@@ -1,12 +1,24 @@
 import { NikkiManagement, NikkiSubscription, NikkiRule, NikkiFile, NikkiManagementError, NIKKI_RULE_TYPES, loadNikkiManagement, saveNikkiSubscription, deleteNikkiSubscription, updateNikkiSubscription, saveNikkiRule, deleteNikkiRule, setNikkiRulesEnabled, reorderNikkiRules, selectNikkiProfile, readNikkiFile, saveNikkiFile } from "./api"
 import { rootToolbar } from "./root-toolbar"
-import { AppEvents, Button, Divider, HStack, VStack, Text, Image, Circle, RoundedRectangle, Spacer, ScrollView, LazyVStack, NavigationLink, Menu, Picker, TextField, Toggle, Form, Section, ProgressView, Editor, ZStack, modifiers, Safari, useState, useEffect, useMemo } from "scripting"
-import { ProxyNodeConnections, loadProxyNodeConnections, ProxyTestTarget, ProxyNodeDetail, loadProxyNode, testProxyNode, proxyNodeError, Controller, Group, Conn, Rule, Provider, setRuleDisabled, closeRuleConnections, ruleToggleSupported, loadGroups, testGroup, selectProxy, loadProviders, updateProvider, loadRules, loadConnections, closeConnection, closeAllConnections, fmtBytes, fmtSpeed, fmtUptime, delayColor, loadRuntimeVersions, checkCoreUpdate, loadNikkiRuntime, NikkiRuntime, verifyCoreRestart, upgradeCoreAndVerify, lastControllerMode, loadConfig, setMode as setControllerMode, nikkiService, coreActionMayHaveExecuted, nikkiServiceErrorText, nikkiServiceNeedsVerification, verifyNikkiService, nikkiServiceStatus, coreAction, CoreAction, queryDNS, webpage } from "./api"
+import { AppEvents, Button, Divider, HStack, VStack, Text, Image, Circle, RoundedRectangle, Spacer, ScrollView, LazyVStack, NavigationLink, Menu, Picker, TextField, Toggle, Form, Section, ProgressView, Editor, modifiers, Safari, useState, useEffect, useMemo } from "scripting"
+import { ProxyNodeConnections, loadProxyNodeConnections, ProxyTestTarget, ProxyNodeDetail, loadProxyNode, testProxyNode, proxyNodeError, Controller, Group, Conn, Rule, Provider, setRuleDisabled, closeRuleConnections, ruleToggleSupported, loadGroups, testGroup, selectProxy, loadProviders, updateProvider, loadRules, loadConnections, closeConnection, closeAllConnections, fmtBytes, fmtSpeed, fmtUptime, delayColor, loadRuntimeVersions, checkCoreUpdate, loadNikkiRuntime, NikkiRuntime, verifyCoreRestart, upgradeCoreAndVerify, lastControllerMode, loadConfig, setMode as setControllerMode, nikkiService, coreActionMayHaveExecuted, nikkiServiceErrorText, nikkiServiceNeedsVerification, verifyNikkiService, coreAction, CoreAction, queryDNS, webpage } from "./api"
 import { usePreferences, KernelConfigPage, updatePreference, Choice, ThresholdRange, Range, TestURLField } from "./settings-ui"
 import { NODE_SORT_OPTIONS, savePreferences, getPreferences, cachedIcon, readCachedIcon, feedback } from "./preferences"
 import { selectable, sortedNodes, historyFor, SceneVisibility, ConnectionRefreshDiagnostic, filterConnections, clientLabels, saveClientLabel, sourceKey, confirmed } from "./dashboard-model"
 
 const FG = { light: "#41434B", dark: "#CFD0D7" }
+
+function formatAgo(timestampMs: number, now = Date.now()) {
+  const m = Math.max(0, Math.floor((now - timestampMs) / 60000))
+  return m < 1 ? "刚刚" : m < 60 ? `${m}分钟前` : m < 1440 ? `${Math.floor(m / 60)}小时前` : `${Math.floor(m / 1440)}天前`
+}
+const CONN_SORT_FNS: Record<string, (a: Conn, b: Conn) => number> = {
+  new: (a, b) => (b.start || 0) - (a.start || 0),
+  old: (a, b) => (a.start || 0) - (b.start || 0),
+  down: (a, b) => (b.downSpeed ?? 0) - (a.downSpeed ?? 0),
+  up: (a, b) => (b.upSpeed ?? 0) - (a.upSpeed ?? 0),
+  traffic: (a, b) => (b.up + b.down) - (a.up + a.down),
+}
 
 export const safeError = () => "请求未完成：请检查连接、认证与当前内核/Nikki版本支持（404/权限不足可能不支持该操作）。详情不会写入日志。"
 async function attempt(fn: () => Promise<any>) { try { await fn() } catch { await Dialog.alert({ title: "操作未完成", message: safeError() }) } }
@@ -17,7 +29,7 @@ function Chip({title,color="systemBlue",small=false}:{title:string;color?:string
 function Pages({limit,total,more,hideCount=false}:{limit:number;total:number;more:()=>void;hideCount?:boolean}) { if(hideCount&&limit>=total)return null;return <HStack>{hideCount?null:<Hint>{`已展示 ${Math.min(limit,total)} / ${total}`}</Hint>}<Spacer/>{limit<total ? <Button title="加载更多" action={more}/> : null}</HStack> }
 function Empty() { return <Hint>尚未添加控制器，请从主页右上角进入设置。</Hint> }
 export function GroupIcon({g}:{g:Group}) {
-  const p=usePreferences(), [,setIconRevision]=useState(0), symbol=p.groupIcons[g.name]
+  const p=usePreferences(["customIcons","groupIcons"]), [,setIconRevision]=useState(0), symbol=p.groupIcons[g.name]
   // Read the current source on every render, never a previous URL's async state.
   const url=p.customIcons&&!symbol?g.icon:undefined, image=url?readCachedIcon(url):null
   useEffect(()=>{ let alive=true;if(url&&!readCachedIcon(url)) cachedIcon(url).then(()=>{if(alive)setIconRevision(n=>n+1)}).catch(()=>{});return()=>{alive=false} },[url])
@@ -25,7 +37,7 @@ export function GroupIcon({g}:{g:Group}) {
   return image ? <Image image={image} resizable scaleToFit frame={{width:28,height:28}}/> : <Image systemName={symbol || "point.3.connected.trianglepath.dotted"} foregroundStyle="systemBlue" frame={{width:26,height:26}}/>
 }
 export function GroupNodesPage({c,g,onChanged}:{c:Controller;g:Group;onChanged:()=>void}) {
-  const prefs=usePreferences(), [current,setCurrent]=useState(g.now),[delays,setDelays]=useState(g.delays),[q,setQ]=useState(""),[limit,setLimit]=useState(80),[busy,setBusy]=useState(false),[guard]=useState({alive:true})
+  const prefs=usePreferences(["nodeSort","proxyStyle","delayGreen","delayRed"]), [current,setCurrent]=useState(g.now),[delays,setDelays]=useState(g.delays),[q,setQ]=useState(""),[limit,setLimit]=useState(80),[busy,setBusy]=useState(false),[guard]=useState({alive:true})
   useEffect(()=>()=>{guard.alive=false},[])
   const sorted=useMemo(()=>sortedNodes(g,delays),[g.all,delays,prefs.nodeSort])
   const nodes=useMemo(()=>{const needle=q.toLowerCase();return sorted.filter(x=>x.toLowerCase().includes(needle))},[sorted,q])
@@ -47,8 +59,7 @@ function providerRefreshLabel(busy:boolean,color:string="systemBlue") {return bu
 export function ProviderCard({c,p,kind,onChanged}:{c:Controller;p:Provider;kind:"proxies"|"rules";onChanged:()=>void}) {
   const [busy,setBusy]=useState(false),[guard]=useState({alive:true});useEffect(()=>()=>{guard.alive=false},[])
   const refreshable=["http","file"].includes(p.vehicleType.toLowerCase()), label=p.vehicleType.toLowerCase()==="http"?"远程订阅":p.vehicleType
-  const ago=(t:string)=>{const m=Math.max(0,Math.floor((Date.now()-Date.parse(t))/60000));return m<1?"刚刚":m<60?`${m}分钟前`:m<1440?`${Math.floor(m/60)}小时前`:`${Math.floor(m/1440)}天前`}
-  return <Card><HStack alignment="top"><VStack alignment="leading" spacing={8}><Text font={16} fontWeight="semibold">{p.name}</Text><HStack spacing={12}><HStack spacing={4}><Image systemName="cloud.fill" font={12} foregroundStyle="secondaryLabel"/><Text font={12} foregroundStyle="secondaryLabel">{kind==="rules"&&p.behavior?`${label} · ${p.behavior}`:label}</Text></HStack><HStack spacing={4}><Image systemName="square.stack.3d.up" font={12} foregroundStyle="secondaryLabel"/><Text font={12} foregroundStyle="secondaryLabel">{p.count===null?"数量未提供":`${p.count} ${kind==="proxies"?"节点":"条规则"}`}</Text></HStack></HStack></VStack><Spacer/><VStack alignment="trailing" spacing={8}><Button disabled={busy || !refreshable} buttonStyle="plain" action={async()=>{if(busy)return;setBusy(true);await attempt(async()=>{await updateProvider(c,kind,p.name);if(guard.alive)onChanged()});if(guard.alive)setBusy(false)}}>{providerRefreshLabel(busy)}</Button><Text font={11} foregroundStyle="secondaryLabel">{p.updatedAt?`更新于 ${ago(p.updatedAt)}`:"更新时间未提供"}</Text></VStack></HStack>{!refreshable?<Hint>内联/兼容提供者不提供可下载订阅，更新不可用。</Hint>:null}</Card>
+  return <Card><HStack alignment="top"><VStack alignment="leading" spacing={8}><Text font={16} fontWeight="semibold">{p.name}</Text><HStack spacing={12}><HStack spacing={4}><Image systemName="cloud.fill" font={12} foregroundStyle="secondaryLabel"/><Text font={12} foregroundStyle="secondaryLabel">{kind==="rules"&&p.behavior?`${label} · ${p.behavior}`:label}</Text></HStack><HStack spacing={4}><Image systemName="square.stack.3d.up" font={12} foregroundStyle="secondaryLabel"/><Text font={12} foregroundStyle="secondaryLabel">{p.count===null?"数量未提供":`${p.count} ${kind==="proxies"?"节点":"条规则"}`}</Text></HStack></HStack></VStack><Spacer/><VStack alignment="trailing" spacing={8}><Button disabled={busy || !refreshable} buttonStyle="plain" action={async()=>{if(busy)return;setBusy(true);await attempt(async()=>{await updateProvider(c,kind,p.name);if(guard.alive)onChanged()});if(guard.alive)setBusy(false)}}>{providerRefreshLabel(busy)}</Button><Text font={11} foregroundStyle="secondaryLabel">{p.updatedAt?`更新于 ${formatAgo(Date.parse(p.updatedAt))}`:"更新时间未提供"}</Text></VStack></HStack>{!refreshable?<Hint>内联/兼容提供者不提供可下载订阅，更新不可用。</Hint>:null}</Card>
 }
 const testedDelays=new Map<string,Record<string,number>>(),testedNodes=new Map<string,number>(),probing=new Map<string,object>()
 // Subscribers repaint same-source cards only; no persistent monitoring or refetch.
@@ -139,7 +150,7 @@ export function GroupChevron({expanded}:{expanded:boolean}) {
   return <Image systemName={expanded?"chevron.down":"chevron.right"} contentTransition="symbolEffect" font={12} foregroundStyle="tertiaryLabel" frame={{width:28,height:28}}/>
 }
 export function GroupSection({c,g,onChanged,expanded=false,nodeActions,autoTest=true,autoCurrent,autoEpoch=0}:{c:Controller;g:Group;onChanged:()=>void;expanded?:boolean;nodeActions?:ProxyNodeActions;autoTest?:boolean;autoCurrent?:()=>boolean;autoEpoch?:number}) {
-  const prefs=usePreferences(),[busy,setBusy]=useState(false),storeKey=`${sourceKey(c)}|${g.name}`,merged=()=>{const o:Record<string,number>={...g.delays};for(const n of g.all){const v=testedNodes.get(`${sourceKey(c)}|${n}`);if(v!==undefined&&o[n]===undefined)o[n]=v}return{...o,...(testedDelays.get(storeKey)??{})}},[delays,setDelays]=useState(merged),[open,setOpen]=useState(false),[nodeLimit,setNodeLimit]=useState(40),[now,setNow]=useState(g.now),[failed,setFailed]=useState<Set<string>>(new Set()),[guard]=useState({alive:true});useEffect(()=>()=>{guard.alive=false},[])
+  const prefs=usePreferences(["nodeSort","collapseGesture","customIcons","proxyStyle","delayGreen","delayRed"]),[busy,setBusy]=useState(false),storeKey=`${sourceKey(c)}|${g.name}`,merged=()=>{const o:Record<string,number>={...g.delays};for(const n of g.all){const v=testedNodes.get(`${sourceKey(c)}|${n}`);if(v!==undefined&&o[n]===undefined)o[n]=v}return{...o,...(testedDelays.get(storeKey)??{})}},[delays,setDelays]=useState(merged),[open,setOpen]=useState(false),[nodeLimit,setNodeLimit]=useState(40),[now,setNow]=useState(g.now),[failed,setFailed]=useState<Set<string>>(new Set()),[guard]=useState({alive:true});useEffect(()=>()=>{guard.alive=false},[])
   useEffect(()=>setDelays(merged()),[g.delays,storeKey]);useEffect(()=>setNow(g.now),[g.now]);const d=delays[now]
   const isOpen=expanded||open
   useEffect(()=>{
@@ -248,17 +259,19 @@ export function ProxyTestSettings() {
     <Card><ThresholdRange /></Card>
   </>
 }
-const proxyCache=new Map<string,{groups:Group[];providers:Provider[]}>()
-const PROXY_SNAPSHOT_KEY="dashboard_proxy_snapshot_v1"
-let proxySnapshotText=""
-// Keep the last proxy list on this device so the first frame after launch shows it while the live request refreshes it.
-function setProxyCache(key:string,value:{groups:Group[];providers:Provider[]}){
-  proxyCache.set(key,value)
-  try{const snapshot={key,groups:value.groups,providers:value.providers},text=JSON.stringify(snapshot);if(text===proxySnapshotText||text.length>800000)return;proxySnapshotText=text;Storage.set(PROXY_SNAPSHOT_KEY,snapshot)}catch{}
+// Last-seen proxies / rules / connections are kept on this device and loaded at launch, so the first frame is not empty while the live request runs.
+function snapshotStore(storageKey:string){
+  let last=""
+  return {
+    save(key:string,value:Record<string,any>){try{const snap={key,at:Date.now(),...value},text=JSON.stringify({key,...value});if(text===last||text.length>800000)return;last=text;Storage.set(storageKey,snap)}catch{}},
+    load(key:string,maxAge=Infinity):any{try{const raw=Storage.get<any>(storageKey);if(raw?.key===key&&Date.now()-(raw.at??0)<=maxAge)return raw}catch{}return undefined}
+  }
 }
+const proxySnap=snapshotStore("dashboard_proxy_snapshot_v1"),proxyCache=new Map<string,{groups:Group[];providers:Provider[]}>()
+function setProxyCache(key:string,value:{groups:Group[];providers:Provider[]}){proxyCache.set(key,value);proxySnap.save(key,value)}
 function hydrateProxyCache(key:string){
   const known=proxyCache.get(key);if(known||!key)return known
-  try{const raw=Storage.get<any>(PROXY_SNAPSHOT_KEY);if(raw?.key===key&&Array.isArray(raw.groups)){const value={groups:raw.groups as Group[],providers:Array.isArray(raw.providers)?raw.providers as Provider[]:[]};proxyCache.set(key,value);return value}}catch{}
+  const raw=proxySnap.load(key);if(raw&&Array.isArray(raw.groups)){const value={groups:raw.groups as Group[],providers:Array.isArray(raw.providers)?raw.providers as Provider[]:[]};proxyCache.set(key,value);return value}
   return undefined
 }
 const proxyPrefetch=new Set<string>(),proxyPrefetched=new Set<string>()
@@ -277,7 +290,7 @@ function usePageScene(){
   return {scene,revision}
 }
 export function ProxiesPage({active,version,onClose,selected=true}:{active:Controller|null;version:number;onClose?:()=>void;selected?:boolean}) {
-  const p=usePreferences(),cacheKey=active?sourceKey(active):"",cached=hydrateProxyCache(cacheKey),[groups,setGroups]=useState<Group[]>(cached?.groups??[]),[groupSource,setGroupSource]=useState(cacheKey),[providers,setProviders]=useState<Provider[]>(cached?.providers??[]),[loaded,setLoaded]=useState(!!cached),[err,setErr]=useState(""),[tick,setTick]=useState(0),[expanded,setExpanded]=useState(false),[showProviders,setShowProviders]=useState(true),[limit,setLimit]=useState(40),[visible,setVisible]=useState(selected),[confirmedMode,setConfirmedMode]=useState<{key:string;mode:string|null}>(()=>({key:cacheKey,mode:proxyModeCache.get(cacheKey)??null})),globalMode=confirmedMode.key===cacheKey&&confirmedMode.mode==="global"
+  const p=usePreferences(["showHidden","showGlobal","nestedDelay","nodeSort","customIcons","disconnectOnSwitch"]),cacheKey=active?sourceKey(active):"",cached=hydrateProxyCache(cacheKey),[groups,setGroups]=useState<Group[]>(cached?.groups??[]),[groupSource,setGroupSource]=useState(cacheKey),[providers,setProviders]=useState<Provider[]>(cached?.providers??[]),[loaded,setLoaded]=useState(!!cached),[err,setErr]=useState(""),[tick,setTick]=useState(0),[expanded,setExpanded]=useState(false),[showProviders,setShowProviders]=useState(true),[limit,setLimit]=useState(40),[visible,setVisible]=useState(selected),[confirmedMode,setConfirmedMode]=useState<{key:string;mode:string|null}>(()=>({key:cacheKey,mode:proxyModeCache.get(cacheKey)??null})),globalMode=confirmedMode.key===cacheKey&&confirmedMode.mode==="global"
   const {scene,revision}=usePageScene(),autoEpoch=scene.epoch
   const nodeActions=useProxyNodeActions(active,selected&&scene.active)
   scene.restore=()=>{if(selected)setVisible(true)}
@@ -291,14 +304,6 @@ export function ProxiesPage({active,version,onClose,selected=true}:{active:Contr
   return Shell({title:active?.name??"代理",toolbar:rootToolbar("proxies",onClose,menu),navigationDestination:nodeActions.destination,onAppear:()=>{nodeActions.appear();scene.vis.appear();setVisible(true)},onDisappear:()=>{nodeActions.disappear();if(scene.vis.disappear(Date.now()))setVisible(false)},children:<>{!active?<Empty/>:<><ProxyModeControl key={JSON.stringify(active)} c={active} enabled={selected&&visible&&scene.active} version={version} resume={revision} onMode={mode=>setConfirmedMode({key:cacheKey,mode})}/><HStack><Text font={20} fontWeight="bold" padding={{top:6}}>策略组</Text><Spacer/></HStack>{err?<Hint>{err}</Hint>:null}{!err&&loaded&&shownGroups.length===0?<Hint>未读取到策略组</Hint>:null}{shownGroups.slice(0,limit).map(g=><GroupSection key={`${cacheKey}|${g.name}`} c={active} g={g} expanded={expanded} autoTest={selected&&visible&&scene.active} autoEpoch={autoEpoch} autoCurrent={()=>scene.active&&scene.epoch===autoEpoch} nodeActions={nodeActions} onChanged={()=>setTick(t=>t+1)}/>)}<Pages hideCount limit={limit} total={shownGroups.length} more={()=>setLimit(limit+40)}/>{showProviders?<><HStack><Text font={20} fontWeight="bold" padding={{top:6}}>代理来源</Text><Spacer/></HStack>{remote.slice(0,limit).map(p=><ProviderCard key={p.name} c={active} p={p} kind="proxies" onChanged={()=>setTick(t=>t+1)}/>)}<Pages hideCount limit={limit} total={remote.length} more={()=>setLimit(limit+40)}/></>:null}</>}<ProxyTestSettings /></>})
 }
 function ruleColor(type:string) { return /AND|OR|NOT|MATCH/.test(type)?"systemRed":/PROCESS/i.test(type)?"systemPurple":/IP|GEOIP/i.test(type)?"systemGreen":"systemBlue" }
-// Last-seen rules / connections are kept on this device and loaded at launch, so the first frame is not empty while the live request runs.
-function snapshotStore(storageKey:string){
-  let last=""
-  return {
-    save(key:string,value:Record<string,any>){try{const snap={key,at:Date.now(),...value},text=JSON.stringify({key,...value});if(text===last||text.length>800000)return;last=text;Storage.set(storageKey,snap)}catch{}},
-    load(key:string,maxAge=Infinity):any{try{const raw=Storage.get<any>(storageKey);if(raw?.key===key&&Date.now()-(raw.at??0)<=maxAge)return raw}catch{}return undefined}
-  }
-}
 const rulesSnap=snapshotStore("dashboard_rules_snapshot_v1"),rulesCache=new Map<string,{rules:Rule[];providers:Provider[]}>()
 function hydrateRules(key:string){
   const known=rulesCache.get(key);if(known||!key)return known
@@ -333,7 +338,7 @@ export function prefetchConnections(active:Controller|null){
   void loadConnections(active).then(xs=>{connPrefetched.add(key);setConnCache(key,xs)}).catch(()=>{}).finally(()=>{connPrefetch.delete(key)})
 }
 export function RulesPage({active,version,onClose,selected=true}:{active:Controller|null;version:number;onClose?:()=>void;selected?:boolean}) {
-  const prefs=usePreferences()
+  const prefs=usePreferences(["interruptOnRuleDisable"])
   const rulesKey=active?sourceKey(active):"",rulesCached=hydrateRules(rulesKey),[rules,setRules]=useState<Rule[]>(rulesCached?.rules??[]),[providers,setProviders]=useState<Provider[]>(rulesCached?.providers??[]),[tab,setTab]=useState("rules"),[qRules,setQRules]=useState(""),[qProv,setQProv]=useState(""),[search,setSearch]=useState(false),[limit,setLimit]=useState(80),[pendingRules,setPendingRules]=useState<number[]>([]),[tick,setTick]=useState(0),[err,setErr]=useState(""),[visible,setVisible]=useState(selected)
   useEffect(()=>{const c=hydrateRules(rulesKey);setRules(c?.rules??[]);setProviders(c?.providers??[])},[rulesKey])
   // Pull-to-refresh and effect reads share one reader. Results are published only while their
@@ -424,7 +429,7 @@ export function ConnectionDetailPage({x,onDisconnect}:{x:Conn;onDisconnect:(x:Co
   </Form>
 }
 export function ConnectionsPage({active,version,onClose,selected=true}:{active:Controller|null;version:number;onClose?:()=>void;selected?:boolean}) {
-  const prefs=usePreferences(),[conns,setConns]=useState<Conn[]>(()=>active?hydrateConns(sourceKey(active))??[]:[]),[closed,setClosed]=useState<Conn[]>([]),[tab,setTab]=useState("active"),[err,setErr]=useState(""),[q,setQ]=useState(""),[search,setSearch]=useState(false),[client,setClient]=useState(""),[labelsOpen,setLabelsOpen]=useState(false),[labels,setLabels]=useState<Record<string,string>>({}),[labelIP,setLabelIP]=useState(""),[label,setLabel]=useState(""),[limit,setLimit]=useState(60),[tick,setTick]=useState(0),[fresh,setFresh]=useState<Record<string,number>>({}),[sort,setSort]=useState("new"),[seenBox]=useState({seen:new Set<string>(),init:false}),[foreground,setForeground]=useState(true),[resume,setResume]=useState(0),[scene]=useState({active:true,epoch:0,stop:undefined as undefined|(()=>void),detail:false,selected:selected,pull:undefined as undefined|(()=>Promise<void>)})
+  const prefs=usePreferences(["requestTimeout","connectionStyle"]),[conns,setConns]=useState<Conn[]>(()=>active?hydrateConns(sourceKey(active))??[]:[]),[closed,setClosed]=useState<Conn[]>([]),[tab,setTab]=useState("active"),[err,setErr]=useState(""),[q,setQ]=useState(""),[search,setSearch]=useState(false),[client,setClient]=useState(""),[labelsOpen,setLabelsOpen]=useState(false),[labels,setLabels]=useState<Record<string,string>>({}),[labelIP,setLabelIP]=useState(""),[label,setLabel]=useState(""),[limit,setLimit]=useState(60),[tick,setTick]=useState(0),[fresh,setFresh]=useState<Record<string,number>>({}),[sort,setSort]=useState("new"),[seenBox]=useState({seen:new Set<string>(),init:false}),[foreground,setForeground]=useState(true),[resume,setResume]=useState(0),[scene]=useState({active:true,epoch:0,stop:undefined as undefined|(()=>void),detail:false,selected:selected,pull:undefined as undefined|(()=>Promise<void>)})
   const [detail,setDetail]=useState<{key:string;x:Conn}|null>(null)
   const detailShown=!!active&&detail?.key===sourceKey(active)
   const visible=selected&&!detailShown
@@ -498,10 +503,9 @@ export function ConnectionsPage({active,version,onClose,selected=true}:{active:C
     scene.stop=stop
     return()=>{stop();if(scene.stop===stop)scene.stop=undefined}
   },[active&&sourceKey(active),version,selected,visible,tick,foreground,resume,prefs.requestTimeout])
-  const sortFns:Record<string,(a:Conn,b:Conn)=>number>={new:(a,b)=>(b.start||0)-(a.start||0),old:(a,b)=>(a.start||0)-(b.start||0),down:(a,b)=>(b.downSpeed??0)-(a.downSpeed??0),up:(a,b)=>(b.upSpeed??0)-(a.upSpeed??0),traffic:(a,b)=>(b.up+b.down)-(a.up+a.down)}
   const shown=useMemo(()=>{
     const source=(tab==="active"?conns:closed).filter(x=>!fresh[(tab==="active"?"a:":"c:")+x.id])
-    return [...filterConnections(source,q,client,labels)].sort(sortFns[sort])
+    return [...filterConnections(source,q,client,labels)].sort(CONN_SORT_FNS[sort])
   },[conns,closed,tab,fresh,q,client,labels,sort])
   diagnostic.render(conns,shown.length,Object.keys(fresh).length)
   const clients=useMemo(()=>Array.from(new Set([...conns,...closed].map(x=>x.sourceIP??"").filter(Boolean))),[conns,closed])
@@ -515,6 +519,7 @@ export function ConnectionsPage({active,version,onClose,selected=true}:{active:C
   // Only the tab/scene and explicit root navigation binding own polling visibility.
   function openDetail(x:Conn){if(!active)return;scene.detail=true;scene.stop?.();setDetail({key:sourceKey(active),x})}
   const destination={isPresented:detailShown,onChanged:(value:boolean)=>{if(!value){scene.detail=false;setDetail(null);setResume(n=>n+1)}},content:detailShown?<ConnectionDetailPage x={detail!.x} onDisconnect={(y:Conn)=>void close(y)}/>:<Text/>}
+  const now=Date.now()
   return Shell({title:active?.name??"连接",refresh:pullConnections,navigationDestination:destination,onAppear:()=>{diagnostic.add("appear")},onDisappear:()=>{diagnostic.add("disappear")}, toolbar:rootToolbar("connections",onClose,<Menu label={<Image systemName="ellipsis.circle"/>}><Button title="客户端标签" action={()=>setLabelsOpen(!labelsOpen)}/><Button title="清理已断开连接" action={async()=>{if(active&&await confirmed(`${active.name} · 本地历史`,"清理本脚本已观察到的已断开历史，不操作远端连接。",async()=>{historyFor(active).clear();setClosed([])}))feedback()}}/><Button title="打断全部连接" action={()=>close()}/></Menu>),children:<>{!active?<Empty/>:<><VStack spacing={6} padding={6} background={<RoundedRectangle cornerRadius={16} fill="secondarySystemBackground"/>}>
       <HStack spacing={6}>
         {(["active","closed"] as const).map(k=><Button key={k} buttonStyle="plain" action={()=>{setTab(k);setLimit(60)}}><HStack spacing={6} padding={{horizontal:8,vertical:6}} background={<RoundedRectangle cornerRadius={12} fill={tab===k?"systemBackground":"clear"}/>}><Circle fill={k==="active"?(tab===k?"systemGreen":"tertiaryLabel"):"tertiaryLabel"} frame={{width:6,height:6}}/><Text font={13} fontWeight={tab===k?"semibold":"regular"} foregroundStyle={tab===k?"label":"secondaryLabel"}>{k==="active"?"活动中":"已关闭"}</Text><Text font={11} foregroundStyle={tab===k?"systemGreen":"secondaryLabel"} padding={{horizontal:6,vertical:1}} background={<RoundedRectangle cornerRadius={8} fill="tertiarySystemFill"/>}>{String(k==="active"?conns.length:closed.length)}</Text></HStack></Button>)}
@@ -528,9 +533,9 @@ export function ConnectionsPage({active,version,onClose,selected=true}:{active:C
         {q.length>0?<Button buttonStyle="plain" accessibilityLabel="清除连接搜索" action={()=>{setQ("");setLimit(60)}} padding={{trailing:4}}><Image systemName="xmark.circle.fill" font={16} foregroundStyle="secondaryLabel" frame={{width:32,height:32}}/></Button>:null}
       </HStack>:null}
     </VStack>{err?<Hint>{err}</Hint>:null}{labelsOpen?<Card><Hint>标签仅保存在本地，并按完整sourceIP匹配，不修改路由器。</Hint><Picker title="来源地址" pickerStyle="menu" value={labelIP} onChanged={(v:string)=>{setLabelIP(v);setLabel(labels[v]||"")}}><Text tag="">选择客户端</Text>{clients.map(ip=><Text key={ip} tag={ip}>{ip}</Text>)}</Picker><TextField title="客户端标签" value={label} onChanged={setLabel}/><Button title="保存本地标签" disabled={!labelIP} action={()=>attempt(async()=>{saveClientLabel(active,labelIP,label);setLabels(clientLabels(active))})}/></Card>:null}
-    {shown.slice(0,limit).map(x=>{const ago=(t:number)=>{const m=Math.max(0,Math.floor((Date.now()-t)/60000));return m<1?"刚刚":m<60?`${m}分钟前`:m<1440?`${Math.floor(m/60)}小时前`:`${Math.floor(m/1440)}天前`},dh=x.host,dp=x.dst.lastIndexOf(":")>0?x.dst.slice(x.dst.lastIndexOf(":")):"",chain=x.chains??[],dur=x.start?fmtUptime(Math.max(0,((x.closedAt??Date.now())-x.start)/1000)):""
-      return <Card compact key={x.id+(x.closedAt??"")} contextMenu={{menuItems:<>{!x.closedAt?<Button title="关闭连接" systemImage="xmark.circle" action={()=>void close(x)}/>:null}<Button title="筛选同源连接" systemImage="laptopcomputer" action={()=>{setClient(x.sourceIP??"");setLimit(60)}}/><Button title="筛选同域名连接" systemImage="globe" action={()=>{setQ(x.host);setSearch(true);setLimit(60)}}/><Button title="复制连接信息" systemImage="doc.on.doc" action={()=>{void Pasteboard.setString([x.host+(x.dst.lastIndexOf(":")>0?x.dst.slice(x.dst.lastIndexOf(":")):""),x.src,x.network,(x.chains??[]).join(" > "),x.rule].filter(Boolean).join("\n"));feedback()}}/></>}} opacity={1}>
-        <HStack spacing={6}><Button buttonStyle="plain" accessibilityLabel="查看连接详情" action={()=>openDetail(x)}><HStack spacing={6}><Image systemName="clock.fill" font={11} foregroundStyle="secondaryLabel"/><Text font={11} foregroundStyle="secondaryLabel">{x.start?ago(x.start):"时间未提供"}</Text>{x.closedAt?(dur?<Chip small title={dur} color="secondaryLabel"/>:null):<><Image systemName="arrow.down" font={10} foregroundStyle="systemBlue"/><Text font={10}>{fmtSpeed(x.downSpeed??0)}</Text><Image systemName="arrow.up" font={11} foregroundStyle="systemGreen"/><Text font={10}>{fmtSpeed(x.upSpeed??0)}</Text></>}<Spacer/></HStack></Button>{!x.closedAt?<Button title="" buttonStyle="plain" systemImage="xmark.circle.fill" foregroundStyle="tertiaryLabel" action={()=>close(x)}/>:null}</HStack><Button buttonStyle="plain" accessibilityLabel="查看连接详情" action={()=>openDetail(x)}><VStack alignment="leading" spacing={6}>
+    {shown.slice(0,limit).map(x=>{const dh=x.host,dp=x.dst.lastIndexOf(":")>0?x.dst.slice(x.dst.lastIndexOf(":")):"",chain=x.chains??[],dur=x.start?fmtUptime(Math.max(0,((x.closedAt??now)-x.start)/1000)):""
+      return <Card compact key={x.id+(x.closedAt??"")} contextMenu={{menuItems:<>{!x.closedAt?<Button title="关闭连接" systemImage="xmark.circle" action={()=>void close(x)}/>:null}<Button title="筛选同源连接" systemImage="laptopcomputer" action={()=>{setClient(x.sourceIP??"");setLimit(60)}}/><Button title="筛选同域名连接" systemImage="globe" action={()=>{setQ(x.host);setSearch(true);setLimit(60)}}/><Button title="复制连接信息" systemImage="doc.on.doc" action={()=>{void Pasteboard.setString([dh+dp,x.src,x.network,chain.join(" > "),x.rule].filter(Boolean).join("\n"));feedback()}}/></>}} opacity={1}>
+        <HStack spacing={6}><Button buttonStyle="plain" accessibilityLabel="查看连接详情" action={()=>openDetail(x)}><HStack spacing={6}><Image systemName="clock.fill" font={11} foregroundStyle="secondaryLabel"/><Text font={11} foregroundStyle="secondaryLabel">{x.start?formatAgo(x.start,now):"时间未提供"}</Text>{x.closedAt?(dur?<Chip small title={dur} color="secondaryLabel"/>:null):<><Image systemName="arrow.down" font={10} foregroundStyle="systemBlue"/><Text font={10}>{fmtSpeed(x.downSpeed??0)}</Text><Image systemName="arrow.up" font={11} foregroundStyle="systemGreen"/><Text font={10}>{fmtSpeed(x.upSpeed??0)}</Text></>}<Spacer/></HStack></Button>{!x.closedAt?<Button title="" buttonStyle="plain" systemImage="xmark.circle.fill" foregroundStyle="tertiaryLabel" action={()=>close(x)}/>:null}</HStack><Button buttonStyle="plain" accessibilityLabel="查看连接详情" action={()=>openDetail(x)}><VStack alignment="leading" spacing={6}>
         <HStack spacing={6}><Image systemName="globe" font={11} foregroundStyle="systemBlue"/><Text font={14} fontWeight="semibold" lineLimit={1}>{dh}</Text><Text font={11} foregroundStyle="secondaryLabel">{dp}</Text></HStack>
         {chain.length?<HStack spacing={6}><Image systemName="arrow.triangle.branch" font={11} foregroundStyle="systemOrange"/><Text font={11} foregroundStyle="secondaryLabel" lineLimit={1}>{chain.join(" > ")}</Text></HStack>:null}
         <HStack spacing={6}><Chip small title={x.network||"未提供"} color="systemGreen"/>{x.inboundType?<Chip small title={x.inboundType} color="systemBlue"/>:null}{prefs.connectionStyle==="standard"?<Text font={11} foregroundStyle="secondaryLabel" lineLimit={1}>{labels[x.sourceIP??""]?`${labels[x.sourceIP??""]} · ${x.src}`:x.src}</Text>:null}<Spacer/><Image systemName="arrow.down.circle.fill" font={11} foregroundStyle="systemBlue"/><Text font={11} foregroundStyle="systemBlue">{fmtBytes(x.down)}</Text><Image systemName="arrow.up.circle.fill" font={11} foregroundStyle="systemGreen"/><Text font={11} foregroundStyle="systemGreen">{fmtBytes(x.up)}</Text></HStack></VStack></Button>

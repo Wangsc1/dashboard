@@ -6,6 +6,8 @@ import { Preferences, AppLog, LogLevel, getPreferences, savePreferences, subscri
 
 import { makeBackup, restoreBackup, validateBackup } from "./cloud-backup"
 
+const prefChanged = (a: unknown, b: unknown) => a !== b && (typeof a !== "object" || typeof b !== "object" || a === null || b === null || JSON.stringify(a) !== JSON.stringify(b))
+
 export function usePreferences(keys?: (keyof Preferences)[], enabled = true) {
   const [p, setP] = useState(() => getPreferences())
   const [track] = useState({ value: p })
@@ -15,7 +17,7 @@ export function usePreferences(keys?: (keyof Preferences)[], enabled = true) {
     const refresh = () => {
       const next = getPreferences()
       const watched = keys ?? Object.keys(next) as (keyof Preferences)[]
-      if (!watched.some(k => JSON.stringify(track.value[k]) !== JSON.stringify(next[k]))) return
+      if (!watched.some(k => prefChanged(track.value[k], next[k]))) return
       setP(next)
       track.value = next
     }
@@ -162,7 +164,7 @@ export function ThresholdRange() {
 }
 
 function IconsPage() {
-  const p = usePreferences(), [text, setText] = useState(JSON.stringify(p.groupIcons)), [err, setErr] = useState("")
+  const p = usePreferences(["groupIcons"]), [text, setText] = useState(JSON.stringify(p.groupIcons)), [err, setErr] = useState("")
   function save() {
     try {
       const icons = JSON.parse(text)
@@ -175,7 +177,7 @@ function IconsPage() {
   return <Form preferredColorScheme={pageScheme} background="systemBackground" scrollContentBackground="hidden" navigationTitle="自定义代理组图标" navigationBarTitleDisplayMode="inline"><Section footer={<Text>本地替代：按组名配置 SF Symbols；未覆盖时使用内核提供的 HTTPS 图标（仅脚本管理的缓存）。不修改内核配置。</Text>}><TextField title="图标映射 JSON" value={text} onChanged={setText} prompt={'{"节点选择":"globe"}'} /><Button title="保存图标" action={save} /><Text foregroundStyle="secondaryLabel">{err}</Text></Section></Form>
 }
 function HeaderFields({ icon }: { icon: any }) {
-  const p = usePreferences()
+  const p = usePreferences(["headersEnabled"])
   const [rows, setRows] = useState(() => {
     try { const entries = Object.entries(JSON.parse(getHeaderText())).map(([key, value]) => ({ key, value: String(value) })); return entries.length ? entries : [{ key: "", value: "" }] }
     catch { return [{ key: "", value: "" }] }

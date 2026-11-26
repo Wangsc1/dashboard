@@ -1,4 +1,4 @@
-import { Button, Navigation, HStack, VStack, Text, Image, RoundedRectangle, Spacer, ScrollView, ZStack, Device, NavigationStack, modifiers, useState, useEffect, useMemo, GeometryReader, useColorScheme } from "scripting"
+import { Button, Navigation, HStack, VStack, Text, Image, RoundedRectangle, Spacer, ScrollView, ZStack, Device, NavigationStack, modifiers, useState, useEffect, GeometryReader, useColorScheme } from "scripting"
 import { Overview, WrtInfo, fmtBytes, fmtSpeed, fmtUptime } from "./api"
 import { CpuUsage, OverviewHistory } from "./openwrt-metrics"
 import { InlineCanvasPlot } from "./plot-view"
