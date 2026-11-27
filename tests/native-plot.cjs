@@ -45,5 +45,21 @@ for(const background of ['#f2f2f7','#1c1c1e','#2c2c2e'])for(const height of [66,
  native.updateNativePlot(m,inp([10,20,80,40,60,90],9e6+1000),9e6+1000);assert.equal(m.animating,false,'first live sample after an inactive segment restores, never replays')
  native.updateNativePlot(m,inp([10,20,80,40,60,90,70],9e6+2000),9e6+2000);assert.equal(m.animating,true)
 }
+// Verify modern curve visual elements: horizontal reference lines (no vertical grid), gradient area fill, 2pt stroke, end glow+dot.
+{
+ const stops=[],gOps=[]
+ const gCtx=new Proxy({
+   createLinearGradient(x0,y0,x1,y1){gOps.push(['createLinearGradient',x0,y0,x1,y1]);return {addColorStop(o,c){stops.push([o,c])}}}
+ },{set(o,k,v){o[k]=v;gOps.push([k,v]);return true},get(o,k){if(k in o)return o[k];return (...a)=>gOps.push([k,...a])}})
+ const m=native.createNativePlot()
+ native.updateNativePlot(m,{samples:[20,55,40],tone:'#3485eb',area:true,percent:true,running:false,sampleAt:1000},1000)
+ native.drawNativePlot(gCtx,{width:200,height:96},m,'#ffffff')
+ assert.deepEqual(gOps.filter(x=>x[0]==='createLinearGradient'),[['createLinearGradient',0,0,0,96]])
+ assert.equal(stops.length,3);assert.equal(stops[0][0],0);assert.equal(stops[2][0],1)
+ assert.ok(gOps.some(x=>x[0]==='lineWidth'&&x[1]===2),'curve stroke width should be 2pt')
+ const arcs=gOps.filter(x=>x[0]==='arc')
+ assert.equal(arcs.length,2,'end marker should draw outer halo and inner dot')
+ assert.ok(arcs[0][3]>arcs[1][3],'outer halo radius should exceed inner dot')
+}
 assert.equal(total,golden.length)
 console.log('PASS '+total+' golden geometry/scale/path comparisons: empty/growing/60-point shift/interruption/adaptive scale/area/pause/resume/invalid input/duration; theme/size and zero-size commands')

@@ -21,9 +21,10 @@ const checks=String.raw`
   const other=render(pages.MorePage,{active:{...c,id:'other',url:'http://other.invalid'},selected:false,onChanged(){}},true)
   assert.ok(!text(other).includes('v-test'))
   const cpu=home.CpuCard({history:[],running:false})
-  const badge=nodes(cpu,'Text').find(n=>text(n)==='-- °C')
-  assert.equal(badge.props.background.props.fill.light,'#d6e8ff');assert.equal(badge.props.background.props.fill.dark,'#24374d')
-  console.log('PASS runtime prefetch, first-frame elapsed durations, source isolation; temperature badge light contrast and preserved dark colour')
+  const badge=nodes(cpu,'HStack').find(n=>n.props.background?.type==='RoundedRectangle'&&text(n).includes('-- °C'))
+  assert.ok(badge,'temperature pill exists');assert.equal(badge.props.background.props.fill,'tertiarySystemFill')
+  assert.equal(home.tempBadgeStyle(48).fg.light,'#14804a');assert.equal(home.tempBadgeStyle(65).fg.light,'#c16b13');assert.equal(home.tempBadgeStyle(82).fg.light,'#d63638')
+  console.log('PASS runtime prefetch, first-frame elapsed durations, source isolation; temperature pill color tiers and unknown style')
  }finally{unmount();api.loadNikkiRuntime=originalRuntime;api.loadRuntimeVersions=originalVersions}
 })().catch(e=>{console.error(e);process.exitCode=1})
 `

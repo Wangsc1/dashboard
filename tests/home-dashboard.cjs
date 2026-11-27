@@ -79,13 +79,13 @@ function fixture(url,init){if(url.endsWith('/cgi-bin/cgi-download'))return {stat
  })
  await test('RAM/负载共同三槽等高约束、两列受限宽且双行底栏可随字体扩高',()=>{
    const row=home.HomeDashboard({overview:null,histories:newHistory(),running:false,onCpu(){}}).props.children[2]
-   assert.equal(row.props.fixedSize,undefined);assert.equal(row.props.spacing,16)
-   const backgrounds=row.props.background.props.children;assert.equal(backgrounds.length,2);assert.equal(row.props.background.props.spacing,16)
-   for(const bg of backgrounds){assert.equal(bg.type,'RoundedRectangle');assert.equal(bg.props.fill,'secondarySystemBackground');assert.equal(bg.props.cornerRadius,14);deep(bg.props.frame,{minWidth:0,maxWidth:'infinity'})}
+   assert.equal(row.props.fixedSize,undefined);assert.equal(row.props.spacing,14)
+   const backgrounds=row.props.background.props.children;assert.equal(backgrounds.length,2);assert.equal(row.props.background.props.spacing,14)
+   for(const bg of backgrounds){assert.equal(bg.type,'RoundedRectangle');assert.equal(bg.props.fill,'secondarySystemGroupedBackground');assert.equal(bg.props.cornerRadius,18);assert.ok(bg.props.stroke?.strokeStyle?.lineWidth===0.5);deep(bg.props.frame,{minWidth:0,maxWidth:'infinity'})}
    const ram=home.RamCard({w:{memTotal:16*1024**3,memFree:15*1024**3}}),load=home.LoadCard({w:{load:[0.09,0.06,0.02]}})
    for(const card of [ram,load]){
      assert.equal(card.type,home.CompactMetricCard)
-     const slots=home.CompactMetricCard(card.props);assert.equal(slots.type,'VStack');assert.equal(slots.props.fixedSize,undefined);assert.equal(slots.props.children.length,3);assert.equal(slots.props.children[0].type,'HStack');assert.equal(nodes(slots.props.children[0],'Text')[0].props.font,16)
+     const slots=home.CompactMetricCard(card.props);assert.equal(slots.type,'VStack');assert.equal(slots.props.fixedSize,undefined);assert.equal(slots.props.children.length,3);assert.equal(slots.props.children[0].type,'HStack');assert.equal(nodes(slots.props.children[0],'Text')[0].props.font,15)
      const steps=slots.props.modifiers.steps,frame=steps.find(s=>s[0]==='frame')[1]
      deep(frame,{minWidth:0,maxWidth:'infinity',alignment:'leading'});deep(steps.map(s=>s[0]),['frame','padding']);assert.equal(steps[1][1],16);assert.equal(slots.props.spacing,12);assert.equal(slots.props.background,undefined)
      for(const footer of nodes(card.props.footer,home.MetricFooterValue)){
@@ -109,9 +109,10 @@ function fixture(url,init){if(url.endsWith('/cgi-bin/cgi-download'))return {stat
    assert.equal(hit.props.onDragGesture,undefined)
    for(const other of [home.HomeCard({children:[]}),home.HomeCard(home.CpuCard({history:[],running:true,detail:true}).props)])assert.ok(!other.props.modifiers.steps.some(s=>s[0]==='overlay'))
  })
- await test('主页/CPU详情与其他页面同款系统白底灰卡，移除渐变和阴影',()=>{
-   assert.equal(home.HOME_BG,'systemBackground');const card=home.HomeCard({children:[]}),bg=card.props.modifiers.steps.find(s=>s[0]==='background')[1];assert.equal(bg.props.fill,'secondarySystemBackground');assert.equal(card.props.foregroundStyle,'label');assert.equal(card.props.shadow,undefined)
-   const detail=home.CpuDetails({overview:null,histories:newHistory(),running:false,onDismiss(){}});assert.equal(nodes(detail,'ScrollView')[0].props.background,'systemBackground')
+ await test('主页/CPU详情使用精致iOS原生分组底色与统一18圆角细描边卡片，含活动连接卡片与徽章',()=>{
+   assert.equal(home.HOME_BG,'systemGroupedBackground');const card=home.HomeCard({children:[]}),bg=card.props.modifiers.steps.find(s=>s[0]==='background')[1];assert.equal(bg.props.fill,'secondarySystemGroupedBackground');assert.equal(bg.props.cornerRadius,18);assert.equal(bg.props.stroke.strokeStyle.lineWidth,0.5);assert.equal(card.props.foregroundStyle,'label');assert.equal(card.props.shadow,undefined)
+   const conn=home.HomeConnectionsCard({count:42,hosts:['example.com','github.com']});assert.equal(conn.type,home.HomeCard);assert.ok(text(conn).includes('活动连接'));assert.ok(text(conn).includes('example.com · github.com'));assert.equal(nodes(conn,home.HomeBadge).length,1)
+   const detail=home.CpuDetails({overview:null,histories:newHistory(),running:false,onDismiss(){}});assert.equal(nodes(detail,'ScrollView')[0].props.background,'systemGroupedBackground')
    const source=fs.readFileSync(path.join(root,'home-ui.tsx'),'utf8');assert.ok(!source.includes('gradient('));assert.ok(!source.includes('shadow='));assert.ok(source.includes('#17965b'));assert.ok(source.includes('#3485eb'))
  })
  await test('sheet全部唯一逻辑核可滚动到达，左上X调用原生关闭且保留下拉关闭',()=>{

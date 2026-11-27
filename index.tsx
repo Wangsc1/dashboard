@@ -1,5 +1,5 @@
 import { detailReads, useDetailPage, useRouterDetail, peekDetail, prefetchRouterDetails, detailWrite, observeDetailsPhase, selectDetailsSource } from "./router-details"
-import { HOME_BG, HomeDashboard, LiveCpuDetails, createCpuDetailFeed } from "./home-ui"
+import { HOME_BG, HomeBadge, HomeCard, HomeConnectionsCard, HomeDashboard, LiveCpuDetails, createCpuDetailFeed } from "./home-ui"
 import { newHistory, appendHistory, OverviewHistory } from "./openwrt-metrics"
 import { rootToolbar } from "./root-toolbar"
 import { prefetchMoreVersions, prefetchProxies, prefetchRules, prefetchConnections, ProxiesPage, ConnectionsPage, RulesPage, MorePage as DashboardMorePage } from "./dashboard-pages"
@@ -26,16 +26,6 @@ function NoController() {
 }
 
 const MAIN_FG = { light: "#41434B", dark: "#CFD0D7" }
-const CARD_BG = "secondarySystemBackground"
-const cardMods = () => modifiers().frame({ maxWidth: "infinity", alignment: "leading" as any }).padding({ horizontal: 16, vertical: 14 }).background(<RoundedRectangle cornerRadius={22} fill={CARD_BG} />)
-function Card({ children }: { children?: any }) {
-  return <VStack alignment="leading" spacing={10} foregroundStyle={MAIN_FG} font={14} modifiers={cardMods()}>{children}</VStack>
-}
-function Badge({ icon, color }: { icon: string; color: string }) {
-  return <ZStack modifiers={modifiers().frame({ width: 20, height: 20 }).background(<RoundedRectangle cornerRadius={6} fill={`rgba(${parseInt(color.slice(1,3),16)},${parseInt(color.slice(3,5),16)},${parseInt(color.slice(5,7),16)},0.15)`} />)}>
-    <Image systemName={icon} resizable scaleToFit foregroundStyle={color as any} frame={{ width: 11, height: 11 }} />
-  </ZStack>
-}
 
 function useForeground() {
   const [foreground, setForeground] = useState(true)
@@ -217,11 +207,11 @@ function OverviewPage({ active, version, onSwitch, onClose, selected = true }: {
   return <VStack spacing={0} navigationTitle={active.name} navigationBarTitleDisplayMode="inline" toolbar={toolbar} onAppear={showHome} onDisappear={hideHome}
     sheet={{isPresented:cpuOpen,onChanged:closeCpu,content:detailContent}}>
     <ScrollView background={HOME_BG}>
-      <VStack spacing={16} padding={{horizontal:16,top:12,bottom:24}}>
-        {all.length>1?<Card><Picker title="当前路由器" pickerStyle="menu" value={active.id} onChanged={(v:string)=>{setActive(v);onSwitch()}}>{all.map(c=><Text key={c.id} tag={c.id}>{c.name}</Text>)}</Picker></Card>:null}
+      <VStack spacing={14} padding={{horizontal:16,top:12,bottom:24}}>
+        {all.length>1?<HomeCard><HStack spacing={8}><HomeBadge icon="server.rack" color="#3485eb"/><Picker title="当前路由器" pickerStyle="menu" value={active.id} onChanged={(v:string)=>{setActive(v);onSwitch()}}>{all.map(c=><Text key={c.id} tag={c.id}>{c.name}</Text>)}</Picker></HStack></HomeCard>:null}
         {shownError&&!/^请求超时[。.!！]?$/.test(shownError.trim())?<Text font={12} foregroundStyle="systemRed">{shownError}</Text>:null}
         {homeContent}
-        <Card><HStack><Badge icon="link" color="#A855F7"/><Text font={13}>活动连接</Text><Spacer/><Text font={13}>{shownOv?String(shownOv.connCount):"--"}</Text></HStack>{hosts.length?<Text font={10} foregroundStyle="secondaryLabel" lineLimit={1}>{hosts.join(" · ")}</Text>:null}</Card>
+        <HomeConnectionsCard count={shownOv?.connCount} hosts={hosts}/>
       </VStack>
     </ScrollView>
   </VStack>

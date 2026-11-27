@@ -26,7 +26,7 @@ function native(tree){assert.equal(tree.type,'TimelineCanvas');assert.equal(tree
  })
  await test('pause/static samples/style/size/empty grid redraw once; retain same native node/model; no idle full-speed loop',async()=>{
   const o=instance({samples:[],tone:'#3485eb',percent:true,running:false,plotHeight:66});let t=native(o.render());const model=o.host().model
-  let ops=draw(t);assert.equal(ops.filter(x=>x[0]==='lineTo').length,13);assert.equal(o.host().model.animating,false);drain();assert.equal(o.render().props.paused,true)
+  let ops=draw(t);assert.equal(ops.filter(x=>x[0]==='lineTo').length,4);assert.equal(o.host().model.animating,false);drain();assert.equal(o.render().props.paused,true)
   o.props.samples=[10,80];t=o.render();assert.equal(t.props.paused,false);ops=draw(t);assert.ok(ops.some(x=>x[0]==='bezierCurveTo'));drain();assert.equal(o.render().props.paused,true)
   mockColorScheme='dark';o.props.elevated=true;o.props.plotHeight=96;o.props.plotWidth=329;t=o.render();ops=draw(t,329,96);assert.equal(o.host().model,model);assert.ok(ops.some(x=>x[0]==='fillStyle'&&x[1]==='#2c2c2e'));assert.equal(t.props.frame.minHeight,96);drain();assert.equal(o.render().props.paused,true)
   mockColorScheme='light';o.close();assert.equal(timers.size,0);assert.equal(sceneListeners.size,0)

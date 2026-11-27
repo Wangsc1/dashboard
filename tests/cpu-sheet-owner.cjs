@@ -131,7 +131,7 @@ function instance(fn){const state={hooks:[],cleanups:new Map()};return {state,as
   assert.deepEqual(Array.from(tree.props.presentationDetents),['large']);assert.equal(tree.props.presentationDragIndicator,'visible');assert.equal(tree.props.presentationContentInteraction,'scrolls')
     const container=tree.props.children[0];assert.equal(container.type,'ScrollView');assert.equal(container.props.navigationTitle,'CPU');assert.equal(container.props.navigationBarTitleDisplayMode,'inline');assert.equal(container.props.background,home.HOME_BG)
   const close=container.props.toolbar.topBarLeading;assert.equal(close.type,'Button');assert.equal(close.props.systemImage,'xmark');assert.equal(close.props.accessibilityLabel,'关闭CPU详情');assert.equal(typeof close.props.action,'function')
-  const content=container.props.children[0];assert.equal(content.type,'VStack');assert.equal(content.props.spacing,16);assert.equal(JSON.stringify(content.props.padding),JSON.stringify({horizontal:16,top:12,bottom:24}))
+  const content=container.props.children[0];assert.equal(content.type,'VStack');assert.equal(content.props.spacing,14);assert.equal(JSON.stringify(content.props.padding),JSON.stringify({horizontal:16,top:12,bottom:24}))
   const summary=nodes(tree,home.DetailCpuSummary)[0],row=nodes(tree,home.CoreRow)[0];assert.equal(summary.props.w,w);assert.equal(summary.props.history,histories.cpu.cpu);assert.equal(summary.props.running,true);assert.equal(summary.props.key,'summary')
   assert.equal(row.props.histories,histories);assert.equal(row.props.cpus[0],w.cpus[1]);assert.equal(row.props.running,true);assert.equal(row.props.key,'core-cpu0')
  })

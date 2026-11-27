@@ -5,7 +5,7 @@ export function InlineCanvasPlot(props:CanvasPlotProps) {
   const height=props.plotHeight??96
   return <VStack spacing={0} frame={props.plotWidth?{width:props.plotWidth,height}:{height}}><MountedCanvasPlot {...props}/></VStack>
 }
-export function plotBackground(theme:string|undefined,elevated=false){return theme==='dark'?(elevated?'#2c2c2e':'#1c1c1e'):'#f2f2f7'}
+export function plotBackground(theme:string|undefined,elevated=false){return theme==='dark'?(elevated?'#2c2c2e':'#1c1c1e'):'#ffffff'}
 // One process-local completion queue, NOT a frame driver. Native TimelineView owns frames.
 // Final draw queues a deferred boundary update; never call React setters inside draw.
 const completions=new Map<object,()=>void>()

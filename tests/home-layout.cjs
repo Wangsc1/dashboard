@@ -58,7 +58,7 @@ function slot(n,height){
    const mk=n=>({cpu:{cpu:[1,2],...Object.fromEntries(Array.from({length:32},(_,i)=>['cpu'+i,[n,n+1]]))}})
    const cpus=Array.from({length:32},(_,i)=>({id:'cpu'+i,usage:i}))
    const tree=home.CpuDetails({overview:{wrt:{cpus:[{id:'cpu'},...cpus],cpuMeta:{}}},histories:mk(1),running:true})
-   assert.equal(nodes(tree,'LazyVStack').length,0);assert.equal(nodes(tree,'ScrollView').length,1);const container=nodes(tree,'ScrollView')[0].props.children[0];assert.equal(container.type,'VStack');assert.equal(container.props.spacing,16);deep(container.props.padding,{horizontal:16,top:12,bottom:24});assert.equal(nodes(tree,'Button').length,0)
+   assert.equal(nodes(tree,'LazyVStack').length,0);assert.equal(nodes(tree,'ScrollView').length,1);const container=nodes(tree,'ScrollView')[0].props.children[0];assert.equal(container.type,'VStack');assert.equal(container.props.spacing,14);deep(container.props.padding,{horizontal:16,top:12,bottom:24});assert.equal(nodes(tree,'Button').length,0)
    const rs=nodes(tree,home.CoreRow);assert.equal(rs.length,16);assert.equal(rs.flatMap(r=>r.props.cpus).length,32)
    let r=home.CoreRow({cpus:cpus.slice(0,2),w:{cpuMeta:{}},histories:mk(1),running:true});assert.equal(nodes(r,home.CoreCard)[0].props.history[0],1)
    r=home.CoreRow({cpus:[{id:'cpu0',usage:99}],w:{cpuMeta:{cpu0:{mhz:2222}}},histories:mk(50),running:true})
@@ -89,7 +89,7 @@ function slot(n,height){
      const row=home.HomeDashboard({overview:w?{wrt:w,traffic:{}}:null,histories:metrics.newHistory(),running:false,onCpu(){}}).props.children[2]
      assert.equal(row.props.fixedSize,undefined);assert.equal(row.props.frame,undefined);assert.equal(row.props.alignment,'top')
      const bg=row.props.background;assert.equal(bg.type,'HStack');assert.equal(bg.props.children.length,2);assert.equal(bg.props.spacing,row.props.spacing)
-     for(const shape of bg.props.children){assert.equal(shape.type,'RoundedRectangle');deep(shape.props.frame,{minWidth:0,maxWidth:'infinity'});assert.equal(shape.props.fill,'secondarySystemBackground')}
+     for(const shape of bg.props.children){assert.equal(shape.type,'RoundedRectangle');deep(shape.props.frame,{minWidth:0,maxWidth:'infinity'});assert.equal(shape.props.fill,'secondarySystemGroupedBackground');assert.equal(shape.props.cornerRadius,18)}
      for(const cardNode of row.props.children){
        const card=cardNode.type(cardNode.props),content=card.type(card.props)
        assert.equal(content.type,'VStack');assert.equal(content.props.spacing,12);assert.equal(content.props.fixedSize,undefined)
