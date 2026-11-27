@@ -7,11 +7,11 @@ function expand(n,width=144){if(!n||typeof n!=='object')return n;if(n.type===loa
 function lum(c){const a=[1,3,5].map(i=>parseInt(c.slice(i,i+2),16)/255).map(v=>v<=0.04045?v/12.92:((v+0.055)/1.055)**2.4);return a[0]*0.2126+a[1]*0.7152+a[2]*0.0722}
 function contrast(a,b){return (Math.max(lum(a),lum(b))+0.05)/(Math.min(lum(a),lum(b))+0.05)}
 ;(async()=>{
- await test('完全展开主页/16核详情：Canvas曲线槽+原生形状，保留全部16核',()=>{
-   const h={up:[10,20],down:[20,30],cpu:{cpu:[10,20],...Object.fromEntries(Array.from({length:16},(_,i)=>['cpu'+i,[10,20]]))}},o={traffic:{up:10,down:20},wrt:{cpus:[{id:'cpu'},...Array.from({length:16},(_,i)=>({id:'cpu'+i}))],load:[0.09,0.06,0.02],memTotal:100,memFree:50,disk:{used:1,size:100,avail:99},cpuMeta:{}}}
-   const main=expand(home.HomeDashboard({overview:o,histories:h,running:false,onCpu(){}})),detail=expand(home.CpuDetails({overview:o,histories:h,running:false}))
-   for(const n of [main,detail]){assert.equal(nodes(n,'WebView').length,0);for(const c of ['Chart','LineChart','AreaChart'])assert.equal(nodes(n,c).length,0)}
-   assert.equal(nodes(main,load('plot-view').InlineCanvasPlot).length,3);assert.equal(nodes(detail,load('plot-view').InlineCanvasPlot).length,17);assert.ok(nodes(main,'RoundedRectangle').length>0);unmount();assert.equal(intervals.size,0)
+ await test('完全展开主页正面与翻转背面：Canvas曲线槽+原生形状',()=>{
+   const h={up:[10,20],down:[20,30],cpu:{cpu:[10,20],...Object.fromEntries(Array.from({length:16},(_,i)=>['cpu'+i,[10,20]]))}},o={traffic:{up:10,down:20},wrt:{release:'ImmortalWrt 25.12.1',uptime:100,arch:'x86_64',kernel:'6.12.94',model:'Board',cpuModel:'Intel Xeon',cpus:[{id:'cpu'},...Array.from({length:16},(_,i)=>({id:'cpu'+i}))],load:[0.09,0.06,0.02],memTotal:100,memFree:50,disk:{used:1,size:100,avail:99},cpuMeta:{}}}
+   const main=expand(home.HomeDashboard({overview:o,histories:h,running:false,cpuFlipped:false,onToggleCpu(){}})),flipped=expand(home.HomeDashboard({overview:o,histories:h,running:false,cpuFlipped:true,onToggleCpu(){}}))
+   for(const n of [main,flipped]){assert.equal(nodes(n,'WebView').length,0);for(const c of ['Chart','LineChart','AreaChart'])assert.equal(nodes(n,c).length,0)}
+   assert.equal(nodes(main,load('plot-view').InlineCanvasPlot).length,3);assert.equal(nodes(flipped,load('plot-view').InlineCanvasPlot).length,2);assert.ok(nodes(main,'RoundedRectangle').length>0);unmount();assert.equal(intervals.size,0)
  })
  await test('RAM条仍按段计数',()=>{
    const ram=home.CapacityBars({fraction:0.04,tone:'#a179d1'});assert.equal(nodes(ram,'RoundedRectangle').length,24);assert.equal(nodes(ram,'RoundedRectangle').filter(n=>n.props.fill.opacity===0.85).length,1)

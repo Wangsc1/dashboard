@@ -54,17 +54,13 @@ function slot(n,height){
      for(const r of rects)assert.ok(r.props.frame.height<=24&&r.props.frame.height>0&&r.props.frame.width>0)
    }
  })
- await test('详情页普通VStack承载与全部核心；无整卡快照/memo，数值/元数据每次使用最新',()=>{
-   const mk=n=>({cpu:{cpu:[1,2],...Object.fromEntries(Array.from({length:32},(_,i)=>['cpu'+i,[n,n+1]]))}})
-   const cpus=Array.from({length:32},(_,i)=>({id:'cpu'+i,usage:i}))
-   const tree=home.CpuDetails({overview:{wrt:{cpus:[{id:'cpu'},...cpus],cpuMeta:{}}},histories:mk(1),running:true})
-   assert.equal(nodes(tree,'LazyVStack').length,0);assert.equal(nodes(tree,'ScrollView').length,1);const container=nodes(tree,'ScrollView')[0].props.children[0];assert.equal(container.type,'VStack');assert.equal(container.props.spacing,14);deep(container.props.padding,{horizontal:16,top:12,bottom:24});assert.equal(nodes(tree,'Button').length,0)
-   const rs=nodes(tree,home.CoreRow);assert.equal(rs.length,16);assert.equal(rs.flatMap(r=>r.props.cpus).length,32)
-   let r=home.CoreRow({cpus:cpus.slice(0,2),w:{cpuMeta:{}},histories:mk(1),running:true});assert.equal(nodes(r,home.CoreCard)[0].props.history[0],1)
-   r=home.CoreRow({cpus:[{id:'cpu0',usage:99}],w:{cpuMeta:{cpu0:{mhz:2222}}},histories:mk(50),running:true})
-   const card=nodes(r,home.CoreCard)[0];assert.equal(card.props.history[0],50);assert.equal(card.props.cpu.usage,99);assert.equal(card.props.w.cpuMeta.cpu0.mhz,2222)
-   const source=fs.readFileSync(path.join(root,'home-ui.tsx'),'utf8'),row=source.slice(source.indexOf('export function CoreRow'),source.indexOf('// Per-core plots'))
-   assert.ok(!row.includes('useMemo'));assert.ok(!row.includes('useState'));assert.ok(!row.includes('snap'))
+ await test('CPU卡片翻转背面显示完整系统信息五项，正面显示型号与折线',()=>{
+   const w={release:'ImmortalWrt 25.12.1',uptime:120,arch:'x86_64',kernel:'6.12.94',model:'Board',cpuModel:'Intel(R) Xeon(R) E-2286M CPU @ 2.40GHz',cpus:[{id:'cpu',usage:1},...Array.from({length:16},(_,i)=>({id:'cpu'+i,usage:i}))]}
+   const front=home.CpuCard({w,history:[1,2],running:true,flipped:false})
+   assert.equal(nodes(front,home.GridPlot).length,1);assert.equal(nodes(front,home.CpuBreakdown).length,1);assert.ok(text(front).includes('Intel(R) Xeon(R) E-2286M'))
+   const back=home.CpuCard({w,history:[1,2],running:true,flipped:true})
+   assert.equal(nodes(back,home.GridPlot).length,0);const sys=home.CpuSystemCard(nodes(back,home.CpuSystemCard)[0].props)
+   assert.ok(text(sys).includes('ImmortalWrt 25.12.1'));assert.ok(text(sys).includes('16'));assert.ok(text(sys).includes('6.12.94'))
  })
  await test('契约(非实机): RAM条不用GeometryReader，24根等宽柔性条、单一固定24pt行高、2pt间距',()=>{
    for(const fraction of [undefined,0,0.001,0.5,1,2,NaN])for(const [name,build] of [['ram',()=>home.CapacityBars({fraction,tone:'blue'})]]){
@@ -78,15 +74,15 @@ function slot(n,height){
      const contents=geometry.props.children[0]({size:{width,height:10}});assert.equal(contents.props.frame.height,10);assert.equal(contents.props.frame.width,width)
    }
  })
- await test('契约(非实机): CPU三项为左侧紧凑组22pt间距，无等分frame，总占用独立靠右；详情同组件',()=>{
+ await test('契约(非实机): CPU三项为左侧紧凑组22pt间距，无等分frame，总占用独立靠右',()=>{
    const b=home.CpuBreakdown({cpu:{id:'cpu',usage:1,system:1,user:1,steal:1},running:false}),[group,spacer,total]=b.props.children
    assert.equal(group.props.spacing,22);assert.equal(group.props.frame,undefined);assert.equal(group.props.children.length,3);assert.equal(spacer.type,'Spacer');assert.equal(total.props.alignment,'lastTextBaseline')
    for(const col of group.props.children){assert.equal(col.props.frame,undefined);assert.equal(col.props.alignment,'leading')}
-   for(const detail of [false,true])assert.equal(nodes(home.CpuCard({w:{cpus:[{id:'cpu'}]},history:[],running:false,detail}),home.CpuBreakdown).length,1)
+   assert.equal(nodes(home.CpuCard({w:{cpus:[{id:'cpu'}]},history:[],running:false}),home.CpuBreakdown).length,1)
  })
  await test('RAM/负载完整路径:有限内容行决定等高背景；header/28pt槽/footer为顺序兄弟，不靠padding猜高度',()=>{
    for(const w of [undefined,{memTotal:16*1024**3,memFree:15*1024**3,load:[0.09,0.06,0.02],cpus:[{id:'cpu0'}]}]){
-     const row=home.HomeDashboard({overview:w?{wrt:w,traffic:{}}:null,histories:metrics.newHistory(),running:false,onCpu(){}}).props.children[2]
+     const row=home.HomeDashboard({overview:w?{wrt:w,traffic:{}}:null,histories:metrics.newHistory(),running:false,cpuFlipped:false,onToggleCpu(){}}).props.children[2]
      assert.equal(row.props.fixedSize,undefined);assert.equal(row.props.frame,undefined);assert.equal(row.props.alignment,'top')
      const bg=row.props.background;assert.equal(bg.type,'HStack');assert.equal(bg.props.children.length,2);assert.equal(bg.props.spacing,row.props.spacing)
      for(const shape of bg.props.children){assert.equal(shape.type,'RoundedRectangle');deep(shape.props.frame,{minWidth:0,maxWidth:'infinity'});assert.equal(shape.props.fill,'secondarySystemGroupedBackground');assert.equal(shape.props.cornerRadius,18)}

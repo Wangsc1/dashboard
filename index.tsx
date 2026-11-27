@@ -1,5 +1,5 @@
 import { detailReads, useDetailPage, useRouterDetail, peekDetail, prefetchRouterDetails, detailWrite, observeDetailsPhase, selectDetailsSource } from "./router-details"
-import { HOME_BG, HomeBadge, HomeCard, HomeConnectionsCard, HomeDashboard, LiveCpuDetails, createCpuDetailFeed } from "./home-ui"
+import { HOME_BG, HomeBadge, HomeCard, HomeConnectionsCard, HomeDashboard } from "./home-ui"
 import { newHistory, appendHistory, OverviewHistory } from "./openwrt-metrics"
 import { rootToolbar } from "./root-toolbar"
 import { prefetchMoreVersions, prefetchProxies, prefetchRules, prefetchConnections, ProxiesPage, ConnectionsPage, RulesPage, MorePage as DashboardMorePage } from "./dashboard-pages"
@@ -136,7 +136,7 @@ function OverviewPage({ active, version, onSwitch, onClose, selected = true }: {
   const [err, setErr] = useState("")
   const [histories, setHistories] = useState(() => (active ? overviewPrime.get(overviewSource(active))?.histories : undefined) ?? newHistory())
   const [sampleSource,setSampleSource]=useState(() => (active ? overviewSource(active) : ""))
-  const [cpuOpen,setCpuOpen]=useState(false)
+  const [cpuFlipped,setCpuFlipped]=useState(false)
   const source=active?overviewSource(active):""
   const all = listControllers()
   // Retain the navigation owner while pausing work behind pushed settings pages.
@@ -153,8 +153,8 @@ function OverviewPage({ active, version, onSwitch, onClose, selected = true }: {
   const hideHome = () => { if (sceneVisibility.model.disappear(Date.now())) setVisible(false) }
   const showHome = () => { sceneVisibility.model.appear(); setVisible(true); requestPlotKick("appear") }
   const foreground = useForeground()
-  const showCharts = foreground && selected && (visible || cpuOpen)
-  useEffect(() => { const frame=overviewPrime.get(source);setHistories(frame?.histories??newHistory());setOv(frame?.overview??null);setSampleSource(source);setCpuOpen(false) }, [source])
+  const showCharts = foreground && selected && visible
+  useEffect(() => { const frame=overviewPrime.get(source);setHistories(frame?.histories??newHistory());setOv(frame?.overview??null);setSampleSource(source);setCpuFlipped(false) }, [source])
   // Hidden tabs keep no live UI subscription. On return consume the latest full
   // snapshot, including real samples collected while another tab was selected.
   useEffect(()=>{
@@ -168,7 +168,7 @@ function OverviewPage({ active, version, onSwitch, onClose, selected = true }: {
     receive(source,overviewPrime.get(source),overviewErrors.get(source))
     return()=>{overviewPrimeListeners.delete(receive)}
   },[source,showCharts])
-  useEffect(()=>{if(selected){setVisible(true);requestPlotKick("selected")}else setCpuOpen(false)},[selected])
+  useEffect(()=>{if(selected){setVisible(true);requestPlotKick("selected")}else setCpuFlipped(false)},[selected])
   useEffect(() => {
     setHosts([])
     if (!active || !prefs.connectionBackground || !showCharts) return
@@ -185,15 +185,8 @@ function OverviewPage({ active, version, onSwitch, onClose, selected = true }: {
   const currentFrame=showCharts?overviewPrime.get(source):undefined
   const shownOv=currentFrame?.overview??(sampleSource===source?ov:null)
   const shownHistory=currentFrame?.histories??(sampleSource===source?histories:newHistory())
-  // Keep sheet.content stable across sample updates; publish only the live frame.
-  const [detailFeed]=useState(()=>createCpuDetailFeed({overview:null,histories:newHistory(),running:false}))
-  const detailContent=useMemo(()=><LiveCpuDetails feed={detailFeed}/>,[detailFeed])
-  useEffect(()=>{detailFeed.setValue({overview:shownOv,histories:shownHistory,running:showCharts&&cpuOpen})},[shownOv,shownHistory,showCharts,cpuOpen,detailFeed])
-  // Freeze the obscured home chart subtree while the sheet consumes live samples.
-  const [homeFrame]=useState(()=>({source:"",overview:null as Overview|null,histories:newHistory()}))
-  if(!cpuOpen||homeFrame.source!==source){homeFrame.source=source;homeFrame.overview=shownOv;homeFrame.histories=shownHistory}
-  const openCpu=useMemo(()=>()=>setCpuOpen(true),[])
-  const homeContent=useMemo(()=><HomeDashboard overview={homeFrame.overview} histories={homeFrame.histories} running={showCharts&&visible&&!cpuOpen} onCpu={openCpu}/>,[homeFrame.overview,homeFrame.histories,showCharts&&visible&&!cpuOpen,openCpu])
+  const toggleCpu=useMemo(()=>()=>setCpuFlipped(v=>!v),[])
+  const homeContent=useMemo(()=><HomeDashboard overview={shownOv} histories={shownHistory} running={showCharts&&visible} cpuFlipped={cpuFlipped} onToggleCpu={toggleCpu}/>,[shownOv,shownHistory,showCharts&&visible,cpuFlipped,toggleCpu])
   const shownError = active && active.kind !== "openwrt" ? "主页仅支持 OpenWrt 路由器数据，请在设置添加 OpenWrt" : err
   const statusText = shownError ? "连接失败" : ov ? "运行正常" : "连接中", statusColor = err ? "systemRed" : "systemGreen"
   const toolbar = useMemo(() => ({ ...rootToolbar("home", onClose, <NavigationLink destination={<SettingsPage active={active} onChanged={onSwitch} />}><Image systemName="ellipsis.circle" /></NavigationLink>),
@@ -203,9 +196,7 @@ function OverviewPage({ active, version, onSwitch, onClose, selected = true }: {
       <HStack spacing={4} offset={{x:0,y:14}}><Circle fill={statusColor} frame={{ width: 5, height: 5 }} /><Text font={11} foregroundStyle={statusColor}>{statusText}</Text></HStack>
     }}>{active?.name||"OpenWrt 状态"}</Text> }), [active, onSwitch, onClose, statusText, statusColor])
   if (!active) return <Form navigationTitle="dashboard" navigationBarTitleDisplayMode="inline" toolbar={toolbar} onAppear={showHome} onDisappear={hideHome}><NoController /></Form>
-  const closeCpu=(value:boolean)=>{setCpuOpen(value);if(!value)setVisible(true)}
-  return <VStack spacing={0} navigationTitle={active.name} navigationBarTitleDisplayMode="inline" toolbar={toolbar} onAppear={showHome} onDisappear={hideHome}
-    sheet={{isPresented:cpuOpen,onChanged:closeCpu,content:detailContent}}>
+  return <VStack spacing={0} navigationTitle={active.name} navigationBarTitleDisplayMode="inline" toolbar={toolbar} onAppear={showHome} onDisappear={hideHome}>
     <ScrollView background={HOME_BG}>
       <VStack spacing={14} padding={{horizontal:16,top:12,bottom:24}}>
         {all.length>1?<HomeCard><HStack spacing={8}><HomeBadge icon="server.rack" color="#3485eb"/><Picker title="当前路由器" pickerStyle="menu" value={active.id} onChanged={(v:string)=>{setActive(v);onSwitch()}}>{all.map(c=><Text key={c.id} tag={c.id}>{c.name}</Text>)}</Picker></HStack></HomeCard>:null}

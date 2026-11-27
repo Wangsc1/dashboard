@@ -43,9 +43,9 @@ async function ready(c){await sample(c);return sample(c)}
    const resume=release;gate=null;assert.equal((await ready(next)).wrt.cpuMeta.cpu15.cacheKB,1472);resume();await flush();assert.equal((await sample(next)).wrt.cpuMeta.cpu15.mhz,1755.125)
    const c=device();await ready(c);secrets.set('neko_secret_'+c.id,'fixture-auth-change');assert.equal((await sample(c)).wrt.cpuMeta.cpu15,undefined);await flush();assert.equal((await sample(c)).wrt.cpuMeta.cpu15.mhz,1755.125)
  })
- await test('删除详情注释但保留未知/错误、主控系统信息label修复',()=>{
-   const s=home.CpuDetails({overview:null,histories:metrics.newHistory(),running:false,onDismiss(){}});assert.ok(!text(s).includes('频率/缓存为内核'));assert.ok(text(s).includes('/proc/stat未提供'))
-   const source=fs.readFileSync(path.join(root,'home-ui.tsx'),'utf8');assert.ok(source.includes('foregroundStyle="label">{title}'));assert.ok(source.includes('foregroundStyle="secondaryLabel" multilineTextAlignment="trailing">{value}'))
+ await test('系统信息卡片label修复与未知占位保留',()=>{
+   const s=home.CpuSystemCard({w:undefined});assert.ok(text(s).includes('系统版本未提供'));assert.ok(text(s).includes('Uptime'))
+   const source=fs.readFileSync(path.join(root,'home-ui.tsx'),'utf8');assert.ok(source.includes('foregroundStyle="label">{title}'));assert.ok(source.includes('multilineTextAlignment="trailing">{value}'))
  })
  console.log(count+' complete cpuinfo groups passed; mock IO only')
 })().catch(e=>{console.error(e);process.exitCode=1})

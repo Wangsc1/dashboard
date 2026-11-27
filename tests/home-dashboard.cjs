@@ -73,12 +73,12 @@ function fixture(url,init){if(url.endsWith('/cgi-bin/cgi-download'))return {stat
    h=appendHistory(h,1,1,[{id:'cpu'},{id:'cpu12',usage:30}]);assert.equal(h.cpu.cpu.length,0);assert.equal(h.cpu.cpu2,undefined);deep(h.cpu.cpu12,[30]);assert.equal(newHistory().up.length,0)
  })
  await test('主页设计元素和最新RAM/负载/磁盘布局：无Swap或重复全宽负载',()=>{
-   const view=render(home.HomeDashboard,{overview:null,histories:newHistory(),running:true,onCpu(){}},true)
+   const view=render(home.HomeDashboard,{overview:null,histories:newHistory(),running:true,cpuFlipped:false,onToggleCpu(){}},true)
    const cards=view.props.children;assert.equal(cards[0].type,home.CpuCard);deep(nodes(cards[1],home.TrafficCard).map(n=>n.props.heading),['上传','下载']);assert.equal(cards[2].props.children[0].type,home.RamCard);assert.equal(cards[2].props.children[1].type,home.LoadCard);assert.equal(cards[3].type,home.DiskCard)
    assert.equal(nodes(view,home.LoadCard).length,1);assert.ok(!fs.readFileSync(path.join(root,'home-ui.tsx'),'utf8').includes('Swap'))
  })
  await test('RAM/负载共同三槽等高约束、两列受限宽且双行底栏可随字体扩高',()=>{
-   const row=home.HomeDashboard({overview:null,histories:newHistory(),running:false,onCpu(){}}).props.children[2]
+   const row=home.HomeDashboard({overview:null,histories:newHistory(),running:false,cpuFlipped:false,onToggleCpu(){}}).props.children[2]
    assert.equal(row.props.fixedSize,undefined);assert.equal(row.props.spacing,14)
    const backgrounds=row.props.background.props.children;assert.equal(backgrounds.length,2);assert.equal(row.props.background.props.spacing,14)
    for(const bg of backgrounds){assert.equal(bg.type,'RoundedRectangle');assert.equal(bg.props.fill,'secondarySystemGroupedBackground');assert.equal(bg.props.cornerRadius,18);assert.ok(bg.props.stroke?.strokeStyle?.lineWidth===0.5);deep(bg.props.frame,{minWidth:0,maxWidth:'infinity'})}
@@ -95,32 +95,37 @@ function fixture(url,init){if(url.endsWith('/cgi-bin/cgi-download'))return {stat
    assert.equal(ram.props.bars.type,home.CapacityBars);assert.equal(home.CapacityBars(ram.props.bars.props).props.frame.maxHeight,24);assert.ok(nodes(load.props.bars,home.LoadBars).every(n=>home.LoadBars(n.props).props.frame.height===24))
    // Verifies native constraints, not actual iOS bounds or Dynamic Type rendering.
  })
- await test('CPU整卡点击面覆盖绘制层和留白，入口只触发一次；其他卡片不拦截',()=>{
-   let opens=0;const onOpen=()=>opens++
-   const cpu=home.CpuCard({history:[10,20],running:true,onOpen})
-   assert.equal(cpu.props.onOpen,onOpen)
-   const card=home.HomeCard(cpu.props),steps=card.props.modifiers.steps
-   deep(steps.map(s=>s[0]),['frame','padding','background','overlay'])
-   const hit=steps.at(-1)[1]
-   assert.equal(hit.type,'RoundedRectangle');assert.equal(hit.props.fill,'clear');assert.equal(hit.props.contentShape,'rect')
-   assert.equal(hit.props.frame,undefined,'overlay uses the complete padded base bounds, not a title-sized frame')
-   assert.equal(hit.props.onTapGesture,onOpen);assert.equal(card.props.onTapGesture,undefined,'no duplicate parent gesture')
-   hit.props.onTapGesture();assert.equal(opens,1)
-   assert.equal(hit.props.onDragGesture,undefined)
-   for(const other of [home.HomeCard({children:[]}),home.HomeCard(home.CpuCard({history:[],running:true,detail:true}).props)])assert.ok(!other.props.modifiers.steps.some(s=>s[0]==='overlay'))
+ await test('CPU正反整卡点击面覆盖绘制层和留白，入口只触发一次；其他卡片不拦截',()=>{
+   let flips=0;const onFlip=()=>flips++
+   for(const flipped of [false,true]){
+     const cpu=home.CpuCard({history:[10,20],running:true,flipped,onFlip})
+     const face=flipped?home.CpuSystemCard(nodes(cpu,home.CpuSystemCard)[0].props):nodes(cpu,home.HomeCard)[0]
+     assert.equal(face.props.onOpen,onFlip)
+     const card=home.HomeCard(face.props),steps=card.props.modifiers.steps
+     deep(steps.map(s=>s[0]),['frame','padding','background','overlay'])
+     const hit=steps.at(-1)[1]
+     assert.equal(hit.type,'RoundedRectangle');assert.equal(hit.props.fill,'clear');assert.equal(hit.props.contentShape,'rect')
+     assert.equal(hit.props.frame,undefined,'overlay uses the complete padded base bounds, not a title-sized frame')
+     assert.equal(hit.props.onTapGesture,onFlip);assert.equal(card.props.onTapGesture,undefined,'no duplicate parent gesture')
+     hit.props.onTapGesture()
+     assert.equal(hit.props.onDragGesture,undefined)
+   }
+   assert.equal(flips,2)
+   assert.ok(!home.HomeCard({children:[]}).props.modifiers.steps.some(s=>s[0]==='overlay'))
  })
- await test('主页/CPU详情使用精致iOS原生分组底色与统一18圆角细描边卡片，含活动连接卡片与徽章',()=>{
+ await test('主页使用精致iOS原生分组底色与统一18圆角细描边卡片，含活动连接卡片与徽章，已移除CPU详情页',()=>{
    assert.equal(home.HOME_BG,'systemGroupedBackground');const card=home.HomeCard({children:[]}),bg=card.props.modifiers.steps.find(s=>s[0]==='background')[1];assert.equal(bg.props.fill,'secondarySystemGroupedBackground');assert.equal(bg.props.cornerRadius,18);assert.equal(bg.props.stroke.strokeStyle.lineWidth,0.5);assert.equal(card.props.foregroundStyle,'label');assert.equal(card.props.shadow,undefined)
    const conn=home.HomeConnectionsCard({count:42,hosts:['example.com','github.com']});assert.equal(conn.type,home.HomeCard);assert.ok(text(conn).includes('活动连接'));assert.ok(text(conn).includes('example.com · github.com'));assert.equal(nodes(conn,home.HomeBadge).length,1)
-   const detail=home.CpuDetails({overview:null,histories:newHistory(),running:false,onDismiss(){}});assert.equal(nodes(detail,'ScrollView')[0].props.background,'systemGroupedBackground')
+   assert.equal(home.CpuDetails,undefined);assert.equal(home.LiveCpuDetails,undefined)
    const source=fs.readFileSync(path.join(root,'home-ui.tsx'),'utf8');assert.ok(!source.includes('gradient('));assert.ok(!source.includes('shadow='));assert.ok(source.includes('#17965b'));assert.ok(source.includes('#3485eb'))
  })
- await test('sheet全部唯一逻辑核可滚动到达，左上X调用原生关闭且保留下拉关闭',()=>{
-   const overview={wrt:{release:'OpenWrt',uptime:100,arch:'x86_64',kernel:'6.6.80',model:'Board',cpus:[{id:'cpu',usage:10},...Array.from({length:17},(_,i)=>({id:'cpu'+i,usage:i}))],cpuMeta:{}}}
-   let closed=0;const savedDismiss=scripting.Navigation.useDismiss;scripting.Navigation.useDismiss=()=>()=>{closed++};const sheet=home.CpuDetails({overview,histories:newHistory(),running:false});scripting.Navigation.useDismiss=savedDismiss;assert.equal(sheet.type,'NavigationStack');deep(sheet.props.presentationDetents,['large']);assert.equal(nodes(sheet,'ScrollView').length,1);const rowNodes=nodes(sheet,home.CoreRow);assert.equal(rowNodes.length,9);const ids=rowNodes.flatMap(r=>r.props.cpus.map(c=>c.id));assert.equal(ids.length,17);assert.equal(new Set(ids).size,17)
-   for(const label of ['Uptime','Arch','Cpu','Kernel','Board']) {const n=nodes(sheet,'Text').find(n=>text(n)===label);assert.ok(n,label);assert.equal(n.props.foregroundStyle,'label')}
-   const sc=nodes(sheet,'ScrollView')[0];const close=sc.props.toolbar.topBarLeading;assert.equal(close.type,'Button');assert.equal(close.props.systemImage,'xmark');assert.equal(close.props.accessibilityLabel,'关闭CPU详情');close.props.action();assert.equal(closed,1);assert.equal(sc.props.toolbar.topBarTrailing,undefined);assert.equal(sheet.props.presentationDragIndicator,'visible')
-   const core=home.CoreCard({cpu:{id:'cpu2'},history:[],running:false});assert.ok(text(core).includes('-- MHz'));assert.ok(text(core).includes('-- KB'))
+ await test('CPU卡片正面展示型号、翻转背面展示系统信息五项且字段颜色正确',()=>{
+   const w={release:'ImmortalWrt 25.12.1 r37978',uptime:7450599,arch:'x86_64',kernel:'6.12.94',model:'LENOVO 10MUS1LH00',cpuModel:'Intel(R) Xeon(R) E-2286M  CPU @ 2.40GHz',temperature:41,cpus:[{id:'cpu',usage:0.6},...Array.from({length:16},(_,i)=>({id:'cpu'+i,usage:0.1}))]}
+   const front=home.CpuCard({w,history:[0.6],running:false,flipped:false})
+   assert.ok(text(front).includes('Intel(R) Xeon(R) E-2286M CPU @ 2.40GHz'));assert.ok(text(front).includes('41.0 °C'));assert.equal(nodes(front,home.GridPlot).length,1)
+   const back=home.CpuSystemCard({w})
+   assert.ok(text(back).includes('ImmortalWrt 25.12.1 r37978'));assert.ok(text(back).includes('x86_64'));assert.ok(text(back).includes('16'));assert.ok(text(back).includes('6.12.94'));assert.ok(text(back).includes('LENOVO 10MUS1LH00'))
+   for(const label of ['Uptime','Arch','Cpu','Kernel','Board']) {const n=nodes(back,'Text').find(n=>text(n)===label);assert.ok(n,label);assert.equal(n.props.foregroundStyle,'label')}
  })
  await test('所有数值逐采样直接显示，无数字timer；曲线共用Canvas槽',async()=>{
    for(const running of [true,false])for(const value of [10,20,0,undefined,NaN]){
@@ -129,17 +134,19 @@ function fixture(url,init){if(url.endsWith('/cgi-bin/cgi-download'))return {stat
    }
    const chart=render(home.GridPlot,{samples:[10,20,40],tone:'#3485eb',percent:true,running:true},true);await flush();assert.equal(intervals.size,0);assert.equal(chart.type,load('plot-view').InlineCanvasPlot);unmount()
  })
- await test('CPU sheet开关/后台/切Tab: Root单采样链、详情共享样本、旧来源不覆盖',async()=>{
+ await test('CPU卡片翻转/后台/切Tab: Root单采样链、无sheet详情、切Tab与切换来源重置正面',async()=>{
    responder=fixture;store.set('neko_controllers_v1',[device]);store.set('neko_active_v1',device.id)
    const rootOwner=owner(app.Root),page=owner(app.OverviewPage);rootOwner.render({});await settle();rootOwner.render({});await settle()
    const props={active:device,version:0,selected:true,onSwitch(){}};let view=page.render(props);await settle();view=page.render(props);await flush()
-   const polling=()=>[...intervals.values()].filter(x=>x.ms===1000);assert.equal(polling().length,1)
-   nodes(view,home.HomeDashboard)[0].props.onCpu();view=page.render(props);await flush();assert.equal(view.props.sheet.isPresented,true);assert.equal(polling().length,1);assert.equal(nodes(view,home.HomeDashboard)[0].props.running,false);assert.equal(view.props.sheet.content.props.feed.value.running,true)
-   const before=calls.length;view.props.onDisappear();view=page.render(props);await flush();assert.equal(polling().length,1);assert.equal(calls.length,before)
-   emitScene('background');view=page.render(props);await flush();assert.equal(polling().length,0);assert.equal(view.props.sheet.content.props.feed.value.running,false)
+   const polling=()=>[...intervals.values()].filter(x=>x.ms===1000);assert.equal(polling().length,1);assert.equal(view.props.sheet,undefined)
+   nodes(view,home.HomeDashboard)[0].props.onToggleCpu();view=page.render(props);await flush();assert.equal(nodes(view,home.HomeDashboard)[0].props.cpuFlipped,true);assert.equal(polling().length,1);assert.equal(nodes(view,home.HomeDashboard)[0].props.running,true)
+   const dash=home.HomeDashboard(nodes(view,home.HomeDashboard)[0].props);assert.equal(nodes(dash,home.CpuCard)[0].props.running,false);assert.equal(nodes(dash,home.CpuCard)[0].props.flipped,true)
+   emitScene('background');view=page.render(props);await flush();assert.equal(polling().length,0)
    emitScene('active');view=page.render(props);await flush();assert.equal(polling().length,1)
-   view.props.sheet.onChanged(false);view=page.render(props);await flush();assert.equal(view.props.sheet.isPresented,false);assert.equal(polling().length,1);assert.equal(nodes(view,home.HomeDashboard)[0].props.running,true)
+   nodes(view,home.HomeDashboard)[0].props.onToggleCpu();view=page.render(props);await flush();assert.equal(nodes(view,home.HomeDashboard)[0].props.cpuFlipped,false)
+   nodes(view,home.HomeDashboard)[0].props.onToggleCpu();view=page.render(props);await flush();assert.equal(nodes(view,home.HomeDashboard)[0].props.cpuFlipped,true)
    page.render({...props,selected:false});await flush()
+   view=page.render(props);await flush();assert.equal(nodes(view,home.HomeDashboard)[0].props.cpuFlipped,false)
    const next={...props,active:{...device,url:'http://fresh-home.invalid'}};store.set('neko_controllers_v1',[next.active]);rootOwner.render({});await settle();rootOwner.render({});await settle();view=page.render(next);await flush();view=page.render(next);await flush();view=page.render(next);await flush();view=page.render(next);assert.equal(nodes(view,home.HomeDashboard)[0].props.histories.up.length,0)
    page.close();rootOwner.close();await settle();assert.equal(intervals.size,0);assert.equal(sceneListeners.size,0)
  })

@@ -1,4 +1,4 @@
-import { Button, Divider, Navigation, HStack, VStack, Text, Image, RoundedRectangle, Spacer, ScrollView, ZStack, Device, NavigationStack, modifiers, useState, useEffect, GeometryReader, useColorScheme } from "scripting"
+import { Divider, HStack, VStack, Text, Image, RoundedRectangle, Spacer, ZStack, Device, modifiers, GeometryReader, useColorScheme } from "scripting"
 import { Overview, WrtInfo, fmtBytes, fmtSpeed, fmtUptime } from "./api"
 import { CpuUsage, OverviewHistory } from "./openwrt-metrics"
 import { InlineCanvasPlot } from "./plot-view"
@@ -10,6 +10,22 @@ function hexTint(color:string,alpha:number):string {
   if(!m)return color
   const h=m[1].length===3?m[1].split('').map(c=>c+c).join(''):m[1]
   return `rgba(${parseInt(h.slice(0,2),16)},${parseInt(h.slice(2,4),16)},${parseInt(h.slice(4,6),16)},${alpha})`
+}
+function flipTransition(edge:"left"|"right"):any {
+  try {
+    const T=(globalThis as any).Transition
+    const fn=edge==="left"?T?.flipFromLeft:T?.flipFromRight
+    return typeof fn==="function"?fn.call(T,0.38):undefined
+  } catch { return undefined }
+}
+function flipAnimation(value:boolean):any {
+  try {
+    const A=(globalThis as any).Animation
+    if(typeof A?.smooth==="function")return {animation:A.smooth({duration:0.38}),value}
+    if(typeof A?.easeOut==="function")return {animation:A.easeOut(0.38),value}
+    if(typeof A?.default==="function")return {animation:A.default(),value}
+  } catch {}
+  return undefined
 }
 export function HomeBadge({icon,color}:{icon:string;color:string}) {
   return <Image systemName={icon} font={11.5} fontWeight="semibold" foregroundStyle={color as any} frame={{width:22,height:22}} background={<RoundedRectangle cornerRadius={7} fill={{light:hexTint(color,0.12),dark:hexTint(color,0.20)}}/>}/>
@@ -44,9 +60,24 @@ export function tempBadgeStyle(temp?:number):{fg:any;bg:any} {
 export function CpuBreakdown({cpu,running}:{cpu?:CpuUsage;running:boolean}) {
   return <HStack spacing={0} alignment="bottom"><HStack spacing={22}>{([['SYS',cpu?.system],['USER',cpu?.user],['STEAL',cpu?.steal]] as const).map(([title,value])=><VStack key={title} alignment="leading" spacing={3}><Text font={10} fontWeight="medium" foregroundStyle="secondaryLabel" lineLimit={1}>{title}</Text><MetricNumber value={value} digits={1} pointSize={14} running={running}/></VStack>)}</HStack><Spacer/><HStack alignment="lastTextBaseline" spacing={2}><MetricNumber running={running} value={cpu?.usage} digits={1} pointSize={24} tone="#3485eb"/><Text font={12} fontWeight="medium" foregroundStyle="#3485eb">%</Text></HStack></HStack>
 }
-export function CpuCard({w,history,running,onOpen,detail=false}:{w?:WrtInfo;history:number[];running:boolean;onOpen?:()=>void;detail?:boolean}) {
+export function CpuSystemCard({w,onFlip}:{w?:WrtInfo;onFlip?:()=>void}) {
+  const cores=w?.cpus?.filter(x=>x.id!=='cpu')??[]
+  const info=[['Uptime',w?fmtUptime(w.uptime,true):'--'],['Arch',w?.arch||'--'],['Cpu',cores.length?String(cores.length):'--'],['Kernel',w?.kernel||'--'],['Board',w?.model||'--']] as const
+  return <HomeCard onOpen={onFlip}><HStack spacing={8}><HomeBadge icon="info.circle" color="#3485eb"/><Text font={15} fontWeight="semibold" lineLimit={1} minimumScaleFactor={0.85}>{w?.release||'系统版本未提供'}</Text><Spacer/><Image systemName="arrow.triangle.2.circlepath" font={11} fontWeight="semibold" foregroundStyle="tertiaryLabel"/></HStack><VStack spacing={9.5}>{info.map(([title,value],i)=><VStack key={title} spacing={9.5}>{i>0?<Divider/>:null}<HStack><Text font={12.5} foregroundStyle="label">{title}</Text><Spacer/><Text font={12.5} foregroundStyle="secondaryLabel" lineLimit={1} minimumScaleFactor={0.85} multilineTextAlignment="trailing">{value}</Text></HStack></VStack>)}</VStack></HomeCard>
+}
+export function CpuCard({w,history,running,flipped=false,onFlip}:{w?:WrtInfo;history:number[];running:boolean;flipped?:boolean;onFlip?:()=>void}) {
   const temp=tempBadgeStyle(w?.temperature)
-  return <HomeCard onOpen={onOpen}><HStack spacing={8}><HomeBadge icon="cpu" color="#3485eb"/><Text font={detail?15:16} fontWeight="semibold" lineLimit={1}>{detail?w?.cpuModel||"CPU 型号未提供":"CPU"}</Text><Spacer/>{!detail?<HStack spacing={6}><HStack spacing={3} padding={{horizontal:8,vertical:3.5}} background={<RoundedRectangle cornerRadius={10} fill={temp.bg}/>}><Image systemName="thermometer.medium" font={10} foregroundStyle={temp.fg}/><Text font={11} fontWeight="bold" foregroundStyle={temp.fg}>{w?.temperature===undefined?"-- °C":`${w.temperature.toFixed(1)} °C`}</Text></HStack><Image systemName="chevron.right" font={11} fontWeight="semibold" foregroundStyle="tertiaryLabel"/></HStack>:null}</HStack><GridPlot samples={history} tone="#3485eb" area percent running={running} plotWidth={PLOT_FULL_W} elevated={detail}/><CpuBreakdown cpu={w?.cpus?.find(c=>c.id==='cpu')} running={running&&!detail}/></HomeCard>
+  const anim=flipAnimation(flipped)
+  const frontTrans=flipTransition("left")
+  const backTrans=flipTransition("right")
+  const cpuModel=w?.cpuModel?.replace(/\s+/g," ").trim()
+  return <ZStack {...(anim?{animation:anim}:{})}>{!flipped
+    ? <VStack key="cpu-front" spacing={0} {...(frontTrans?{transition:frontTrans}:{})}>
+        <HomeCard onOpen={onFlip}><VStack alignment="leading" spacing={4}><HStack spacing={8}><HomeBadge icon="cpu" color="#3485eb"/><Text font={16} fontWeight="semibold" lineLimit={1}>CPU</Text><Spacer/><HStack spacing={6}><HStack spacing={3} padding={{horizontal:8,vertical:3.5}} background={<RoundedRectangle cornerRadius={10} fill={temp.bg}/>}><Image systemName="thermometer.medium" font={10} foregroundStyle={temp.fg}/><Text font={11} fontWeight="bold" foregroundStyle={temp.fg}>{w?.temperature===undefined?"-- °C":`${w.temperature.toFixed(1)} °C`}</Text></HStack><Image systemName="arrow.triangle.2.circlepath" font={11} fontWeight="semibold" foregroundStyle="tertiaryLabel"/></HStack></HStack><Text font={12} foregroundStyle="secondaryLabel" lineLimit={1} minimumScaleFactor={0.82}>{cpuModel||(w?"CPU 型号未提供":"--")}</Text></VStack><GridPlot samples={history} tone="#3485eb" area percent running={running} plotWidth={PLOT_FULL_W}/><CpuBreakdown cpu={w?.cpus?.find(c=>c.id==='cpu')} running={running}/></HomeCard>
+      </VStack>
+    : <VStack key="cpu-back" spacing={0} {...(backTrans?{transition:backTrans}:{})}>
+        <CpuSystemCard w={w} onFlip={onFlip}/>
+      </VStack>}</ZStack>
 }
 export function TrafficCard({heading,rate,total,history,tone,running}:{heading:string;rate?:number;total?:number;history:number[];tone:string;running:boolean}) {
   const parts=rate===undefined?undefined:fmtSpeed(rate).split(' '),value=parts?Number(parts[0]):undefined,unit=parts?" "+parts.slice(1).join(' '):""
@@ -130,53 +161,7 @@ export function HomeConnectionsCard({count,hosts}:{count?:number;hosts:string[]}
     {hosts.length?<><Divider/><Text font={11.5} foregroundStyle="secondaryLabel" lineLimit={1}>{hosts.join(" · ")}</Text></>:null}
   </HomeCard>
 }
-export function HomeDashboard({overview,histories,running,onCpu}:{overview:Overview|null;histories:OverviewHistory;running:boolean;onCpu:()=>void}) {
+export function HomeDashboard({overview,histories,running,cpuFlipped=false,onToggleCpu}:{overview:Overview|null;histories:OverviewHistory;running:boolean;cpuFlipped?:boolean;onToggleCpu?:()=>void}) {
   const w=overview?.wrt
-  return <VStack spacing={14}><CpuCard w={w} history={histories.cpu.cpu??[]} running={running} onOpen={onCpu}/><HStack spacing={14} alignment="top"><TrafficCard heading="上传" rate={overview?.traffic.up} total={overview?.upTotal} history={histories.up} tone="#2dbf82" running={running}/><TrafficCard heading="下载" rate={overview?.traffic.down} total={overview?.downTotal} history={histories.down} tone="#27b1cf" running={running}/></HStack><HStack spacing={14} alignment="top" background={<HStack spacing={14}><RoundedRectangle cornerRadius={CARD_RADIUS} fill={PANEL} stroke={CARD_STROKE} frame={{minWidth:0,maxWidth:"infinity"}}/><RoundedRectangle cornerRadius={CARD_RADIUS} fill={PANEL} stroke={CARD_STROKE} frame={{minWidth:0,maxWidth:"infinity"}}/></HStack>}><RamCard w={w} running={running}/><LoadCard w={w}/></HStack><DiskCard w={w}/></VStack>
-}
-// A stable sheet owner receives samples through a local subscription. The presentation
-// content itself never changes identity on each poll; only this mounted body updates.
-export interface CpuDetailFrame { overview:Overview|null; histories:OverviewHistory; running:boolean }
-export interface CpuDetailFeed { value:CpuDetailFrame; subscribe(fn:(value:CpuDetailFrame,old:CpuDetailFrame)=>void):void; unsubscribe(fn:(value:CpuDetailFrame,old:CpuDetailFrame)=>void):void }
-// Plain per-owner feed: only the explicit LiveCpuDetails subscription updates UI.
-// Reference equality and synchronous listener snapshots match the existing feed contract.
-export function createCpuDetailFeed(initial:CpuDetailFrame):CpuDetailFeed & {setValue(value:CpuDetailFrame):void} {
-  const listeners=new Set<(value:CpuDetailFrame,old:CpuDetailFrame)=>void>()
-  return {
-    value:initial,
-    setValue(value){const old=this.value;this.value=value;if(value!==old)for(const fn of [...listeners])fn(value,old)},
-    subscribe(fn){listeners.add(fn)},
-    unsubscribe(fn){listeners.delete(fn)},
-  }
-}
-export function LiveCpuDetails({feed}:{feed:CpuDetailFeed}) {
-  const [frame,setFrame]=useState(()=>feed.value)
-  useEffect(()=>{
-    const changed=(value:CpuDetailFrame)=>setFrame(value)
-    feed.subscribe(changed);setFrame(feed.value)
-    return()=>{feed.unsubscribe(changed)}
-  },[feed])
-  return <CpuDetails overview={frame.overview} histories={frame.histories} running={frame.running}/>
-}
-export function CpuDetails({overview,histories,running}:{overview:Overview|null;histories:OverviewHistory;running:boolean}) {
-  const dismiss=Navigation.useDismiss()
-  const w=overview?.wrt,cores=w?.cpus?.filter(x=>x.id!=='cpu')??[],rows=Array.from({length:Math.ceil(cores.length/2)},(_,i)=>cores.slice(i*2,i*2+2))
-  const info=[['Uptime',w?fmtUptime(w.uptime,true):'--'],['Arch',w?.arch||'--'],['Cpu',cores.length?String(cores.length):'--'],['Kernel',w?.kernel||'--'],['Board',w?.model||'--']]
-  return <NavigationStack presentationDetents={['large']} presentationDragIndicator="visible" presentationContentInteraction="scrolls"><ScrollView navigationTitle="CPU" navigationBarTitleDisplayMode="inline" background={HOME_BG} toolbar={{topBarLeading:<Button title="" systemImage="xmark" accessibilityLabel="关闭CPU详情" action={dismiss}/>}}><VStack spacing={14} padding={{horizontal:16,top:12,bottom:24}}><HomeCard><HStack spacing={8}><HomeBadge icon="info.circle" color="#3485eb"/><Text font={15} fontWeight="semibold" lineLimit={1}>{w?.release||'系统版本未提供'}</Text></HStack><VStack spacing={7}>{info.map(([title,value],i)=><VStack key={title} spacing={7}>{i>0?<Divider/>:null}<HStack><Text font={12.5} foregroundStyle="label">{title}</Text><Spacer/><Text font={12.5} foregroundStyle="secondaryLabel" multilineTextAlignment="trailing">{value}</Text></HStack></VStack>)}</VStack></HomeCard><DetailCpuSummary key="summary" w={w} history={histories.cpu.cpu??[]} running={running}/>{rows.map(row=><CoreRow key={`core-${row[0].id}`} cpus={row} w={w} histories={histories} running={running}/>)}{!cores.length?<Text font={12} foregroundStyle="secondaryLabel">/proc/stat未提供逻辑核数据或当前账号无读取权限。</Text>:null}</VStack></ScrollView></NavigationStack>
-}
-// No whole-card/element snapshots: metadata and numeric values always use latest inputs.
-// Each shared plot owns a native TimelineCanvas created on component mount.
-export function CoreRow({cpus,w,histories,running}:{cpus:CpuUsage[];w?:WrtInfo;histories:OverviewHistory;running:boolean}) {
-  return <HStack key={`core-${cpus[0]?.id}`} spacing={14} alignment="top">{cpus.map(c=><CoreCard key={c.id} cpu={c} w={w} history={histories.cpu[c.id]??[]} running={running}/>)}{cpus.length===1?<Spacer frame={{minWidth:0,maxWidth:'infinity'}}/>:null}</HStack>
-}
-// Per-core plots share GridPlot and the single scheduler; no per-core timer.
-export function SampledCpuPlot({samples,running=false}:{samples:number[];running?:boolean}) {
-  return <GridPlot samples={samples} tone="#2dbf82" area percent plotHeight={76} running={running} plotWidth={PLOT_HALF_W} elevated/>
-}
-export function DetailCpuSummary({w,history,running}:{w?:WrtInfo;history:number[];running:boolean}) {
-  return <VStack key="summary"><CpuCard w={w} history={history} running={running} detail/></VStack>
-}
-export function CoreCard({cpu,w,history,running}:{cpu:CpuUsage;w?:WrtInfo;history:number[];running:boolean}) {
-  const meta=w?.cpuMeta?.[cpu.id]
-  return <HomeCard><HStack spacing={6}><Text font={11.5} fontWeight="semibold" foregroundStyle="secondaryLabel" padding={{horizontal:6,vertical:2}} background={<RoundedRectangle cornerRadius={6} fill="tertiarySystemFill"/>}>{cpu.id.toUpperCase()}</Text><Spacer/><Text font={17} fontWeight="semibold" foregroundStyle="#2dbf82" lineLimit={1} minimumScaleFactor={0.65}>{cpu.usage===undefined?"--%":`${cpu.usage.toFixed(1)}%`}</Text></HStack><SampledCpuPlot samples={history} running={running}/><HStack spacing={5}><VStack alignment="leading" spacing={3}><Text font={10} fontWeight="medium" foregroundStyle="secondaryLabel">频率</Text><Text font={11.5} fontWeight="semibold">{meta?.mhz===undefined?'-- MHz':`${meta.mhz.toFixed(0)} MHz`}</Text></VStack><Spacer/><VStack alignment="trailing" spacing={3}><Text font={10} fontWeight="medium" foregroundStyle="secondaryLabel">缓存大小</Text><Text font={11.5} fontWeight="semibold">{meta?.cacheKB===undefined?'-- KB':`${meta.cacheKB} KB`}</Text></VStack></HStack></HomeCard>
+  return <VStack spacing={14}><CpuCard w={w} history={histories.cpu.cpu??[]} running={running&&!cpuFlipped} flipped={cpuFlipped} onFlip={onToggleCpu}/><HStack spacing={14} alignment="top"><TrafficCard heading="上传" rate={overview?.traffic.up} total={overview?.upTotal} history={histories.up} tone="#2dbf82" running={running}/><TrafficCard heading="下载" rate={overview?.traffic.down} total={overview?.downTotal} history={histories.down} tone="#27b1cf" running={running}/></HStack><HStack spacing={14} alignment="top" background={<HStack spacing={14}><RoundedRectangle cornerRadius={CARD_RADIUS} fill={PANEL} stroke={CARD_STROKE} frame={{minWidth:0,maxWidth:"infinity"}}/><RoundedRectangle cornerRadius={CARD_RADIUS} fill={PANEL} stroke={CARD_STROKE} frame={{minWidth:0,maxWidth:"infinity"}}/></HStack>}><RamCard w={w} running={running}/><LoadCard w={w}/></HStack><DiskCard w={w}/></VStack>
 }
