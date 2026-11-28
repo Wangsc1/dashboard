@@ -99,10 +99,28 @@ function fixture(url,init){if(url.endsWith('/cgi-bin/cgi-download'))return {stat
    let flips=0;const onFlip=()=>flips++
    for(const flipped of [false,true]){
      const cpu=home.CpuCard({history:[10,20],running:true,flipped,onFlip})
-     const face=flipped?home.CpuSystemCard(nodes(cpu,home.CpuSystemCard)[0].props):nodes(cpu,home.HomeCard)[0]
+     assert.equal(cpu.props.frame.height,home.CPU_CARD_HEIGHT)
+     const [frontWrap,backWrap]=cpu.props.children
+     assert.equal(frontWrap.props.rotation3DEffect.degrees,flipped?180:0)
+     assert.equal(backWrap.props.rotation3DEffect.degrees,flipped?0:-180)
+     deep(frontWrap.props.rotation3DEffect.axis,{x:0,y:1,z:0})
+     deep(backWrap.props.rotation3DEffect.axis,{x:0,y:1,z:0})
+     assert.equal(frontWrap.props.rotation3DEffect.perspective,0.5)
+     assert.equal(backWrap.props.rotation3DEffect.perspective,0.5)
+     assert.equal(frontWrap.props.children[0].props.opacity,flipped?0:1)
+     assert.equal(backWrap.props.children[0].props.opacity,flipped?1:0)
+     assert.equal(frontWrap.props.zIndex,flipped?0:1)
+     assert.equal(backWrap.props.zIndex,flipped?1:0)
+     const frontFace=nodes(frontWrap,home.HomeCard)[0]
+     const backFace=home.CpuSystemCard(nodes(backWrap,home.CpuSystemCard)[0].props)
+     assert.equal(frontFace.props.fixedHeight,home.CPU_CARD_HEIGHT)
+     assert.equal(backFace.props.fixedHeight,home.CPU_CARD_HEIGHT)
+     assert.equal(frontFace.props.onOpen,flipped?undefined:onFlip)
+     assert.equal(backFace.props.onOpen,flipped?onFlip:undefined)
+     const face=flipped?backFace:frontFace
      assert.equal(face.props.onOpen,onFlip)
      const card=home.HomeCard(face.props),steps=card.props.modifiers.steps
-     deep(steps.map(s=>s[0]),['frame','padding','background','overlay'])
+     deep(steps.map(s=>s[0]),['frame','frame','padding','background','overlay'])
      const hit=steps.at(-1)[1]
      assert.equal(hit.type,'RoundedRectangle');assert.equal(hit.props.fill,'clear');assert.equal(hit.props.contentShape,'rect')
      assert.equal(hit.props.frame,undefined,'overlay uses the complete padded base bounds, not a title-sized frame')

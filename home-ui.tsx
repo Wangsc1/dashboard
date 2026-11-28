@@ -11,31 +11,43 @@ function hexTint(color:string,alpha:number):string {
   const h=m[1].length===3?m[1].split('').map(c=>c+c).join(''):m[1]
   return `rgba(${parseInt(h.slice(0,2),16)},${parseInt(h.slice(2,4),16)},${parseInt(h.slice(4,6),16)},${alpha})`
 }
-function flipTransition(edge:"left"|"right"):any {
-  try {
-    const T=(globalThis as any).Transition
-    const fn=edge==="left"?T?.flipFromLeft:T?.flipFromRight
-    return typeof fn==="function"?fn.call(T,0.38):undefined
-  } catch { return undefined }
+declare var Animation: any
+function animationApi(): any {
+  try { if (typeof Animation !== "undefined" && Animation) return Animation } catch {}
+  try { return (globalThis as any).Animation } catch {}
+  return undefined
 }
-function flipAnimation(value:boolean):any {
+function flipRotateAnimation(step: number): any {
   try {
-    const A=(globalThis as any).Animation
-    if(typeof A?.smooth==="function")return {animation:A.smooth({duration:0.38}),value}
-    if(typeof A?.easeOut==="function")return {animation:A.easeOut(0.38),value}
-    if(typeof A?.default==="function")return {animation:A.default(),value}
+    const A = animationApi()
+    if (typeof A?.smooth === "function") return { animation: A.smooth({ duration: 0.5 }), value: step }
+    if (typeof A?.easeOut === "function") return { animation: A.easeOut(0.45), value: step }
+    if (typeof A?.default === "function") return { animation: A.default(), value: step }
   } catch {}
   return undefined
 }
+function flipOpacityAnimation(step: number): any {
+  try {
+    const A = animationApi()
+    const base = typeof A?.linear === "function" ? A.linear(0.03) : undefined
+    if (base && typeof base.delay === "function") return { animation: base.delay(0.12), value: step }
+    if (base) return { animation: base, value: step }
+  } catch {}
+  return undefined
+}
+export const CPU_CARD_HEIGHT = 232
 export function HomeBadge({icon,color}:{icon:string;color:string}) {
   return <Image systemName={icon} font={11.5} fontWeight="semibold" foregroundStyle={color as any} frame={{width:22,height:22}} background={<RoundedRectangle cornerRadius={7} fill={{light:hexTint(color,0.12),dark:hexTint(color,0.20)}}/>}/>
 }
-export function HomeCard({children,onOpen}:{children?:any;onOpen?:()=>void}) {
-  const shell=modifiers().frame({minWidth:0,maxWidth:"infinity",alignment:"leading"}).padding(16).background(<RoundedRectangle cornerRadius={CARD_RADIUS} fill={PANEL} stroke={CARD_STROKE}/>)
+export function HomeCard({children,onOpen,fixedHeight}:{children?:any;onOpen?:()=>void;fixedHeight?:number}) {
+  const sized=fixedHeight!==undefined
+    ? modifiers().frame({minWidth:0,maxWidth:"infinity",alignment:"topLeading"}).frame({height:fixedHeight-32,alignment:"topLeading"})
+    : modifiers().frame({minWidth:0,maxWidth:"infinity",alignment:"leading"})
+  const shell=sized.padding(16).background(<RoundedRectangle cornerRadius={CARD_RADIUS} fill={PANEL} stroke={CARD_STROKE}/>)
   // Native hit plane ABOVE the native chart, sized after card padding/background.
   // A clear fill plus explicit contentShape includes chart, numbers and empty space.
   // Only tappable cards get this plane; a tap recognizer does not add a drag handler.
-  return <VStack alignment="leading" spacing={12} foregroundStyle={INK} font={13}
+  return <VStack alignment="leading" spacing={fixedHeight!==undefined?0:12} foregroundStyle={INK} font={13}
     modifiers={onOpen?shell.overlay(<RoundedRectangle cornerRadius={CARD_RADIUS} fill="clear" contentShape="rect" onTapGesture={onOpen}/>):shell}>{children}</VStack>
 }
 export function MetricNumber({value,unit="",pointSize=16,tone="label",digits=0,running=true}:{running?:boolean;value?:number;unit?:string;pointSize?:number;tone?:any;digits?:number}) {
@@ -63,21 +75,35 @@ export function CpuBreakdown({cpu,running}:{cpu?:CpuUsage;running:boolean}) {
 export function CpuSystemCard({w,onFlip}:{w?:WrtInfo;onFlip?:()=>void}) {
   const cores=w?.cpus?.filter(x=>x.id!=='cpu')??[]
   const info=[['Uptime',w?fmtUptime(w.uptime,true):'--'],['Arch',w?.arch||'--'],['Cpu',cores.length?String(cores.length):'--'],['Kernel',w?.kernel||'--'],['Board',w?.model||'--']] as const
-  return <HomeCard onOpen={onFlip}><HStack spacing={8}><HomeBadge icon="info.circle" color="#3485eb"/><Text font={15} fontWeight="semibold" lineLimit={1} minimumScaleFactor={0.85}>{w?.release||'系统版本未提供'}</Text><Spacer/><Image systemName="arrow.triangle.2.circlepath" font={11} fontWeight="semibold" foregroundStyle="tertiaryLabel"/></HStack><VStack spacing={9.5}>{info.map(([title,value],i)=><VStack key={title} spacing={9.5}>{i>0?<Divider/>:null}<HStack><Text font={12.5} foregroundStyle="label">{title}</Text><Spacer/><Text font={12.5} foregroundStyle="secondaryLabel" lineLimit={1} minimumScaleFactor={0.85} multilineTextAlignment="trailing">{value}</Text></HStack></VStack>)}</VStack></HomeCard>
+  const rows:any[]=[]
+  info.forEach(([title,value],i)=>{
+    if(i>0){rows.push(<Spacer key={`s0-${title}`}/>);rows.push(<Divider key={`d-${title}`}/>);rows.push(<Spacer key={`s1-${title}`}/>)}
+    rows.push(<HStack key={title}><Text font={12.5} foregroundStyle="label">{title}</Text><Spacer/><Text font={12.5} foregroundStyle="secondaryLabel" lineLimit={1} minimumScaleFactor={0.85} multilineTextAlignment="trailing">{value}</Text></HStack>)
+  })
+  return <HomeCard onOpen={onFlip} fixedHeight={CPU_CARD_HEIGHT}><HStack spacing={8}><HomeBadge icon="info.circle" color="#3485eb"/><Text font={15} fontWeight="semibold" lineLimit={1} minimumScaleFactor={0.85}>{w?.release||'系统版本未提供'}</Text><Spacer/><Image systemName="arrowshape.turn.up.left" font={11.5} fontWeight="semibold" foregroundStyle="tertiaryLabel"/></HStack><Spacer/>{rows}</HomeCard>
 }
 export function CpuCard({w,history,running,flipped=false,onFlip}:{w?:WrtInfo;history:number[];running:boolean;flipped?:boolean;onFlip?:()=>void}) {
   const temp=tempBadgeStyle(w?.temperature)
-  const anim=flipAnimation(flipped)
-  const frontTrans=flipTransition("left")
-  const backTrans=flipTransition("right")
+  const step=flipped?1:0
+  const rotAnim=flipRotateAnimation(step)
+  const opAnim=flipOpacityAnimation(step)
   const cpuModel=w?.cpuModel?.replace(/\s+/g," ").trim()
-  return <ZStack {...(anim?{animation:anim}:{})}>{!flipped
-    ? <VStack key="cpu-front" spacing={0} {...(frontTrans?{transition:frontTrans}:{})}>
-        <HomeCard onOpen={onFlip}><VStack alignment="leading" spacing={4}><HStack spacing={8}><HomeBadge icon="cpu" color="#3485eb"/><Text font={16} fontWeight="semibold" lineLimit={1}>CPU</Text><Spacer/><HStack spacing={6}><HStack spacing={3} padding={{horizontal:8,vertical:3.5}} background={<RoundedRectangle cornerRadius={10} fill={temp.bg}/>}><Image systemName="thermometer.medium" font={10} foregroundStyle={temp.fg}/><Text font={11} fontWeight="bold" foregroundStyle={temp.fg}>{w?.temperature===undefined?"-- °C":`${w.temperature.toFixed(1)} °C`}</Text></HStack><Image systemName="arrow.triangle.2.circlepath" font={11} fontWeight="semibold" foregroundStyle="tertiaryLabel"/></HStack></HStack><Text font={12} foregroundStyle="secondaryLabel" lineLimit={1} minimumScaleFactor={0.82}>{cpuModel||(w?"CPU 型号未提供":"--")}</Text></VStack><GridPlot samples={history} tone="#3485eb" area percent running={running} plotWidth={PLOT_FULL_W}/><CpuBreakdown cpu={w?.cpus?.find(c=>c.id==='cpu')} running={running}/></HomeCard>
+  return <ZStack frame={{height:CPU_CARD_HEIGHT}}>
+    <VStack spacing={0} zIndex={flipped?0:1}
+      rotation3DEffect={{degrees:flipped?180:0,axis:{x:0,y:1,z:0},perspective:0.5}}
+      {...(rotAnim?{animation:rotAnim}:{})}>
+      <VStack spacing={0} opacity={flipped?0:1} {...(opAnim?{animation:opAnim}:{})}>
+        <HomeCard onOpen={flipped?undefined:onFlip} fixedHeight={CPU_CARD_HEIGHT}><VStack alignment="leading" spacing={4}><HStack spacing={8}><HomeBadge icon="cpu" color="#3485eb"/><Text font={16} fontWeight="semibold" lineLimit={1}>CPU</Text><Spacer/><HStack spacing={6}><HStack spacing={3} padding={{horizontal:8,vertical:3.5}} background={<RoundedRectangle cornerRadius={10} fill={temp.bg}/>}><Image systemName="thermometer.medium" font={10} foregroundStyle={temp.fg}/><Text font={11} fontWeight="bold" foregroundStyle={temp.fg}>{w?.temperature===undefined?"-- °C":`${w.temperature.toFixed(1)} °C`}</Text></HStack><Image systemName="arrowshape.turn.up.left" font={11.5} fontWeight="semibold" foregroundStyle="tertiaryLabel"/></HStack></HStack><Text font={12} foregroundStyle="secondaryLabel" lineLimit={1} minimumScaleFactor={0.82}>{cpuModel||(w?"CPU 型号未提供":"--")}</Text></VStack><Spacer/><GridPlot samples={history} tone="#3485eb" plotHeight={92} area percent running={running} plotWidth={PLOT_FULL_W}/><Spacer/><CpuBreakdown cpu={w?.cpus?.find(c=>c.id==='cpu')} running={running}/></HomeCard>
       </VStack>
-    : <VStack key="cpu-back" spacing={0} {...(backTrans?{transition:backTrans}:{})}>
-        <CpuSystemCard w={w} onFlip={onFlip}/>
-      </VStack>}</ZStack>
+    </VStack>
+    <VStack spacing={0} zIndex={flipped?1:0}
+      rotation3DEffect={{degrees:flipped?0:-180,axis:{x:0,y:1,z:0},perspective:0.5}}
+      {...(rotAnim?{animation:rotAnim}:{})}>
+      <VStack spacing={0} opacity={flipped?1:0} {...(opAnim?{animation:opAnim}:{})}>
+        <CpuSystemCard w={w} onFlip={flipped?onFlip:undefined}/>
+      </VStack>
+    </VStack>
+  </ZStack>
 }
 export function TrafficCard({heading,rate,total,history,tone,running}:{heading:string;rate?:number;total?:number;history:number[];tone:string;running:boolean}) {
   const parts=rate===undefined?undefined:fmtSpeed(rate).split(' '),value=parts?Number(parts[0]):undefined,unit=parts?" "+parts.slice(1).join(' '):""
