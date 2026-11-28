@@ -51,7 +51,6 @@ const SCREEN_W:number|undefined=(Device as any)?.screen?.width
 const SIZED=typeof SCREEN_W==="number"&&SCREEN_W>112&&SCREEN_W<=600
 export const PLOT_FULL_W:number|undefined=SIZED?SCREEN_W-64:undefined
 export const PLOT_HALF_W:number|undefined=SIZED?(SCREEN_W-46)/2-32:undefined
-export const PLOT_STROKE=2
 export function GridPlot(props:{samples:number[];tone:string;plotHeight?:number;area?:boolean;running?:boolean;percent?:boolean;plotWidth?:number;elevated?:boolean}) {
   return <InlineCanvasPlot {...props}/>
 }
@@ -112,7 +111,7 @@ export const LOAD_TONES={light:["#17965b","#c16b13","#287ed6"],dark:["#39d98a","
 export function LoadBars({fraction,tone}:{fraction?:number;tone:string}) {
   const known=fraction!==undefined&&Number.isFinite(fraction)&&fraction>=0
   const height=known?24*Math.min(1,fraction):0
-  return <ZStack alignment="top" frame={{height:24}}><GeometryReader>{geometry=>{
+  return <ZStack alignment="top" frame={{height:24}}><GeometryReader>{(geometry:{size:{width:number;height:number}})=>{
     const W=Math.max(0,geometry.size.width),gap=W*2.5/144,bar=Math.max(0,(W-23*gap)/24)
     return <HStack spacing={gap} frame={{width:W,height:24}}>{Array.from({length:24},(_,i)=><ZStack key={String(i)} alignment="bottom" frame={{width:bar,height:24}}>
       <RoundedRectangle cornerRadius={Math.min(1.75,bar/2)} fill={{color:tone,opacity:0.12}} frame={{width:bar,height:24}}/>
@@ -149,7 +148,7 @@ export function LoadCard({w}:{w?:WrtInfo}) {
 export function DiskCapacityBar({used,size}:{used?:number;size?:number}) {
   const known=size!==undefined&&Number.isFinite(size)&&size>0&&used!==undefined&&Number.isFinite(used)&&used>=0
   const fraction=known?Math.min(1,used/size):undefined
-  return <GeometryReader modifiers={modifiers().frame({height:10}).frame({minWidth:0,maxWidth:"infinity"})}>{geometry=>{
+  return <GeometryReader modifiers={modifiers().frame({height:10}).frame({minWidth:0,maxWidth:"infinity"})}>{(geometry:{size:{width:number;height:number}})=>{
     const W=Math.max(1,geometry.size.width),count=50,gap=Math.min(2,W/(count*2)),cell=(W-gap*(count-1))/count,tone="#00bdc8"
     return <HStack spacing={gap} frame={{width:W,height:10}}>{Array.from({length:count},(_,i)=>{
       // A fractional final segment preserves the actual ratio instead of rounding up.
@@ -166,7 +165,7 @@ export function DiskCard({w}:{w?:WrtInfo}) {
   const pct=d&&d.size>0?Math.round(Math.min(1,d.used/d.size)*100):undefined
   return <HomeCard><HStack spacing={8}><HomeBadge icon="internaldrive" color="#00a8b5"/><Text font={15} fontWeight="semibold">磁盘</Text><Spacer/>{pct!==undefined?<Text font={13} fontWeight="semibold" foregroundStyle="#00a8b5">{`${pct}%`}</Text>:<Text font={12} foregroundStyle="secondaryLabel">容量未提供</Text>}</HStack>{d?<><HStack spacing={6}><Text font={13} fontWeight="medium" lineLimit={1}>{d.device||'文件系统'}</Text><Text font={10.5} foregroundStyle="secondaryLabel" padding={{horizontal:6,vertical:2}} background={<RoundedRectangle cornerRadius={6} fill="tertiarySystemFill"/>}>{d.mount||'--'}</Text><Spacer/><Text font={11.5} foregroundStyle="secondaryLabel">{fmtBytes(d.size)}</Text></HStack><DiskCapacityBar used={d.used} size={d.size}/><HStack><Text font={12} fontWeight="medium">{`已用 ${fmtBytes(d.used)}`}</Text><Spacer/><Text font={12} foregroundStyle="secondaryLabel">{`可用 ${fmtBytes(d.avail)}`}</Text></HStack></>:<Text font={12} foregroundStyle="secondaryLabel">LuCI未提供挂载点容量，或当前账号无只读权限。</Text>}</HomeCard>
 }
-export function HomeConnectionsCard({count,hosts}:{count?:number;hosts:string[]}) {
+export function HomeConnectionsCard({count}:{count?:number}) {
   return <HomeCard>
     <HStack spacing={8}>
       <HomeBadge icon="link" color="#9b6be3"/>
@@ -174,10 +173,9 @@ export function HomeConnectionsCard({count,hosts}:{count?:number;hosts:string[]}
       <Spacer/>
       <MetricNumber value={count} pointSize={20} tone="#9b6be3"/>
     </HStack>
-    {hosts.length?<><Divider/><Text font={11.5} foregroundStyle="secondaryLabel" lineLimit={1}>{hosts.join(" · ")}</Text></>:null}
   </HomeCard>
 }
 export function HomeDashboard({overview,histories,running,cpuFlipped=false,onToggleCpu}:{overview:Overview|null;histories:OverviewHistory;running:boolean;cpuFlipped?:boolean;onToggleCpu?:()=>void}) {
   const w=overview?.wrt
-  return <VStack spacing={14}><CpuCard w={w} history={histories.cpu.cpu??[]} running={running&&!cpuFlipped} flipped={cpuFlipped} onFlip={onToggleCpu}/><HStack spacing={14} alignment="top"><TrafficCard heading="上传" rate={overview?.traffic.up} total={overview?.upTotal} history={histories.up} tone="#2dbf82" running={running}/><TrafficCard heading="下载" rate={overview?.traffic.down} total={overview?.downTotal} history={histories.down} tone="#27b1cf" running={running}/></HStack><HStack spacing={14} alignment="top" background={<HStack spacing={14}><RoundedRectangle cornerRadius={CARD_RADIUS} fill={PANEL} stroke={CARD_STROKE} frame={{minWidth:0,maxWidth:"infinity"}}/><RoundedRectangle cornerRadius={CARD_RADIUS} fill={PANEL} stroke={CARD_STROKE} frame={{minWidth:0,maxWidth:"infinity"}}/></HStack>}><RamCard w={w} running={running}/><LoadCard w={w}/></HStack><DiskCard w={w}/></VStack>
+  return <VStack spacing={14}><CpuCard w={w} history={histories.cpu.cpu??[]} running={running} flipped={cpuFlipped} onFlip={onToggleCpu}/><HStack spacing={14} alignment="top"><TrafficCard heading="上传" rate={overview?.traffic.up} total={overview?.upTotal} history={histories.up} tone="#2dbf82" running={running}/><TrafficCard heading="下载" rate={overview?.traffic.down} total={overview?.downTotal} history={histories.down} tone="#27b1cf" running={running}/></HStack><HStack spacing={14} alignment="top" background={<HStack spacing={14}><RoundedRectangle cornerRadius={CARD_RADIUS} fill={PANEL} stroke={CARD_STROKE} frame={{minWidth:0,maxWidth:"infinity"}}/><RoundedRectangle cornerRadius={CARD_RADIUS} fill={PANEL} stroke={CARD_STROKE} frame={{minWidth:0,maxWidth:"infinity"}}/></HStack>}><RamCard w={w} running={running}/><LoadCard w={w}/></HStack><DiskCard w={w}/></VStack>
 }

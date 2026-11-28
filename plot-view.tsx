@@ -53,7 +53,7 @@ export function MountedCanvasPlot({samples,tone,plotHeight=96,plotWidth,area=fal
     frame={{minHeight:plotHeight,maxHeight:plotHeight,minWidth:0,maxWidth:'infinity'}}
     // Native appear/disappear are not visibility gates: TimelineCanvas pauses itself offscreen, and
     // business visibility is running/scene/unmount.
-    draw={(ctx,size)=>{
+    draw={(ctx:any,size:{width:number;height:number})=>{
       if(!host.alive)return
       advanceNativePlot(host.model,Date.now())
       drawNativePlot(ctx,size,host.model,host.background)

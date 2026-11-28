@@ -1,7 +1,7 @@
 import { CpuSampler, CpuUsage, CpuMeta, parseCpuInfo, thermalCelsius } from "./openwrt-metrics"
 
-import { getPreferences, customHeaders, recordEvent, controllerHealth, feedback } from "./preferences"
-export const VERSION = "1.135"
+import { getPreferences, customHeaders, recordEvent, controllerHealth } from "./preferences"
+export const VERSION = "1.136"
 
 export type Kind = "clash" | "openwrt"
 export type Plugin = "openclash" | "nikki" | "mihomo"
@@ -36,18 +36,24 @@ export function listControllers(): Controller[] { return (Storage.get<Controller
 function saveList(l: Controller[]) { Storage.set(K_LIST, l) }
 const clashCache: Record<string, { at: number; c: Controller | null }> = {}
 export function getSecret(id: string): string { return Keychain.get("neko_secret_" + id) ?? "" }
-export function normalizeUrl(u: string): string {
-  let s = u.trim().replace(/\/+$/, "")
-  if (s && !/^https?:\/\//i.test(s)) s = "http://" + s
-  return s
+function cleanHost(raw: string): string {
+  let s = raw.trim().replace(/^https?:\/\//i, "").replace(/[/?#].*$/, "")
+  const bracket = /^\[([^\]]+)\](?::\d+)?$/.exec(s)
+  if (bracket) return bracket[1].trim()
+  if (s.indexOf(":") === s.lastIndexOf(":")) s = s.replace(/:\d+$/, "")
+  return s.replace(/^\[|\]$/g, "").trim()
+}
+function formatUrlHost(host: string): string {
+  const clean = cleanHost(host)
+  return clean.includes(":") ? `[${clean}]` : clean
 }
 export function saveController(c: ControllerInput, password: string, clashSecret: string): Controller {
-  const host = c.host.trim().replace(/^https?:\/\//i, "").replace(/\/.*$/, "").replace(/:\d+$/, "")
+  const host = cleanHost(c.host)
   if (!host) throw new Error("请填写路由器地址")
   if (!Number.isInteger(c.port) || c.port < 1 || c.port > 65535) throw new Error("端口无效")
   const id = c.id ?? Date.now().toString(36) + Math.random().toString(36).slice(2, 6)
   const defPort = c.https ? 443 : 80
-  const url = `${c.https ? "https" : "http"}://${host.includes(":") ? "[" + host + "]" : host}${c.port === defPort ? "" : ":" + c.port}`
+  const url = `${c.https ? "https" : "http"}://${formatUrlHost(host)}${c.port === defPort ? "" : ":" + c.port}`
   const item: Controller = { id, name: c.name.trim() || host, kind: "openwrt", url, username: c.username.trim() || "root",
     host, port: c.port, https: c.https, plugin: c.plugin, auto: c.auto, cport: c.cport }
   const l = listControllers()
@@ -74,7 +80,7 @@ export function getActive(): Controller | null {
   const l = listControllers(); const id = Storage.get<string>(K_ACTIVE)
   return l.find(c => c.id === id) ?? l[0] ?? null
 }
-export function setActive(id: string) { Storage.set(K_ACTIVE, id); feedback(); recordEvent("switch", true) }
+export function setActive(id: string) { Storage.set(K_ACTIVE, id); recordEvent("switch", true) }
 
 class ControllerHTTPError extends Error {}
 async function http(c: Controller, path: string, init: { method?: string; body?: any; timeout?: number; headers?: Record<string, string>; signal?: AbortController["signal"]; response?: "ack"|"empty"|"dns" } = {}): Promise<any> {
@@ -223,9 +229,9 @@ async function ubusBatchRaw(c: Controller, sid: string, calls: UbusCall[], signa
   recordEvent("ubus", true)
   return out
 }
-async function ubusBatch(c: Controller, calls: UbusCall[], signal?: AbortController["signal"]): Promise<any[]> {
+async function ubusBatch(c: Controller, calls: UbusCall[], signal?: AbortController["signal"], auth = overviewSource(c)): Promise<any[]> {
   let sid = sessions[c.id]?.sid
-  if (!sid || sessions[c.id].auth !== overviewSource(c) || Date.now() - sessions[c.id].at > 50 * 60 * 1000) sid = await wrtLogin(c)
+  if (!sid || sessions[c.id].auth !== auth || Date.now() - sessions[c.id].at > 50 * 60 * 1000) sid = await wrtLogin(c)
   try { return await ubusBatchRaw(c, sid, calls, signal) } catch (e: any) {
     if (String(e?.message) !== "ACCESS") throw e
     return await ubusBatchRaw(c, await wrtLogin(c), calls, signal)
@@ -248,7 +254,7 @@ const overviewAbort:Record<string,AbortController|undefined>={}
 // rpcd file.read reads only 4096 bytes for st_size=0 (/proc). Never use it for cpuinfo.
 // Fixed path only; does not relax Nikki's path validation or grant any new ACL.
 const CPUINFO_MAX_BYTES=2*1024*1024
-const cpuInfoCache:Record<string,{at:number;ids:string;meta:ReturnType<typeof parseCpuInfo>;pending?:Promise<void>;abort?:AbortController}>={}
+const cpuInfoCache:Record<string,{at:number;loaded?:boolean;ids:string;meta:ReturnType<typeof parseCpuInfo>;pending?:Promise<void>;abort?:AbortController}>={}
 async function readCompleteCpuInfo(c:Controller,ids:string[],abort:AbortController):Promise<ReturnType<typeof parseCpuInfo>> {
   let sid=sessions[c.id]?.sid
   if(!sid||sessions[c.id].auth!==overviewSource(c)||Date.now()-sessions[c.id].at>50*60*1000)sid=await wrtLogin(c)
@@ -277,29 +283,29 @@ async function readCompleteCpuInfo(c:Controller,ids:string[],abort:AbortControll
     return meta
   }catch(e){try{await reader.cancel()}catch{}throw e}finally{reader.releaseLock?.()}
 }
-function cpuInfoSnapshot(c:Controller,ids:string[],epoch:number):ReturnType<typeof parseCpuInfo> {
-  const key=overviewSource(c),identity=ids.join(",")
+function cpuInfoSnapshot(c:Controller,ids:string[],epoch:number,rebooted=false,key=overviewSource(c)):ReturnType<typeof parseCpuInfo> {
+  const identity=ids.join(",")
   let entry=cpuInfoCache[key]
-  if(!entry||entry.ids!==identity){entry?.abort?.abort();entry={at:0,ids:identity,meta:{cores:{}}};cpuInfoCache[key]=entry}
-  if(!entry.pending&&Date.now()-entry.at>=5000&&ids.length){
+  if(!entry||entry.ids!==identity||rebooted){entry?.abort?.abort();entry={at:0,loaded:false,ids:identity,meta:{cores:{}}};cpuInfoCache[key]=entry}
+  if(!entry.loaded&&!entry.pending&&Date.now()-entry.at>=5000&&ids.length){
     const current=entry,abort=new AbortController();current.abort=abort;current.at=Date.now()
     const pending=readCompleteCpuInfo(c,ids,abort).then(meta=>{
-      if(cpuInfoCache[key]===current&&!abort.signal.aborted&&(samplingEpoch[key]??0)===epoch)current.meta=meta
-    }).catch(()=>{if(cpuInfoCache[key]===current&&!abort.signal.aborted){current.meta={cores:{}};current.at=Date.now()+10000}}).finally(()=>{
+      if(cpuInfoCache[key]===current&&!abort.signal.aborted&&(samplingEpoch[key]??0)===epoch){current.meta=meta;current.loaded=true}
+    }).catch(()=>{if(cpuInfoCache[key]===current&&!abort.signal.aborted){current.meta={cores:{}};current.loaded=false;current.at=Date.now()+10000}}).finally(()=>{
       if(current.pending===pending){current.pending=undefined;current.abort=undefined}
     });current.pending=pending
   }
-  // Metadata IO never delays the one-second usage sampling loop.
+  // Metadata IO never delays the one-second usage sampling loop; once verified for this boot/topology, reuse without 5s polling.
   return entry.meta
 }
-export function resetOverviewSampling(c:Controller, key=overviewSource(c)) { overviewAbort[key]?.abort();delete cpuSamplers[key];delete ratePrevious[key];samplingEpoch[key]=(samplingEpoch[key]??0)+1;const info=cpuInfoCache[key];if(info){info.abort?.abort();info.at=0} }
+export function resetOverviewSampling(c:Controller, key=overviewSource(c)) { overviewAbort[key]?.abort();delete cpuSamplers[key];delete ratePrevious[key];samplingEpoch[key]=(samplingEpoch[key]??0)+1;const info=cpuInfoCache[key];if(info){info.abort?.abort();if(!info.loaded)info.at=0} }
 function mountUsage(r:any):DiskUsage|null {
   const list:any[]=Array.isArray(r?.result)?r.result:[]
   const m=list.find(x=>x.mount==="/overlay")??list.find(x=>x.mount==="/")
   return m&&typeof m.size==="number"&&m.size>0&&typeof m.avail==="number" ? {size:m.size,used:Math.max(0,m.size-m.avail),avail:m.avail,mount:String(m.mount),device:typeof m.device==="string"?m.device:undefined}:null
 }
-async function wrtOverview(c: Controller, signal?: AbortController["signal"]): Promise<Overview> {
-  const key=overviewSource(c), cached=slowCache[key], stale=!cached||Date.now()-cached.at>60000
+async function wrtOverview(c: Controller, signal?: AbortController["signal"], key = overviewSource(c)): Promise<Overview> {
+  const cached=slowCache[key], stale=!cached||Date.now()-cached.at>60000
   const epoch=samplingEpoch[key]??0, sampler=cpuSamplers[key]??(cpuSamplers[key]=new CpuSampler())
   if(Object.keys(cpuSamplers).length>16){const old=Object.keys(cpuSamplers).find(k=>k!==key);if(old){delete cpuSamplers[old];delete ratePrevious[old];delete slowCache[old];cpuInfoCache[old]?.abort?.abort();delete cpuInfoCache[old]}}
   const zones=cached?.thermal??[]
@@ -308,7 +314,7 @@ async function wrtOverview(c: Controller, signal?: AbortController["signal"]): P
     ...zones.flatMap(z=>[["file","read",{path:`/sys/class/thermal/${z}/type`}],["file","read",{path:`/sys/class/thermal/${z}/temp`}]] as UbusCall[]),
     ...(stale?[["system","board"],["network.interface","dump"],["file","list",{path:"/sys/class/thermal"}],["file","read",{path:"/etc/openwrt_release"}],["luci","getMountPoints"]] as UbusCall[]:[]),
   ]
-  const r=await ubusBatch(c,calls,signal)
+  const r=await ubusBatch(c,calls,signal,key)
   const info=r[0],devs=r[1]??{},stat=r[2]??{},ct=r[3]??{}
   if(!info)throw new Error("路由器未返回系统信息")
   // 同id改地址/认证后返回的旧响应不得进入任何新来源缓存。
@@ -323,13 +329,14 @@ async function wrtOverview(c: Controller, signal?: AbortController["signal"]): P
   }
   const slow=slowCache[key]??cached!,board=slow.board,dump=slow.dump,wan=pickWan(dump),st=devs?.[wan.device]?.statistics??{}
   const rx=num(st.rx_bytes),tx=num(st.tx_bytes),now=Date.now(),prev=ratePrevious[key]
+  const rebooted=!!(prev&&num(info.uptime)<prev.uptime)
   let up=0,down=0,keep=false
-  if(prev&&num(info.uptime)>=prev.uptime&&now>prev.t&&rx>=prev.rx&&tx>=prev.tx&&now-prev.t<600000){
+  if(prev&&!rebooted&&now>prev.t&&rx>=prev.rx&&tx>=prev.tx&&now-prev.t<600000){
     const dt=(now-prev.t)/1000
     if(dt<0.5){up=prev.up;down=prev.down;keep=true}else{down=(rx-prev.rx)/dt;up=(tx-prev.tx)/dt;if(down>MAX_RATE||up>MAX_RATE){up=prev.up;down=prev.down}}
   }
   if(!keep)ratePrevious[key]={t:now,rx,tx,up,down,uptime:num(info.uptime)}
-  const cpus=sampler.sample(String(stat.data??""),typeof info.uptime==="number"?info.uptime:undefined),meta=cpuInfoSnapshot(c,cpus.filter(x=>x.id!=="cpu").map(x=>x.id),epoch)
+  const cpus=sampler.sample(String(stat.data??""),typeof info.uptime==="number"?info.uptime:undefined),meta=cpuInfoSnapshot(c,cpus.filter(x=>x.id!=="cpu").map(x=>x.id),epoch,rebooted,key)
   let temperature:number|undefined
   for(let i=0;i<zones.length;i++){const value=thermalCelsius(String(r[4+i*2]?.data??""),String(r[5+i*2]?.data??""));if(value!==undefined){temperature=value;break}}
   return {version:String(board.release?.description??""),mode:"",traffic:{up,down},upTotal:tx,downTotal:rx,
@@ -367,7 +374,7 @@ export async function resolveClash(c: Controller): Promise<Controller> {
 async function resolveClashOnce(c: Controller): Promise<Controller> {
   const hit = clashCache[c.id]
   if (hit && Date.now() - hit.at < 60000 && hit.c) return hit.c
-  const host = c.host ?? c.url.replace(/^https?:\/\//, "").replace(/:\d+$/, "")
+  const host = cleanHost(c.host ?? c.url)
   let port = c.cport ?? 9090, secret = getClashSecret(c.id)
   if (c.auto !== false) {
     const u = UCI[c.plugin ?? "openclash"]
@@ -382,7 +389,7 @@ async function resolveClashOnce(c: Controller): Promise<Controller> {
   }
   const id = c.id + "~clash"
   Keychain.set("neko_secret_" + id, secret)
-  const cc: Controller = { id, name: c.name, kind: "clash", url: `http://${host.includes(":") ? "[" + host + "]" : host}:${port}` }
+  const cc: Controller = { id, name: c.name, kind: "clash", url: `http://${formatUrlHost(host)}:${port}` }
   recordEvent(c.auto !== false ? "discovery" : "manual", true)
   clashCache[c.id] = { at: Date.now(), c: cc }
   return cc
@@ -394,7 +401,7 @@ export async function loadOverview(c: Controller): Promise<Overview> {
     let o:Overview
     if(c.kind==="openwrt"){
       const key=overviewSource(c)
-      if(!overviewPending[key]){const abort=new AbortController();overviewAbort[key]=abort;const pending=wrtOverview(c,abort.signal);overviewPending[key]=pending;void pending.finally(()=>{if(overviewPending[key]===pending){delete overviewPending[key];delete overviewAbort[key]}}).catch(()=>{})}
+      if(!overviewPending[key]){const abort=new AbortController();overviewAbort[key]=abort;const pending=wrtOverview(c,abort.signal,key);overviewPending[key]=pending;void pending.finally(()=>{if(overviewPending[key]===pending){delete overviewPending[key];delete overviewAbort[key]}}).catch(()=>{})}
       o=await overviewPending[key]!
     }else o=await loadClashOverview(c)
     controllerHealth[c.id] = true; return o
@@ -419,7 +426,7 @@ export async function loadClashOverview(c0: Controller): Promise<Overview> {
 }
 
 export const CLASH_MODES = [["rule", "规则"], ["global", "全局"], ["direct", "直连"]]
-export async function setMode(c: Controller, mode: string) { await patchConfig(c, { mode }); feedback() }
+export async function setMode(c: Controller, mode: string) { await patchConfig(c, { mode }) }
 
 export async function loadGroups(c0: Controller, options: { includeGlobal?: boolean } = {}): Promise<Group[]> {
   const c = await cc(c0)
@@ -500,7 +507,6 @@ export async function loadGroups(c0: Controller, options: { includeGlobal?: bool
 export async function selectProxy(c0: Controller, group: string, name: string) {
   const c = await cc(c0)
   await http(c, "/proxies/" + enc(group), { method: "PUT", body: { name } })
-  feedback()
   if (getPreferences().disconnectOnSwitch) {
     try { await closeAllConnections(c) } catch { throw new Error("代理已切换，但断开旧连接失败，请手动检查连接") }
   }
@@ -592,6 +598,11 @@ export async function testGroup(c0: Controller, g: Group, onProgress?: (name: st
   return res
 }
 
+function joinHostPort(ip: unknown, port: unknown): string {
+  const h = String(ip ?? ""), p = String(port ?? "")
+  if (!p) return h
+  return h.includes(":") && !h.startsWith("[") ? `[${h}]:${p}` : `${h}:${p}`
+}
 export async function loadConnections(c0: Controller, signal?: AbortController["signal"]): Promise<Conn[]> {
   const c = await cc(c0)
   if (signal?.aborted) throw new Error("Connection read cancelled")
@@ -604,13 +615,14 @@ export async function loadConnections(c0: Controller, signal?: AbortController["
       const m = x.metadata ?? {}
       return {
         sourceIP: String(m.sourceIP ?? ""), inboundType: String(m.type ?? ""), chains: (x.chains ?? []).slice().reverse().map(String),
-        id: String(x.id), host: String(m.host || m.destinationIP || "-"), src: `${m.sourceIP ?? ""}${m.sourcePort ? ":" + m.sourcePort : ""}`,
-        dst: `${m.destinationIP ?? ""}${m.destinationPort ? ":" + m.destinationPort : ""}`, network: String(m.network ?? "").toUpperCase(),
+        id: String(x.id), host: String(m.host || m.destinationIP || "-"), src: joinHostPort(m.sourceIP, m.sourcePort),
+        dst: joinHostPort(m.destinationIP, m.destinationPort), network: String(m.network ?? "").toUpperCase(),
         rule: [x.rule, x.rulePayload].filter(Boolean).join(" · "), ruleType: String(x.rule ?? ""), rulePayload: String(x.rulePayload ?? ""), chain: (x.chains ?? []).slice().reverse().join(" → "),
         up: num(x.upload), down: num(x.download), start: Date.parse(x.start) || 0,
       }
     })
   }
+  return []
 }
 
 // Read-only point-in-time view; does not publish to ConnectionHistory or sampling owners.
@@ -621,18 +633,6 @@ export async function loadProxyNodeConnections(c: Controller, name: string): Pro
   const connections = (await loadConnections(c)).filter(x => x.chains?.includes(name))
   return { name, at: Date.now(), connections,
     upload: connections.reduce((sum,x) => sum+x.up,0), download: connections.reduce((sum,x) => sum+x.down,0) }
-}
-
-export async function loadConnectionHosts(c0: Controller, limit = 20): Promise<string[]> {
-  const c = await cc(c0)
-  if (c.kind !== "clash") return []
-  const j = await http(c, "/connections")
-  const out: string[] = [], seen = new Set<string>()
-  for (const x of (j.connections ?? [])) {
-    const m = x?.metadata ?? {}, h = String(m.host || m.destinationIP || "")
-    if (h && !seen.has(h)) { seen.add(h); out.push(h); if (out.length >= limit) break }
-  }
-  return out
 }
 export async function closeConnection(c: Controller, id: string) { await http(await cc(c), "/connections/" + enc(id), { method: "DELETE" }) }
 export async function closeAllConnections(c: Controller) {
@@ -743,13 +743,6 @@ export function fmtParts(n: number, perSec = false, decimals?: number): [string,
   return [x.toFixed(decimals ?? (i === 0 ? 0 : perSec && i === 1 ? 1 : 2)), u[i] + (perSec ? "/s" : "")]
 }
 export const fmtSpeed = (n: number) => fmtBytes(n) + "/s"
-export function fmtDuration(startMs: number): string {
-  if (!startMs) return "-"
-  const s = Math.max(0, Math.floor((Date.now() - startMs) / 1000))
-  if (s < 60) return s + "秒"
-  if (s < 3600) return Math.floor(s / 60) + "分"
-  return Math.floor(s / 3600) + "时" + Math.floor(s % 3600 / 60) + "分"
-}
 export function delayColor(ms: number | undefined): string {
   if (ms === undefined) return "secondaryLabel"
   if (ms <= 0) return "systemRed"
@@ -1018,7 +1011,7 @@ export class NikkiManagementError extends Error {}
 const nikkiFail = (message:string):never => { throw new NikkiManagementError(message) }
 const nikkiSnapshots = new WeakMap<NikkiManagement,{source:string; values:any}>()
 const nikkiBusy = new Set<string>()
-const nikkiSource = (c:Controller) => [c.id,c.kind,c.plugin,c.url,c.username].join("|")
+const nikkiSource = (c:Controller) => [c.id,c.kind,c.plugin,c.url,c.username,overviewSource(c)].join("|")
 function nikkiID(id:string) { if (!/^[a-zA-Z0-9_]+$/.test(id)) nikkiFail("标识无效") }
 function nikkiFilename(name:string) { if (!name || name.length>255 || /[:\/\\\x00-\x1f\x7f]/.test(name) || name==="." || name===".." || !/\.ya?ml$/i.test(name)) nikkiFail("配置文件名无效") }
 export function nikkiFilePath(key:string) {
@@ -1313,11 +1306,6 @@ export async function saveDockerSettings(c: Controller, s: { logLevel: string; h
     async () => { if (drop.length && await find("proxies")) await ubus(c, "uci", "delete", { config: "dockerd", section: "proxies", options: drop }) },
   ])
   await ubus(c, "rc", "init", { name: "dockerd", action: "restart" })
-}
-export async function loadContainerPolicy(c: Controller, id: string): Promise<string> {
-  if (!/^[0-9a-f]{12,64}$/.test(id)) throw new Error("容器标识无效")
-  const b = dockerBody(await ubus(c, "docker.container", "inspect", { id, query: {} }))
-  return String(b?.HostConfig?.RestartPolicy?.Name || "no")
 }
 export async function saveContainerPolicy(c: Controller, id: string, name: string) {
   if (!/^[0-9a-f]{12,64}$/.test(id)) throw new Error("容器标识无效")

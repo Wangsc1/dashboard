@@ -6,9 +6,10 @@ declare module "scripting" {
   export const Device: {screen:{width:number;height:number;scale:number};colorScheme:"light"|"dark"};
   export const GeometryReader: any, gradient: any, Divider:any;
   export function Editor(props:{controller:EditorController;scriptName?:string;showAccessoryView?:boolean;disabled?:boolean;frame?:{maxWidth?:string|number;maxHeight?:string|number}}):any;
-  export const AppEvents: { scenePhase: { addListener(fn: (phase: "active" | "inactive" | "background") => void): void; removeListener(fn: (phase: "active" | "inactive" | "background") => void): void } }, Safari: any, LazyVStack: any, TabView: any, Tab: any, Slider: any, Transition: any, Circle: any, Animation: any, withAnimation: any, ProgressView: any, RoundedRectangle: any, ScrollView: any, SVG: any, ZStack: any, modifiers: any, Image: any, Menu: any, Button: any, ForEach: any, Form: any, HStack: any, Label: any, Navigation: any, NavigationLink: any, NavigationStack: any, NavigationDestination: any, Picker: any, Script: any, Section: any, SecureField: any, Spacer: any, Text: any, TextField: any, Toggle: any, VStack: any
+  export const AppEvents: { scenePhase: { addListener(fn: (phase: "active" | "inactive" | "background") => void): void; removeListener(fn: (phase: "active" | "inactive" | "background") => void): void } }, Safari: any, LazyVStack: any, TabView: any, Tab: any, Slider: any, Transition: any, Circle: any, Animation: any, withAnimation: any, ProgressView: any, RoundedRectangle: any, ScrollView: any, SVG: any, ZStack: any, TimelineCanvas: any, modifiers: any, Image: any, Menu: any, Button: any, ForEach: any, Form: any, HStack: any, Label: any, Navigation: any, NavigationLink: any, NavigationStack: any, NavigationDestination: any, Picker: any, Script: any, Section: any, SecureField: any, Spacer: any, Text: any, TextField: any, Toggle: any, VStack: any
   export function useObservable<T>(v: T | (() => T)): { value: T; setValue(v: T): void; subscribe(fn: (v: T, old: T) => void): void; unsubscribe(fn: (v: T, old: T) => void): void }
   export function useColorScheme(): "light"|"dark";
+  export function useRef<T>(v: T): { current: T }
   export function useMemo<T>(fn: () => T, deps: any[]): T
   export function useEffect(f: any, d?: any): void
   export function useState<T>(v: T | (() => T)): [T, (v: T | ((p: T) => T)) => void]

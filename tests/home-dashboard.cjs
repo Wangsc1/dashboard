@@ -135,7 +135,7 @@ function fixture(url,init){if(url.endsWith('/cgi-bin/cgi-download'))return {stat
  })
  await test('主页使用精致iOS原生分组底色与统一18圆角细描边卡片，含活动连接卡片与徽章，已移除CPU详情页',()=>{
    assert.equal(home.HOME_BG,'systemGroupedBackground');const card=home.HomeCard({children:[]}),bg=card.props.modifiers.steps.find(s=>s[0]==='background')[1];assert.equal(bg.props.fill,'secondarySystemGroupedBackground');assert.equal(bg.props.cornerRadius,18);assert.equal(bg.props.stroke.strokeStyle.lineWidth,0.5);assert.equal(card.props.foregroundStyle,'label');assert.equal(card.props.shadow,undefined)
-   const conn=home.HomeConnectionsCard({count:42,hosts:['example.com','github.com']});assert.equal(conn.type,home.HomeCard);assert.ok(text(conn).includes('活动连接'));assert.ok(text(conn).includes('example.com · github.com'));assert.equal(nodes(conn,home.HomeBadge).length,1)
+   const conn=home.HomeConnectionsCard({count:42});assert.equal(conn.type,home.HomeCard);assert.ok(text(conn).includes('活动连接'));assert.equal(nodes(conn,home.MetricNumber)[0].props.value,42);assert.equal(nodes(conn,home.HomeBadge).length,1)
    assert.equal(home.CpuDetails,undefined);assert.equal(home.LiveCpuDetails,undefined)
    const source=fs.readFileSync(path.join(root,'home-ui.tsx'),'utf8');assert.ok(!source.includes('gradient('));assert.ok(!source.includes('shadow='));assert.ok(source.includes('#17965b'));assert.ok(source.includes('#3485eb'))
  })
@@ -160,7 +160,7 @@ function fixture(url,init){if(url.endsWith('/cgi-bin/cgi-download'))return {stat
    const props={active:device,version:0,selected:true,onSwitch(){}};let view=page.render(props);await settle();view=page.render(props);await flush()
    const polling=()=>[...intervals.values()].filter(x=>x.ms===1000);assert.equal(polling().length,1);assert.equal(view.props.sheet,undefined)
    nodes(view,home.HomeDashboard)[0].props.onToggleCpu();view=page.render(props);await flush();assert.equal(nodes(view,home.HomeDashboard)[0].props.cpuFlipped,true);assert.equal(polling().length,1);assert.equal(nodes(view,home.HomeDashboard)[0].props.running,true)
-   const dash=home.HomeDashboard(nodes(view,home.HomeDashboard)[0].props);assert.equal(nodes(dash,home.CpuCard)[0].props.running,false);assert.equal(nodes(dash,home.CpuCard)[0].props.flipped,true)
+   const dash=home.HomeDashboard(nodes(view,home.HomeDashboard)[0].props);assert.equal(nodes(dash,home.CpuCard)[0].props.running,true);assert.equal(nodes(dash,home.CpuCard)[0].props.flipped,true)
    emitScene('background');view=page.render(props);await flush();assert.equal(polling().length,0)
    emitScene('active');view=page.render(props);await flush();assert.equal(polling().length,1)
    nodes(view,home.HomeDashboard)[0].props.onToggleCpu();view=page.render(props);await flush();assert.equal(nodes(view,home.HomeDashboard)[0].props.cpuFlipped,false)

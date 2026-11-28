@@ -2,9 +2,7 @@ import { NikkiLogPage, nikkiLogTitles } from "./nikki-logs"
 import { useDetailPage } from "./router-details"
 import { NavigationLink, AppEvents, Device, useColorScheme, ScrollView, Button, Circle, GeometryReader, ZStack, RoundedRectangle, gradient, Form, HStack, Image, Menu, Picker, Section, Spacer, Text, TextField, Toggle, VStack, useEffect, useState } from "scripting"
 import { Controller, ClashConfig, LOG_LEVELS, TUN_STACKS, tunStackLabel, loadConfig, cachedKernelConfig, forgetKernelConfig, patchConfig, validateConfigPatch } from "./api"
-import { Preferences, AppLog, LogLevel, getPreferences, savePreferences, subscribePreferences, feedback, getLogs, clearLogs, exportLogs, logTime, getHeaderText, saveHeaders, clearImageCache } from "./preferences"
-
-import { makeBackup, restoreBackup, validateBackup } from "./cloud-backup"
+import { Preferences, AppLog, LogLevel, getPreferences, savePreferences, subscribePreferences, getLogs, clearLogs, exportLogs, logTime, getHeaderText, saveHeaders, clearImageCache } from "./preferences"
 
 const prefChanged = (a: unknown, b: unknown) => a !== b && (typeof a !== "object" || typeof b !== "object" || a === null || b === null || JSON.stringify(a) !== JSON.stringify(b))
 
@@ -48,7 +46,7 @@ export function usePageColorScheme(page?: ReturnType<typeof useDetailPage>): "li
   useEffect(() => { setResume({ scheme: system }) }, [system])
   return theme === "system" ? resume.scheme : theme
 }
-function update(patch: Partial<Preferences>) { try { savePreferences(patch); feedback() } catch { void Dialog.alert({ message: "本地设置保存失败，请重试" }) } }
+function update(patch: Partial<Preferences>) { try { savePreferences(patch) } catch { void Dialog.alert({ message: "本地设置保存失败，请重试" }) } }
 export { update as updatePreference, Choice }
 function Choice({ title, value, values, onChanged, disabled = false }: { title: string; value: string; values: string[][]; onChanged: (v: string) => void; disabled?: boolean }) {
   return <Picker title={title} pickerStyle="menu" value={value} onChanged={onChanged} disabled={disabled} frame={{ height: 34 }}>{values.map(([v, l]) => <Text key={v} tag={v}>{l}</Text>)}</Picker>
@@ -132,7 +130,7 @@ export function ThresholdRange() {
     state.gesture = { minDistance: 8, onChanged: e => move(e), onEnded: e => {
       move(e, true)
       if (state.handle && (state.pair.delayGreen !== state.base.delayGreen || state.pair.delayRed !== state.base.delayRed)) {
-        try { savePreferences(state.pair); feedback() }
+        try { savePreferences(state.pair) }
         catch { state.pair = state.base; setDraft(state.base); void Dialog.alert({ message: "本地设置保存失败，请重试" }) }
       }
       state.handle = null; state.lastPaint = -Infinity
@@ -163,19 +161,6 @@ export function ThresholdRange() {
   </VStack>
 }
 
-function IconsPage() {
-  const p = usePreferences(["groupIcons"]), [text, setText] = useState(JSON.stringify(p.groupIcons)), [err, setErr] = useState("")
-  function save() {
-    try {
-      const icons = JSON.parse(text)
-      if (!icons || Array.isArray(icons) || typeof icons !== "object" || Object.values(icons).some(v => typeof v !== "string" || !/^[A-Za-z0-9.]+$/.test(v as string))) throw new Error("请输入组名到 SF Symbol 名称的 JSON 对象")
-      savePreferences({ groupIcons: icons }); setErr("已保存；启用自定义代理组图标后生效")
-    } catch (e: any) { setErr(String(e.message)) }
-  }
-
-  const pageScheme = usePageColorScheme()
-  return <Form preferredColorScheme={pageScheme} background="systemBackground" scrollContentBackground="hidden" navigationTitle="自定义代理组图标" navigationBarTitleDisplayMode="inline"><Section footer={<Text>本地替代：按组名配置 SF Symbols；未覆盖时使用内核提供的 HTTPS 图标（仅脚本管理的缓存）。不修改内核配置。</Text>}><TextField title="图标映射 JSON" value={text} onChanged={setText} prompt={'{"节点选择":"globe"}'} /><Button title="保存图标" action={save} /><Text foregroundStyle="secondaryLabel">{err}</Text></Section></Form>
-}
 function HeaderFields({ icon }: { icon: any }) {
   const p = usePreferences(["headersEnabled"])
   const [rows, setRows] = useState(() => {
@@ -266,7 +251,6 @@ export function KernelConfigPage({ c }: { c: Controller }) {
           for (const [key, edit] of batch) {
             if (session.revisions[key] === edit.revision) { delete session.dirty[key]; delete session.errors[key] }
           }
-          if (Object.keys(patch).length) feedback()
         } catch {
           if (!current()) return
           for (const key of batch.keys()) session.errors[key] = "保存失败；改动已保留，请再次选择或结束编辑重试"
@@ -393,31 +377,6 @@ export function PanelSettingsSections() {
   return <>
     <Section listRowBackground={panelRowBackground()} header={<Text>缓存管理</Text>}><Button title="清除缓存" action={clear} /></Section>
   </>
-}
-function CloudSettingsPage() {
-  const [status, setStatus] = useState(Storage.get<string>("dashboard_cloud_last") ?? "尚未备份"), [busy, setBusy] = useState(false)
-  async function transfer(read: boolean) {
-    if (busy) return
-    if (!FileManager.isiCloudEnabled) { await Dialog.alert({ message: "iCloud 不可用，请先在系统和 Scripting 中启用" }); return }
-    if (!await Dialog.confirm({ title: read ? "从 iCloud 恢复设置" : "备份设置到 iCloud", message: read ? "覆盖外观与全局偏好，按 ID 合并控制器地址（不删除本地控制器）。已有密码保留，新增控制器需要重新填写密码。" : "上传控制器地址/用户名及外观与全局偏好，不含密码、密钥、请求头、日志或图片。测速链接可能含自定义参数，请确认没有秘密。", confirmLabel: read ? "恢复" : "备份" })) return
-    setBusy(true)
-    try {
-      const file = FileManager.iCloudDocumentsDirectory + "/dashboard-preferences-v140.json"
-      if (read) {
-        await FileManager.downloadFileFromiCloud(file)
-        const data = JSON.parse(await FileManager.readAsString(file))
-        restoreBackup(data)
-      } else {
-        const backup = makeBackup(); validateBackup(backup)
-        await FileManager.writeAsString(file, JSON.stringify(backup))
-      }
-      const text = `${read ? "已恢复" : "已提交 iCloud 备份"}：${new Date().toLocaleString()}`
-      Storage.set("dashboard_cloud_last", text); setStatus(text)
-    } catch { setStatus("操作失败，请检查备份格式、iCloud 文件、网络与权限；若本地存储失败，可能已部分合并，请检查控制器。未确认云端同步") } finally { setBusy(false) }
-  }
-
-  const pageScheme = usePageColorScheme()
-  return <Form preferredColorScheme={pageScheme} background="systemBackground" scrollContentBackground="hidden" navigationTitle="iCloud 设置备份" navigationBarTitleDisplayMode="inline"><Section footer={<Text>非原样同步：采用官方 FileManager 的 iCloud 文档，手动备份/恢复控制器地址与设置；不支持自动跨设备冲突合并或账号凭据同步。系统负责上传，脚本无法保证其他设备立即收到。</Text>}><Text>{status}</Text><Button title="立即备份" disabled={busy} action={() => transfer(false)} /><Button title="从 iCloud 恢复" disabled={busy} action={() => transfer(true)} /></Section></Form>
 }
 const LEVELS: [LogLevel, string, string][] = [["info", "信息", "systemBlue"], ["success", "成功", "systemGreen"], ["warning", "警告", "systemOrange"], ["error", "错误", "systemRed"]]
 export function LogsPage() {

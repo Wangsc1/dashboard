@@ -1,9 +1,9 @@
 import { NikkiManagement, NikkiSubscription, NikkiRule, NikkiFile, NikkiManagementError, NIKKI_RULE_TYPES, loadNikkiManagement, saveNikkiSubscription, deleteNikkiSubscription, updateNikkiSubscription, saveNikkiRule, deleteNikkiRule, setNikkiRulesEnabled, reorderNikkiRules, selectNikkiProfile, readNikkiFile, saveNikkiFile } from "./api"
 import { rootToolbar } from "./root-toolbar"
-import { AppEvents, Button, Divider, HStack, VStack, Text, Image, Circle, RoundedRectangle, Spacer, ScrollView, LazyVStack, NavigationLink, Menu, Picker, TextField, Toggle, Form, Section, ProgressView, Editor, modifiers, Safari, useState, useEffect, useMemo } from "scripting"
-import { ProxyNodeConnections, loadProxyNodeConnections, ProxyTestTarget, ProxyNodeDetail, loadProxyNode, testProxyNode, proxyNodeError, Controller, Group, Conn, Rule, Provider, setRuleDisabled, closeRuleConnections, ruleToggleSupported, loadGroups, testGroup, selectProxy, loadProviders, updateProvider, loadRules, loadConnections, closeConnection, closeAllConnections, fmtBytes, fmtSpeed, fmtUptime, delayColor, loadRuntimeVersions, checkCoreUpdate, loadNikkiRuntime, NikkiRuntime, verifyCoreRestart, upgradeCoreAndVerify, lastControllerMode, loadConfig, setMode as setControllerMode, nikkiService, coreActionMayHaveExecuted, nikkiServiceErrorText, nikkiServiceNeedsVerification, verifyNikkiService, coreAction, CoreAction, queryDNS, webpage } from "./api"
+import { AppEvents, Button, Divider, HStack, VStack, Text, Image, Circle, RoundedRectangle, Spacer, ScrollView, LazyVStack, NavigationLink, Menu, Picker, TextField, Toggle, Form, Section, ProgressView, Editor, modifiers, useState, useEffect, useMemo } from "scripting"
+import { ProxyNodeConnections, loadProxyNodeConnections, ProxyTestTarget, ProxyNodeDetail, loadProxyNode, testProxyNode, proxyNodeError, Controller, Group, Conn, Rule, Provider, setRuleDisabled, closeRuleConnections, ruleToggleSupported, loadGroups, testGroup, selectProxy, loadProviders, updateProvider, loadRules, loadConnections, closeConnection, closeAllConnections, fmtBytes, fmtSpeed, fmtUptime, delayColor, loadRuntimeVersions, checkCoreUpdate, loadNikkiRuntime, NikkiRuntime, verifyCoreRestart, upgradeCoreAndVerify, lastControllerMode, loadConfig, setMode as setControllerMode, nikkiService, coreActionMayHaveExecuted, nikkiServiceErrorText, nikkiServiceNeedsVerification, verifyNikkiService, coreAction, CoreAction, queryDNS, overviewSource } from "./api"
 import { usePreferences, KernelConfigPage, updatePreference, Choice, ThresholdRange, Range, TestURLField } from "./settings-ui"
-import { NODE_SORT_OPTIONS, savePreferences, getPreferences, cachedIcon, readCachedIcon, feedback } from "./preferences"
+import { NODE_SORT_OPTIONS, savePreferences, getPreferences, cachedIcon, readCachedIcon } from "./preferences"
 import { selectable, sortedNodes, historyFor, SceneVisibility, ConnectionRefreshDiagnostic, filterConnections, clientLabels, saveClientLabel, sourceKey, confirmed } from "./dashboard-model"
 
 const FG = { light: "#41434B", dark: "#CFD0D7" }
@@ -180,9 +180,9 @@ export function GroupSection({c,g,onChanged,expanded=false,nodeActions,autoTest=
     return()=>{listeners!.delete(notify);if(!listeners!.size)nodeDelayListeners.delete(source)}
   },[JSON.stringify(c),g.all,storeKey])
   const sorted=useMemo(()=>isOpen?sortedNodes(g,delays):[],[isOpen,g.all,delays,prefs.nodeSort])
-  const toggleOpen=()=>{setOpen(v=>!v);feedback()}
+  const toggleOpen=()=>{setOpen(v=>!v)}
   return <Card><HStack onLongPressGesture={()=>{if(prefs.collapseGesture)toggleOpen()}}><Button buttonStyle="plain" frame={{maxWidth:"infinity",alignment:"leading"}} action={toggleOpen}><HStack spacing={12} frame={{maxWidth:"infinity",alignment:"leading"}} contentShape="rect">{prefs.customIcons ? <GroupIcon g={g}/> : null}<VStack alignment="leading" spacing={4}><Text font={16} fontWeight="semibold">{g.name}</Text><HStack spacing={10}><Text font={12} foregroundStyle="secondaryLabel">{now||"内核未提供当前节点"}</Text>{d!==undefined?<><Text font={12} foregroundStyle={delayColor(d) as any}>{d>0?`${d}ms`:"超时"}</Text></>:null}</HStack></VStack><Spacer/></HStack></Button><Button title="" systemImage="bolt.fill" tint="systemOrange" action={async()=>{if(busy)return;setBusy(true);await attempt(async()=>{const save=(k:string,v:number)=>{testedDelays.set(storeKey,{...(testedDelays.get(storeKey)??{}),[k]:v});testedNodes.set(`${sourceKey(c)}|${k}`,v)};const d=await testGroup(c,g,(k,v)=>{save(k,v);if(guard.alive)setDelays(merged())});for(const[k,v]of Object.entries(d))save(k,v);if(guard.alive){setDelays(merged());onChanged()}});if(guard.alive)setBusy(false)}}/><Button buttonStyle="plain" action={toggleOpen}><VStack frame={{width:44,height:44}} contentShape="rect"><GroupChevron expanded={isOpen}/></VStack></Button></HStack>
-    {prefs.collapseGesture?<Button title={open?"收起预览":"展开预览"} action={()=>{setOpen(!open);feedback()}}/>:null}
+    {prefs.collapseGesture?<Button title={open?"收起预览":"展开预览"} action={()=>setOpen(!open)}/>:null}
     {expanded||open?<>{(()=>{const ns=sorted.slice(0,nodeLimit),rows:string[][]=[];for(let i=0;i<ns.length;i+=2)rows.push(ns.slice(i,i+2));return rows.map(r=><HStack key={r[0]} spacing={8}>{r.map(n=>{const on=now===n,dn=delays[n];return <VStack key={n} spacing={0} frame={{maxWidth:"infinity"}} contextMenu={nodeActions?{menuItems:<><Button title="详细信息" systemImage="info.circle" action={()=>nodeActions.show(n,g.testTargets?.[n])}/><Button title={nodeActions.busy===n?"测速中…":"延迟测试"} systemImage="speedometer" disabled={!!nodeActions.busy} action={()=>nodeActions.test(n,g.testTargets?.[n])}/></>}:undefined}><Button key={n} buttonStyle="plain" disabled={!selectable(g)} frame={{maxWidth:"infinity"}} action={()=>{if(n===now)return;const prev=now;setNow(n);void attempt(async()=>{try{await selectProxy(c,g.name,n)}catch(e){if(guard.alive)setNow(prev);throw e}if(guard.alive)onChanged()})}}><VStack alignment="leading" spacing={10} frame={{maxWidth:"infinity",alignment:"leading"}} padding={{horizontal:10,vertical:14}} background={<RoundedRectangle cornerRadius={12} fill={on?"systemBlue":"tertiarySystemBackground"}/>}><Text font={prefs.proxyStyle==="compact"?11.5:12.5} fontWeight="semibold" lineLimit={1} frame={{maxWidth:"infinity",alignment:"leading"}} foregroundStyle={on?"white":FG}>{n}</Text><HStack spacing={4} frame={{maxWidth:"infinity"}}><Text font={11} lineLimit={1} foregroundStyle={on?"white":"secondaryLabel"}>{g.types?.[n]||"协议未知"}</Text><Spacer/><Text font={11} foregroundStyle={dn!==undefined?delayColor(dn) as any:"secondaryLabel"}>{nodeActions?.busy===n?"测速中…":dn===undefined?(failed.has(n)?"超时":"未测速"):dn>0?`${dn}ms`:"超时"}</Text></HStack></VStack></Button></VStack>})}{r.length<2?<Spacer frame={{maxWidth:"infinity"}}/>:null}</HStack>)})()}<Pages hideCount limit={nodeLimit} total={g.all.length} more={()=>setNodeLimit(nodeLimit+40)}/></>:null}
   </Card>
 }
@@ -416,9 +416,16 @@ export function RulesPage({active,version,onClose,selected=true}:{active:Control
 }
 const pad2=(n:number)=>String(n).padStart(2,"0")
 const fmtClock=(t:number)=>{const d=new Date(t);return `${pad2(d.getMonth()+1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}.${String(d.getMilliseconds()).padStart(3,"0")}`}
+function splitHostPort(addr:string):[string,string] {
+  const bracket=/^\[([^\]]+)\](?::(\d+))?$/.exec(addr)
+  if(bracket)return [bracket[1],bracket[2]??""]
+  const first=addr.indexOf(":"),last=addr.lastIndexOf(":")
+  if(first>0&&first===last)return [addr.slice(0,last),addr.slice(last+1)]
+  return [addr,""]
+}
 function DetailRow({title,value,color}:{title:string;value:string;color?:string}) { return <HStack><Text>{title}</Text><Spacer/><Text foregroundStyle={(color??"secondaryLabel") as any} lineLimit={2}>{value||"未提供"}</Text></HStack> }
 export function ConnectionDetailPage({x,onDisconnect}:{x:Conn;onDisconnect:(x:Conn)=>void}) {
-  const end=x.closedAt??Date.now(),dstPort=x.dst.lastIndexOf(":")>0?x.dst.slice(x.dst.lastIndexOf(":")+1):"",dstIP=x.dst.lastIndexOf(":")>0?x.dst.slice(0,x.dst.lastIndexOf(":")):x.dst
+  const end=x.closedAt??Date.now(),[dstIP,dstPort]=splitHostPort(x.dst)
   return <Form navigationTitle={x.host} navigationBarTitleDisplayMode="inline" toolbar={x.closedAt?undefined:{topBarTrailing:<Button title="断开" action={()=>onDisconnect(x)}/>}}>
     <Section header={<Text>周期</Text>}><DetailRow title="请求时间" value={x.start?fmtClock(x.start):""}/><DetailRow title="状态" value={x.closedAt?"已关闭":"活跃中"} color={x.closedAt?"secondaryLabel":"systemGreen"}/><DetailRow title="持续时间" value={x.start?fmtUptime(Math.max(0,(end-x.start)/1000)):""}/></Section>
     <Section header={<Text>目标地址</Text>}><DetailRow title="地址" value={x.host}/><DetailRow title="端口" value={dstPort}/><DetailRow title="目标IP" value={dstIP}/></Section>
@@ -520,7 +527,7 @@ export function ConnectionsPage({active,version,onClose,selected=true}:{active:C
   function openDetail(x:Conn){if(!active)return;scene.detail=true;scene.stop?.();setDetail({key:sourceKey(active),x})}
   const destination={isPresented:detailShown,onChanged:(value:boolean)=>{if(!value){scene.detail=false;setDetail(null);setResume(n=>n+1)}},content:detailShown?<ConnectionDetailPage x={detail!.x} onDisconnect={(y:Conn)=>void close(y)}/>:<Text/>}
   const now=Date.now()
-  return Shell({title:active?.name??"连接",refresh:pullConnections,navigationDestination:destination,onAppear:()=>{diagnostic.add("appear")},onDisappear:()=>{diagnostic.add("disappear")}, toolbar:rootToolbar("connections",onClose,<Menu label={<Image systemName="ellipsis.circle"/>}><Button title="客户端标签" action={()=>setLabelsOpen(!labelsOpen)}/><Button title="清理已断开连接" action={async()=>{if(active&&await confirmed(`${active.name} · 本地历史`,"清理本脚本已观察到的已断开历史，不操作远端连接。",async()=>{historyFor(active).clear();setClosed([])}))feedback()}}/><Button title="打断全部连接" action={()=>close()}/></Menu>),children:<>{!active?<Empty/>:<><VStack spacing={6} padding={6} background={<RoundedRectangle cornerRadius={16} fill="secondarySystemBackground"/>}>
+  return Shell({title:active?.name??"连接",refresh:pullConnections,navigationDestination:destination,onAppear:()=>{diagnostic.add("appear")},onDisappear:()=>{diagnostic.add("disappear")}, toolbar:rootToolbar("connections",onClose,<Menu label={<Image systemName="ellipsis.circle"/>}><Button title="客户端标签" action={()=>setLabelsOpen(!labelsOpen)}/><Button title="清理已断开连接" action={async()=>{if(active)await confirmed(`${active.name} · 本地历史`,"清理本脚本已观察到的已断开历史，不操作远端连接。",async()=>{historyFor(active).clear();setClosed([])})}}/><Button title="打断全部连接" action={()=>close()}/></Menu>),children:<>{!active?<Empty/>:<><VStack spacing={6} padding={6} background={<RoundedRectangle cornerRadius={16} fill="secondarySystemBackground"/>}>
       <HStack spacing={6}>
         {(["active","closed"] as const).map(k=><Button key={k} buttonStyle="plain" action={()=>{setTab(k);setLimit(60)}}><HStack spacing={6} padding={{horizontal:8,vertical:6}} background={<RoundedRectangle cornerRadius={12} fill={tab===k?"systemBackground":"clear"}/>}><Circle fill={k==="active"?(tab===k?"systemGreen":"tertiaryLabel"):"tertiaryLabel"} frame={{width:6,height:6}}/><Text font={13} fontWeight={tab===k?"semibold":"regular"} foregroundStyle={tab===k?"label":"secondaryLabel"}>{k==="active"?"活动中":"已关闭"}</Text><Text font={11} foregroundStyle={tab===k?"systemGreen":"secondaryLabel"} padding={{horizontal:6,vertical:1}} background={<RoundedRectangle cornerRadius={8} fill="tertiarySystemFill"/>}>{String(k==="active"?conns.length:closed.length)}</Text></HStack></Button>)}
         <Spacer/>
@@ -533,8 +540,8 @@ export function ConnectionsPage({active,version,onClose,selected=true}:{active:C
         {q.length>0?<Button buttonStyle="plain" accessibilityLabel="清除连接搜索" action={()=>{setQ("");setLimit(60)}} padding={{trailing:4}}><Image systemName="xmark.circle.fill" font={16} foregroundStyle="secondaryLabel" frame={{width:32,height:32}}/></Button>:null}
       </HStack>:null}
     </VStack>{err?<Hint>{err}</Hint>:null}{labelsOpen?<Card><Hint>标签仅保存在本地，并按完整sourceIP匹配，不修改路由器。</Hint><Picker title="来源地址" pickerStyle="menu" value={labelIP} onChanged={(v:string)=>{setLabelIP(v);setLabel(labels[v]||"")}}><Text tag="">选择客户端</Text>{clients.map(ip=><Text key={ip} tag={ip}>{ip}</Text>)}</Picker><TextField title="客户端标签" value={label} onChanged={setLabel}/><Button title="保存本地标签" disabled={!labelIP} action={()=>attempt(async()=>{saveClientLabel(active,labelIP,label);setLabels(clientLabels(active))})}/></Card>:null}
-    {shown.slice(0,limit).map(x=>{const dh=x.host,dp=x.dst.lastIndexOf(":")>0?x.dst.slice(x.dst.lastIndexOf(":")):"",chain=x.chains??[],dur=x.start?fmtUptime(Math.max(0,((x.closedAt??now)-x.start)/1000)):""
-      return <Card compact key={x.id+(x.closedAt??"")} contextMenu={{menuItems:<>{!x.closedAt?<Button title="关闭连接" systemImage="xmark.circle" action={()=>void close(x)}/>:null}<Button title="筛选同源连接" systemImage="laptopcomputer" action={()=>{setClient(x.sourceIP??"");setLimit(60)}}/><Button title="筛选同域名连接" systemImage="globe" action={()=>{setQ(x.host);setSearch(true);setLimit(60)}}/><Button title="复制连接信息" systemImage="doc.on.doc" action={()=>{void Pasteboard.setString([dh+dp,x.src,x.network,chain.join(" > "),x.rule].filter(Boolean).join("\n"));feedback()}}/></>}} opacity={1}>
+    {shown.slice(0,limit).map(x=>{const dh=x.host,[,rawPort]=splitHostPort(x.dst),dp=rawPort?":"+rawPort:"",chain=x.chains??[],dur=x.start?fmtUptime(Math.max(0,((x.closedAt??now)-x.start)/1000)):""
+      return <Card compact key={x.id+(x.closedAt??"")} contextMenu={{menuItems:<>{!x.closedAt?<Button title="关闭连接" systemImage="xmark.circle" action={()=>void close(x)}/>:null}<Button title="筛选同源连接" systemImage="laptopcomputer" action={()=>{setClient(x.sourceIP??"");setLimit(60)}}/><Button title="筛选同域名连接" systemImage="globe" action={()=>{setQ(x.host);setSearch(true);setLimit(60)}}/><Button title="复制连接信息" systemImage="doc.on.doc" action={()=>{void Pasteboard.setString([dh+dp,x.src,x.network,chain.join(" > "),x.rule].filter(Boolean).join("\n"))}}/></>}} opacity={1}>
         <HStack spacing={6}><Button buttonStyle="plain" accessibilityLabel="查看连接详情" action={()=>openDetail(x)}><HStack spacing={6}><Image systemName="clock.fill" font={11} foregroundStyle="secondaryLabel"/><Text font={11} foregroundStyle="secondaryLabel">{x.start?formatAgo(x.start,now):"时间未提供"}</Text>{x.closedAt?(dur?<Chip small title={dur} color="secondaryLabel"/>:null):<><Image systemName="arrow.down" font={10} foregroundStyle="systemBlue"/><Text font={10}>{fmtSpeed(x.downSpeed??0)}</Text><Image systemName="arrow.up" font={11} foregroundStyle="systemGreen"/><Text font={10}>{fmtSpeed(x.upSpeed??0)}</Text></>}<Spacer/></HStack></Button>{!x.closedAt?<Button title="" buttonStyle="plain" systemImage="xmark.circle.fill" foregroundStyle="tertiaryLabel" action={()=>close(x)}/>:null}</HStack><Button buttonStyle="plain" accessibilityLabel="查看连接详情" action={()=>openDetail(x)}><VStack alignment="leading" spacing={6}>
         <HStack spacing={6}><Image systemName="globe" font={11} foregroundStyle="systemBlue"/><Text font={14} fontWeight="semibold" lineLimit={1}>{dh}</Text><Text font={11} foregroundStyle="secondaryLabel">{dp}</Text></HStack>
         {chain.length?<HStack spacing={6}><Image systemName="arrow.triangle.branch" font={11} foregroundStyle="systemOrange"/><Text font={11} foregroundStyle="secondaryLabel" lineLimit={1}>{chain.join(" > ")}</Text></HStack>:null}
@@ -545,14 +552,8 @@ export function DNSPage({c}:{c:Controller}) {
   const [name,setName]=useState(""),[type,setType]=useState("A"),[result,setResult]=useState(""),[busy,setBusy]=useState(false),[guard]=useState({alive:true});useEffect(()=>()=>{guard.alive=false},[])
   return <Form background="systemBackground" scrollContentBackground="hidden" navigationTitle="域名查询"><Section><TextField title="域名" value={name} onChanged={setName} prompt="输入要查询的域名"/><Picker title="类型" pickerStyle="menu" value={type} onChanged={setType}>{["A","AAAA","CNAME","TXT","MX","HTTPS"].map(t=><Text key={t} tag={t}>{t}</Text>)}</Picker><Button title={busy?"查询中…":"查询"} disabled={busy||!name} action={async()=>{setBusy(true);await attempt(async()=>{await confirmed(c.name,`通过当前内核DNS查询 ${name} (${type})，可能向其配置的DNS服务器发送域名。`,async()=>{const r=await queryDNS(c,name,type);if(guard.alive)setResult(`状态 ${r.status}\n`+r.answers.map((x:any)=>`${x.data} · TTL ${x.ttl}`).join("\n"))})});if(guard.alive)setBusy(false)}}/></Section><Section><Text font={13}>{result||"尚未查询"}</Text></Section></Form>
 }
-async function openPage(c:Controller,page:"home"|"profile"|"mixin"|"editor"|"log") { await attempt(async()=>{const url=await webpage(c,page);await confirmed(c.name,"打开当前设备的真实网页。不会传递控制器密钥或LuCI会话；浏览器需独立登录。后续网页中的保存/应用由Nikki官方页面处理。",async()=>{if(!await Safari.openURL(url))throw new Error("打开失败")})}) }
-export function ManagementPage({c,kind}:{c:Controller;kind:"profile"|"subscription"|"rule"|"log"}) {
-  if(kind!=="log")return NikkiManagementPage({c,kind})
-  return NikkiLogPage({c})
-}
-function NikkiLogPage({c}:{c:Controller}) {
-  const [tick,setTick]=useState(0),[,setVisible]=useState(true),nikki=c.kind==="openwrt"&&c.plugin==="nikki"
-  return Shell({title:"运行日志",background:"systemBackground",onAppear:()=>setVisible(true),onDisappear:()=>setVisible(false),children:!nikki?<Hint>不可用：此入口需要当前来源为OpenWrt上的Nikki，不能将其他插件当作Nikki调用。</Hint>:<Card><Hint>此处为Nikki远程运行日志，可能包含访问域名与敏感信息，仅在设备自己的LuCI中查看，不复制至脚本日志。</Hint><Button title="打开Nikki官方管理页面" systemImage="safari" action={()=>openPage(c,"log")}/><Button title="刷新" action={()=>setTick(tick+1)}/></Card>})
+export function ManagementPage({c,kind}:{c:Controller;kind:"profile"|"subscription"|"rule"}) {
+  return NikkiManagementPage({c,kind})
 }
 // More-page styling stays local; other cards and native navigation are unchanged.
 function MorePanel({children,contentInset=0,spacing=0}:any) {
@@ -577,13 +578,14 @@ export function prefetchMoreVersions(active:Controller|null){
    active.kind==="openwrt"&&active.plugin==="nikki"?loadNikkiRuntime(active).then(rememberRuntime).catch(()=>{}):Promise.resolve()
  ]).finally(()=>morePrefetch.delete(key))
 }
-export function MorePage({active,onChanged,onClose,selected=true}:{active:Controller|null;onChanged:()=>void;onClose?:()=>void;selected?:boolean}) {
+export function MorePage({active,version=0,onChanged,onClose,selected=true}:{active:Controller|null;version?:number;onChanged:()=>void;onClose?:()=>void;selected?:boolean}) {
   const p=usePreferences(["theme","defaultPage"])
   const {scene,revision}=usePageScene()
-  const cachedVersions=active?moreSnapshots.get(sourceKey(active)):undefined
+  const moreKey=active?`${sourceKey(active)}|${overviewSource(active)}`:""
+  const cachedVersions=active?moreSnapshots.get(moreKey)??moreSnapshots.get(sourceKey(active)):undefined
   const [core,setCore]=useState(cachedVersions?.core??"未提供"),[app,setApp]=useState(cachedVersions?.app??"未提供"),[mode,setMode]=useState("未提供"),[err,setErr]=useState(""),[visible,setVisible]=useState(selected),[busy,setBusy]=useState(false),[running,setRunning]=useState<boolean|null>(cachedVersions?.running??null),[guard]=useState({alive:true,source:"",busy:false,view:"",epoch:0,versionEpoch:0,active:false}),[runtime,setRuntime]=useState<NikkiRuntime|null>(cachedVersions?.runtime??null),[,setClock]=useState(0),[notice,setNotice]=useState(""),[noticeKind,setNoticeKind]=useState("success")
   const [coreUpdate,setCoreUpdate]=useState<{source:string;version:string;available:boolean}|null>(null)
-  guard.source=active?sourceKey(active):""
+  guard.source=moreKey
   const view=JSON.stringify([guard.source,selected,visible])
   if(guard.view!==view){guard.view=view;guard.epoch++}
   guard.active=selected&&visible
@@ -595,9 +597,9 @@ export function MorePage({active,onChanged,onClose,selected=true}:{active:Contro
     if(!active||!selected||!visible||!scene.active)return
     let alive=true,runtimeTimer:any,inFlight=false
     const epoch=scene.epoch,current=()=>alive&&scene.active&&scene.epoch===epoch
-    const key=sourceKey(active),cached=moreSnapshots.get(key)??{},versionEpoch=guard.versionEpoch
+    const key=moreKey,baseKey=sourceKey(active),cached=moreSnapshots.get(key)??moreSnapshots.get(baseKey)??{},versionEpoch=guard.versionEpoch
     if(moreSnapshots.size>30)moreSnapshots.clear()
-    const remember=(patch:typeof cached)=>{if(current())moreSnapshots.set(key,{...moreSnapshots.get(key),...patch})}
+    const remember=(patch:typeof cached)=>{if(current()){const next={...moreSnapshots.get(key),...patch};moreSnapshots.set(key,next);moreSnapshots.set(baseKey,next)}}
     setCore(cached.core??"读取中…");setApp(cached.app??"读取中…");setMode(lastControllerMode(active)??"读取中…");setRunning(cached.running??null);setRuntime(cached.runtime??null);setErr("")
     loadRuntimeVersions(active,x=>{if(current()&&versionEpoch===guard.versionEpoch){if(x.core!=="未提供"){setCore(x.core);remember({core:x.core})}if(x.app!=="未提供"){setApp(x.app);remember({app:x.app})}}}).then(x=>{if(current()&&versionEpoch===guard.versionEpoch){void checkCoreUpdate(x.core).then(available=>{if(current()&&guard.alive&&guard.source===key&&versionEpoch===guard.versionEpoch)setCoreUpdate(available===null?null:{source:key,version:x.core,available})});if(x.failed){if(!moreSnapshots.get(key)?.core)setCore("读取失败");if(!moreSnapshots.get(key)?.app)setApp("读取失败");setErr("部分版本信息读取失败；已保留同来源上次结果。")}}}).catch(()=>{if(current())setErr(safeError())})
     loadConfig(active).then(x=>{if(current())setMode(x.mode??"未提供")}).catch(()=>{if(current()&&!lastControllerMode(active))setMode("读取失败")})
@@ -607,14 +609,14 @@ export function MorePage({active,onChanged,onClose,selected=true}:{active:Contro
       void readRuntime();runtimeTimer=setInterval(readRuntime,30000)
     }
     return()=>{alive=false;if(runtimeTimer)clearInterval(runtimeTimer)}
-  },[active&&sourceKey(active),selected,visible,revision])
+  },[moreKey,version,selected,visible,revision])
   useEffect(()=>{if(!selected||!visible||!scene.active||!runtime||(runtime.coreSeconds===null&&runtime.serviceSeconds===null))return;const timer=setInterval(()=>{if(scene.active)setClock(n=>n+1)},1000);return()=>clearInterval(timer)},[selected,visible,runtime,revision])
-  useEffect(()=>{setNotice("")},[active&&sourceKey(active),visible])
+  useEffect(()=>{setNotice("")},[moreKey,visible])
   useEffect(()=>{if(!notice||noticeKind==="progress")return;const timer=setTimeout(()=>setNotice(""),4500);return()=>clearTimeout(timer)},[notice,noticeKind])
   const duration=(value:number|null|undefined)=>value==null?"未提供":fmtUptime(value+Math.max(0,Math.floor((Date.now()-(runtime?.measuredAt??Date.now()))/1000)),true)
   async function act(action:CoreAction,label:string,impact:string){
     if(!active||guard.busy)return
-    const source=sourceKey(active),epoch=guard.epoch,current=()=>guard.alive&&guard.source===source&&(action!=="upgrade"||(guard.active&&guard.epoch===epoch))
+    const source=moreKey,baseKey=sourceKey(active),epoch=guard.epoch,current=()=>guard.alive&&guard.source===source&&(action!=="upgrade"||(guard.active&&guard.epoch===epoch))
     if(!current())return
     guard.busy=true;setBusy(true);setNotice("")
     await attempt(async()=>{
@@ -629,7 +631,8 @@ export function MorePage({active,onChanged,onClose,selected=true}:{active:Contro
         if(!current())return
         if(checked.version){
           setCore(checked.version)
-          moreSnapshots.set(source,{...moreSnapshots.get(source),core:checked.version})
+          const next={...moreSnapshots.get(source),core:checked.version}
+          moreSnapshots.set(source,next);moreSnapshots.set(baseKey,next)
           const available=await checkCoreUpdate(checked.version)
           if(!current())return
           setCoreUpdate(available===null?null:{source,version:checked.version,available})
@@ -669,7 +672,7 @@ export function MorePage({active,onChanged,onClose,selected=true}:{active:Contro
   }
   async function service(action:"start"|"stop"|"restart"|"reload",title:string){
     if(!active||guard.busy)return
-    const controller={...active},source=sourceKey(controller),epoch=guard.epoch,sceneEpoch=scene.epoch
+    const controller={...active},source=`${sourceKey(controller)}|${overviewSource(controller)}`,epoch=guard.epoch,sceneEpoch=scene.epoch
     const current=()=>guard.alive&&guard.source===source&&guard.active&&guard.epoch===epoch&&scene.active&&scene.epoch===sceneEpoch
     if(!current())return
     guard.busy=true;setBusy(true);setNotice("")
@@ -708,7 +711,7 @@ export function MorePage({active,onChanged,onClose,selected=true}:{active:Contro
   return Shell({title:active?.name??"更多",background:"systemBackground",toolbar:rootToolbar("more",onClose),overlay:notice?{alignment:"top",content:<VStack padding={{horizontal:14,top:8}}><HStack spacing={14} padding={18} background={<RoundedRectangle cornerRadius={18} fill="secondarySystemBackground"/>}>{noticeKind==="progress"?<ProgressView/>:<Image systemName={noticeKind==="warning"?"exclamationmark.circle.fill":"checkmark.circle.fill"} font={24} foregroundStyle={noticeKind==="warning"?"systemOrange":"systemGreen"}/>}<Text font={16} fontWeight="medium">{notice}</Text><Spacer/><Button buttonStyle="plain" action={()=>setNotice("")}><Image systemName="xmark" font={16} foregroundStyle="secondaryLabel"/></Button></HStack></VStack>}:undefined,onAppear:()=>{scene.vis.appear();setVisible(true)},onDisappear:()=>{if(!scene.vis.disappear(Date.now()))return;guard.epoch++;guard.active=false;setVisible(false)},children:<>
     <MoreHeading>主题及启动</MoreHeading><MorePanel><HStack spacing={12} modifiers={modifiers().frame({height:49,alignment:"center"}).padding({horizontal:16}).frame({maxWidth:"infinity"})}><HStack frame={{minWidth:0,maxWidth:"infinity",alignment:"leading"}}><Choice title="外观模式" value={p.theme} values={[["system", "跟随系统"], ["light", "浅色"], ["dark", "深色"]]} onChanged={v=>updatePreference({theme:v as any})}/></HStack><HStack frame={{minWidth:0,maxWidth:"infinity",alignment:"trailing"}}><Choice title="默认打开界面" value={p.defaultPage} values={[["overview", "主页"], ["proxies", "代理"], ["rules", "规则"], ["connections", "连接"], ["more", "更多"]]} onChanged={v=>updatePreference({defaultPage:v as any})}/></HStack></HStack></MorePanel>
     {!active?<Empty/>:<>{err?<Hint>{err}</Hint>:null}
-    <MoreHeading>运行信息</MoreHeading><MorePanel><MoreLine title="内核版本" icon="desktopcomputer" detail={core} updateDot={!!(selected&&visible&&active&&coreUpdate?.source===sourceKey(active)&&coreUpdate.version===core&&coreUpdate.available)} subtitle={`运行时间：${running===false?"未运行":duration(runtime?.coreSeconds)}`}/><MoreSeparator/><MoreLine title="插件版本" icon="shippingbox" color="systemOrange" detail={app} subtitle={nikki&&running===false?"Nikki 服务 · 未运行":`${nikki?"Nikki 服务":active.plugin??"独立控制器"}（运行时间：${running===false?"未运行":duration(runtime?.serviceSeconds)}）`}/></MorePanel>
+    <MoreHeading>运行信息</MoreHeading><MorePanel><MoreLine title="内核版本" icon="desktopcomputer" detail={core} updateDot={!!(selected&&visible&&active&&coreUpdate?.source===moreKey&&coreUpdate.version===core&&coreUpdate.available)} subtitle={`运行时间：${running===false?"未运行":duration(runtime?.coreSeconds)}`}/><MoreSeparator/><MoreLine title="插件版本" icon="shippingbox" color="systemOrange" detail={app} subtitle={nikki&&running===false?"Nikki 服务 · 未运行":`${nikki?"Nikki 服务":active.plugin??"独立控制器"}（运行时间：${running===false?"未运行":duration(runtime?.serviceSeconds)}）`}/></MorePanel>
     <MoreHeading>核心配置</MoreHeading><MorePanel><NavigationLink destination={<KernelConfigPage c={active}/>}><MoreLine title="代理配置" icon="slider.horizontal.3" color="systemOrange" arrow/></NavigationLink></MorePanel>
     <MoreHeading>快捷管理</MoreHeading><MorePanel contentInset={12}><HStack spacing={12} frame={{maxWidth:"infinity"}}><NavigationLink frame={{minWidth:0,maxWidth:"infinity"}} destination={<ManagementPage c={active} kind="profile"/>}><MoreTile title="配置管理" icon="gearshape" color="systemOrange"/></NavigationLink><NavigationLink frame={{minWidth:0,maxWidth:"infinity"}} destination={<ManagementPage c={active} kind="subscription"/>}><MoreTile title="订阅管理" icon="icloud.and.arrow.down" color="systemIndigo"/></NavigationLink><NavigationLink frame={{minWidth:0,maxWidth:"infinity"}} destination={<ManagementPage c={active} kind="rule"/>}><MoreTile title="附加规则" icon="list.bullet" color="systemPurple"/></NavigationLink></HStack></MorePanel>
     <MoreHeading>服务管理</MoreHeading><MorePanel contentInset={12} spacing={8}>{!nikki?<Hint>不可用：当前不是Nikki来源，不会对其他插件发送服务命令。</Hint>:<Hint>{`Nikki · ${running===null?"状态未提供":running?"运行中":"已停止"}`}</Hint>}<HStack spacing={8}>{([["start","启动","play.fill","systemGreen","#EEF9F0","#20382A"],["stop","停止","stop.fill","systemRed","#FDEEEE","#3D2426"],["restart","重启","arrow.clockwise","systemBlue","#EAF2FF","#20314A"],["reload","重载","arrow.triangle.2.circlepath","systemOrange","#FFF6E8","#403222"]] as const).map(([action,title,icon,color,light,dark])=><Button key={action} buttonStyle="plain" frame={{maxWidth:"infinity"}} disabled={!nikki||busy} action={()=>service(action,title)}><VStack spacing={10} padding={{vertical:4}}><Image systemName={icon} font={21} foregroundStyle={color} padding={14} background={<Circle fill={{light,dark}}/>}/><Text font={12} foregroundStyle="label">{title}</Text></VStack></Button>)}</HStack></MorePanel>
@@ -718,7 +721,7 @@ export function MorePage({active,onChanged,onClose,selected=true}:{active:Contro
 }
 
 // Native Nikki management: kept in this shipped module so existing download lists remain complete.
-const source = (c:Controller) => [c.id,c.kind,c.plugin,c.url,c.username].join("|")
+const source = (c:Controller) => [c.id,c.kind,c.plugin,c.url,c.username,overviewSource(c)].join("|")
 const COMMIT_WARNING = "提交 UCI 后，OpenWrt 可能自动触发 Nikki 重载并短暂断流；远程优先订阅可能重新下载。此操作无法保证仅保存不生效，不会再额外发送重载请求。"
 const errorText = (e:unknown) => e instanceof NikkiManagementError ? e.message : "请求未完成，请检查连接、认证与 Nikki/LuCI 权限。草稿仍保留；详情不会写入日志。"
 function Note({children,error=false}:{children?:any;error?:boolean}) { return <Text font={12} foregroundStyle={error?"systemRed":"secondaryLabel"}>{children}</Text> }
@@ -772,7 +775,7 @@ export function NikkiManagementPage({c,kind}:{c:Controller;kind:"profile"|"subsc
   // can be prebuilt/reused; identity must represent an opening, not only a component type.
   function openEdit(value:EditValue) {if(!data||!fresh||work.busy)return;const snapshot="value" in value&&value.value?{...value,value:{...value.value}}:value;setEdit({...snapshot,entry:++navigation.entry,base:data} as EditTarget)}
   const entryKey=edit?source(c)+":"+edit.entry:"closed"
-  const content=edit ? edit.kind==="subscription"?<NikkiSubscriptionEditor key={entryKey} entryKey={entryKey} c={c} base={edit.base} value={edit.value} done={saved=>done(saved,edit.entry)}/>:edit.kind==="rule"?<NikkiRuleEditor key={entryKey} c={c} base={edit.base} value={edit.value} done={saved=>done(saved,edit.entry)}/>:edit.kind==="sort"?<NikkiRuleSort key={entryKey} c={c} base={edit.base} done={saved=>done(saved,edit.entry)}/>:<NikkiFileEditor key={entryKey} entryKey={entryKey} c={c} base={edit.base} file={edit.value} done={saved=>{if(saved)refresh()}}/> : <Text/>
+  const content=edit ? edit.kind==="subscription"?<NikkiSubscriptionEditor key={entryKey} entryKey={entryKey} c={c} base={edit.base} value={edit.value} done={saved=>done(saved,edit.entry)}/>:edit.kind==="rule"?<NikkiRuleEditor key={entryKey} c={c} base={edit.base} value={edit.value} done={saved=>done(saved,edit.entry)}/>:edit.kind==="sort"?<NikkiRuleSort key={entryKey} c={c} base={edit.base} done={saved=>done(saved,edit.entry)}/>:<NikkiFileEditor key={entryKey} entryKey={entryKey} c={c} base={edit.base} file={edit.value} done={saved=>{if(saved)refreshAfterWrite()}}/> : <Text/>
   async function removeSubscription(s:NikkiSubscription) {if(!fresh)return;await work.run(()=>work.simpleConfirm("删除订阅",`确认要删除订阅「${s.name}」吗？`,"确认删除",async()=>{await deleteNikkiSubscription(work.owner,data!,s.id);if(work.current())refreshAfterWrite()}))}
   async function update(s:NikkiSubscription) {if(!fresh)return;await work.run(async()=>{setUpdatingSubscription(s.id);try{await updateNikkiSubscription(work.owner,s.id,data!);if(work.current())refreshAfterWrite()}finally{setUpdatingSubscription(null)}})}
   async function enable(f:NikkiFile) {if(!fresh||data?.profile===f.key)return;await work.run(()=>work.commitConfirm(`启用「${f.name}」？将提交为 Nikki 选用配置，由系统触发重载；配置选择成功不代表内核已成功加载。`,async()=>{
@@ -787,7 +790,7 @@ export function NikkiManagementPage({c,kind}:{c:Controller;kind:"profile"|"subsc
         {error?<><Note error>{error}</Note><Button title="重试" action={refresh}/></>:null}<Status work={work}/>
         {!data&&!error?<Note>正在读取…</Note>:null}
         {data&&kind==="rule"?<>
-          {data.rules.length===0?<VStack spacing={14} frame={{maxWidth:"infinity",minHeight:360}}><Image systemName="text.badge.plus" font={56} foregroundStyle="secondaryLabel"/><Text font="title2" fontWeight="bold">没有规则</Text><Note>点击右上角菜单添加规则</Note></VStack>:<><Note>{`总开关：${data.appendRules?"启用":"禁用"} · 提交可能自动重载 Nikki 服务`}</Note>{data.rules.map(r=><Panel key={r.id}><HStack><Text fontWeight="semibold">{r.type}</Text><Spacer/><Badge>{r.enabled?"启用":"禁用"}</Badge></HStack><Text>{r.matcher||"所有请求"}</Text><Note>{`${r.node}${r.noResolve?" · no-resolve":""}`}</Note><HStack><Button title="编辑" disabled={work.busy} action={()=>openEdit({kind:"rule",value:r})}/><Spacer/><Button title="删除规则" systemImage="trash" role="destructive" disabled={work.busy} action={()=>work.run(()=>work.commitConfirm(`删除规则「${r.type} · ${r.matcher}」？`,async()=>{await deleteNikkiRule(work.owner,data,r.id);if(work.current())refresh()}))}/></HStack></Panel>)}</>}
+          {data.rules.length===0?<VStack spacing={14} frame={{maxWidth:"infinity",minHeight:360}}><Image systemName="text.badge.plus" font={56} foregroundStyle="secondaryLabel"/><Text font="title2" fontWeight="bold">没有规则</Text><Note>点击右上角菜单添加规则</Note></VStack>:<><Note>{`总开关：${data.appendRules?"启用":"禁用"} · 提交可能自动重载 Nikki 服务`}</Note>{data.rules.map(r=><Panel key={r.id}><HStack><Text fontWeight="semibold">{r.type}</Text><Spacer/><Badge>{r.enabled?"启用":"禁用"}</Badge></HStack><Text>{r.matcher||"所有请求"}</Text><Note>{`${r.node}${r.noResolve?" · no-resolve":""}`}</Note><HStack><Button title="编辑" disabled={work.busy||!fresh} action={()=>openEdit({kind:"rule",value:r})}/><Spacer/><Button title="删除规则" systemImage="trash" role="destructive" disabled={work.busy||!fresh} action={()=>{if(!fresh)return;void work.run(()=>work.commitConfirm(`删除规则「${r.type} · ${r.matcher}」？`,async()=>{await deleteNikkiRule(work.owner,data,r.id);if(work.current())refreshAfterWrite()}))}}/></HStack></Panel>)}</>}
         </>:null}
         {data&&kind==="subscription"?<>{data.subscriptions.length===0?<Note>暂无订阅，请点击右上角 + 添加</Note>:data.subscriptions.map(s=>subscriptionCard({s,busy:work.busy,updating:updatingSubscription===s.id,edit:()=>openEdit({kind:"subscription",value:s}),update:()=>update(s),remove:()=>removeSubscription(s)}))}</>:null}
         {data&&kind==="profile"?<>
@@ -863,18 +866,6 @@ export function NikkiRuleSort({c,base,done}:{c:Controller;base:NikkiManagement;d
   function move(i:number,d:number) {const next=[...draft.ids];[next[i],next[i+d]]=[next[i+d],next[i]];draft.ids=next;setIDs(next)}
   async function save(){const next=[...draft.ids];if(!next.some((id,i)=>id!==base.rules[i].id))return;await work.run(()=>work.commitConfirm("提交此规则顺序？",async()=>{await reorderNikkiRules(work.owner,base,next);if(work.current())done(true)}))}
   return <ScrollView background="systemBackground" navigationTitle="排序列表" navigationBarTitleDisplayMode="inline" onAppear={work.onAppear} onDisappear={()=>work.leave(save)}><VStack spacing={12} padding={16}><Note>调整顺序后返回保存；非规则配置的位置保持不变。</Note>{ids.map((id,i)=>{const r=base.rules.find(r=>r.id===id)!;return <Panel key={id}><Text>{`${i+1}. ${r.type} · ${r.matcher||r.node}`}</Text><HStack><Button title="上移" systemImage="arrow.up" disabled={work.busy||i===0} action={()=>move(i,-1)}/><Spacer/><Button title="下移" systemImage="arrow.down" disabled={work.busy||i===ids.length-1} action={()=>move(i,1)}/></HStack></Panel>})}<Status work={work}/></VStack></ScrollView>
-}
-// Map the textarea's normalized LF edits back to raw line endings. Unchanged prefix/suffix
-// retain their exact CRLF/LF/CR bytes; inserted lines follow the document's first newline.
-export function reconcileNikkiText(previous:string,input:string):string {
-  const normalized=previous.replace(/\r\n|\r/g,"\n"),next=input.replace(/\r\n|\r/g,"\n")
-  if(normalized===next)return previous
-  let start=0,end=0
-  while(start<normalized.length&&start<next.length&&normalized[start]===next[start])start++
-  while(end<normalized.length-start&&end<next.length-start&&normalized[normalized.length-1-end]===next[next.length-1-end])end++
-  function rawOffset(offset:number){let raw=0,n=0;while(n<offset){if(previous[raw]==="\r"&&previous[raw+1]==="\n")raw++;raw++;n++}return raw}
-  const newline=previous.match(/\r\n|\r|\n/)?.[0]??"\n"
-  return previous.slice(0,rawOffset(start))+next.slice(start,next.length-end).replace(/\n/g,newline)+previous.slice(rawOffset(normalized.length-end))
 }
 // File editing uses the existing native push stack; hiding the tab bar here
 // preserves the full editor area without a downward modal dismissal.
@@ -1072,7 +1063,7 @@ export function NikkiFileEditor({c,base,file,done,entryKey="direct",onExit}:{c:C
     {loadError?<><Note error>{loadError}</Note><Button title="重试读取" action={()=>setTick(n=>n+1)}/></>:!session?<Note>正在完整读取配置正文…</Note>:null}
     {enabled?<><HStack spacing={12} padding={{horizontal:12,vertical:2}}><Button accessibilityLabel="撤销" buttonStyle="plain" disabled={work.busy||localBusy||editPending} action={()=>{if(session&&valid(session))session.controller.undo()}}><Image systemName="arrow.uturn.backward" frame={{minWidth:44,minHeight:44}}/></Button><Button accessibilityLabel="重做" buttonStyle="plain" disabled={work.busy||localBusy||editPending} action={()=>{if(session&&valid(session))session.controller.redo()}}><Image systemName="arrow.uturn.forward" frame={{minWidth:44,minHeight:44}}/></Button><Spacer/><Button accessibilityLabel="查找 / 替换" buttonStyle="plain" disabled={work.busy} action={()=>setSearching(!searching)}><Image systemName="magnifyingglass" frame={{minWidth:44,minHeight:44}}/></Button></HStack>
       {searching?<VStack spacing={2} padding={{horizontal:12}}>
-        <HStack spacing={4}><TextField title="查找" prompt="查找" labelsHidden textFieldStyle="roundedBorder" value={query} onChanged={v=>{host.searchEpoch++;setQuery(v);setMatches([]);setLocalError("");setLocalNotice("");setSearchStatus("输入关键字后点击搜索")}}/><Button accessibilityLabel="搜索" buttonStyle="plain" disabled={work.busy||localBusy||editPending} action={search}><Image systemName="magnifyingglass" frame={{minWidth:44,minHeight:44}}/></Button><Button accessibilityLabel="展开替换" buttonStyle="plain" action={()=>setReplacing(!replacing)}><Image systemName={replacing?"chevron.up":"chevron.down"} frame={{minWidth:44,minHeight:44}}/></Button></HStack>
+        <HStack spacing={4}><TextField title="查找" prompt="查找" labelsHidden textFieldStyle="roundedBorder" value={query} onChanged={(v:string)=>{host.searchEpoch++;setQuery(v);setMatches([]);setLocalError("");setLocalNotice("");setSearchStatus("输入关键字后点击搜索")}}/><Button accessibilityLabel="搜索" buttonStyle="plain" disabled={work.busy||localBusy||editPending} action={search}><Image systemName="magnifyingglass" frame={{minWidth:44,minHeight:44}}/></Button><Button accessibilityLabel="展开替换" buttonStyle="plain" action={()=>setReplacing(!replacing)}><Image systemName={replacing?"chevron.up":"chevron.down"} frame={{minWidth:44,minHeight:44}}/></Button></HStack>
         <HStack spacing={4}><Text>{matches.length?`${index+1} / ${matches.length}`:searchStatus}</Text><Spacer/><Button accessibilityLabel="上一个" buttonStyle="plain" disabled={!matches.length||work.busy||localBusy||editPending} action={()=>go(index-1)}><Image systemName="chevron.up" frame={{minWidth:44,minHeight:44}}/></Button><Button accessibilityLabel="下一个" buttonStyle="plain" disabled={!matches.length||work.busy||localBusy||editPending} action={()=>go(index+1)}><Image systemName="chevron.down" frame={{minWidth:44,minHeight:44}}/></Button></HStack>
         {replacing?<HStack spacing={4}><TextField title="替换为" prompt="替换为" labelsHidden textFieldStyle="roundedBorder" value={replacement} onChanged={setReplacement}/><Button accessibilityLabel="替换" buttonStyle="plain" disabled={!matches.length||work.busy||localBusy||editPending} action={replace}><Image systemName="arrow.left.arrow.right" frame={{minWidth:44,minHeight:44}}/></Button><Button title="全部" accessibilityLabel="全部替换" disabled={!query||!matches.length||work.busy||localBusy||editPending} action={replaceAll} frame={{minWidth:44,minHeight:44}}/></HStack>:null}
         {localError?<Text foregroundStyle="red">{localError}</Text>:localNotice?<Text>{localNotice}</Text>:null}

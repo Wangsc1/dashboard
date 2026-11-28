@@ -1,19 +1,17 @@
 
 export interface Preferences {
   theme: "system" | "light" | "dark"; connectionStyle: "standard" | "compact"; proxyStyle: "list" | "compact"
-  collapseGesture: boolean; removalFade: boolean; delayGreen: number; delayRed: number
+  collapseGesture: boolean; delayGreen: number; delayRed: number
   showHidden: boolean; customIcons: boolean; groupIcons: Record<string, string>
-  showWrt: boolean; droplets: boolean; connectionBackground: boolean; ripple: boolean
-  foldOffline: boolean; disconnectOnSwitch: boolean; interruptOnRuleDisable: boolean; haptics: boolean
+  disconnectOnSwitch: boolean; interruptOnRuleDisable: boolean
   defaultPage: "overview" | "proxies" | "rules" | "connections" | "more"
   nestedDelay: boolean; nodeSort: "default" | "delay" | "name" | "nameDesc" | "delayDesc"; showGlobal: boolean
   headersEnabled: boolean; requestTimeout: number; testURL: string; testTimeout: number; logLimit: number; detailedAPI: boolean
 }
 export const DEFAULTS: Preferences = {
-  theme: "system", connectionStyle: "standard", proxyStyle: "list", collapseGesture: false, removalFade: false,
+  theme: "system", connectionStyle: "standard", proxyStyle: "list", collapseGesture: false,
   delayGreen: 240, delayRed: 500, showHidden: false, customIcons: true, groupIcons: {},
-  showWrt: true, droplets: false, connectionBackground: false, ripple: false,
-  foldOffline: true, disconnectOnSwitch: false, interruptOnRuleDisable: false, haptics: false, defaultPage: "overview",
+  disconnectOnSwitch: false, interruptOnRuleDisable: false, defaultPage: "overview",
   headersEnabled: true, nestedDelay: false, nodeSort: "default", showGlobal: false, requestTimeout: 8,
   testURL: "https://www.gstatic.com/generate_204", testTimeout: 5000, logLimit: 500, detailedAPI: false,
 }
@@ -25,7 +23,7 @@ export function subscribePreferences(fn: () => void) { listeners.add(fn); return
 let preferenceSnapshot: Preferences | undefined
 export function getPreferences(): Preferences {
   if (!preferenceSnapshot) preferenceSnapshot = normalizePreferences(Storage.get<Partial<Preferences>>(KEY) ?? {})
-  return normalizePreferences(preferenceSnapshot)
+  return { ...preferenceSnapshot, groupIcons: { ...preferenceSnapshot.groupIcons } }
 }
 export function normalizePreferences(raw: Partial<Preferences>): Preferences {
   const p = { ...DEFAULTS }
@@ -33,8 +31,6 @@ export function normalizePreferences(raw: Partial<Preferences>): Preferences {
     const v = raw[k]
     if (typeof v === typeof DEFAULTS[k] && v !== null) (p as any)[k] = v
   }
-  p.foldOffline = true
-  p.haptics = false
   for (const [k, choices] of Object.entries({ theme: ["system", "light", "dark"], connectionStyle: ["standard", "compact"], proxyStyle: ["list", "compact"], defaultPage: ["overview", "proxies", "rules", "connections", "more"], nodeSort: ["default", "name", "nameDesc", "delay", "delayDesc"] })) {
     if (!choices.includes((p as any)[k])) (p as any)[k] = (DEFAULTS as any)[k]
   }
@@ -59,8 +55,6 @@ export function savePreferences(patch: Partial<Preferences>) {
     try { fn() } catch {}
   }
 }
-export function feedback() { if (getPreferences().haptics) { try { HapticFeedback.selection() } catch {} } }
-
 export type LogLevel = "info" | "success" | "warning" | "error"
 export interface AppLog { id: string; at: number; level: LogLevel; category: "NETWORK" | "CONFIG" | "APP"; title: string; detail: string; count: number }
 const LOG_KEY = "dashboard_logs_v140"
@@ -109,8 +103,19 @@ export function parseHeaders(text: string): Record<string, string> {
   }
   return out
 }
-export function customHeaders() { if (!getPreferences().headersEnabled) return {}; try { return parseHeaders(getHeaderText()) } catch { return {} } }
-export function saveHeaders(text: string) { const h = parseHeaders(text); if (Keychain.set(HEADERS_KEY, JSON.stringify(h)) === false) throw new Error("请求头保存失败") }
+let parsedHeadersCache: Record<string, string> | undefined
+export function customHeaders() {
+  if (!getPreferences().headersEnabled) return {}
+  if (!parsedHeadersCache) {
+    try { parsedHeadersCache = parseHeaders(getHeaderText()) } catch { parsedHeadersCache = {} }
+  }
+  return { ...parsedHeadersCache }
+}
+export function saveHeaders(text: string) {
+  const h = parseHeaders(text)
+  if (Keychain.set(HEADERS_KEY, JSON.stringify(h)) === false) throw new Error("请求头保存失败")
+  parsedHeadersCache = { ...h }
+}
 
 export const controllerHealth: Record<string, boolean | undefined> = {}
 

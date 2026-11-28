@@ -73,7 +73,7 @@ function load(name) {
   vm.runInNewContext('(function(require,module,exports){' + code + '\n})', context, { filename: file })(n => n === 'scripting' ? scripting : load(n), module, module.exports)
   return module.exports
 }
-const pref = load('preferences'), api = load('api'), ui = load('settings-ui'), app = load('index'), cloud = load('cloud-backup'), pages = load('dashboard-pages'), model = load('dashboard-model'), home = load('home-ui'), metrics = load('openwrt-metrics')
+const pref = load('preferences'), api = load('api'), ui = load('settings-ui'), app = load('index'), pages = load('dashboard-pages'), model = load('dashboard-model'), home = load('home-ui'), metrics = load('openwrt-metrics')
 function unmount() { for (const fn of cleanups.values()) fn(); cleanups.clear(); hooks = []; effects = [] }
 function render(fn, props, reset = false) { if (reset) unmount(); hookIndex = 0; effects = []; return fn(props) }
 async function flush() { const es = effects; effects = []; es.forEach(f => f()); for (let i = 0; i < 60; i++) await Promise.resolve() }
@@ -161,7 +161,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(pref.getPreferences().requestTimeout, requestTimeout, 'removing request-timeout UI must not alter its stored value')
     }
     const src = fs.readFileSync(path.join(root, 'settings-ui.tsx'), 'utf8'); assert.ok(!src.includes('traceIconPreference'))
-    unmount(); pref.savePreferences({ customIcons: true, haptics: false, theme: 'system', requestTimeout: 8 })
+    unmount(); pref.savePreferences({ customIcons: true, theme: 'system', requestTimeout: 8 })
   })
   await test('阈值双滑块：固定滑轨与稳定回调、不能交叉、结束保存及失败回滚', async () => {
     pref.savePreferences({ delayGreen: 240, delayRed: 500 })
@@ -450,17 +450,9 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     pref.clearImageCache(); assert.equal(api.listControllers().length, before); assert.equal(secrets.get('neko_secret_fake'), secret); assert.ok(pref.getPreferences()); assert.ok(pref.getLogs().length)
     assert.equal(store.has('dashboard_image_v140_' + encodeURIComponent('https://icons.invalid/a.png')), false)
   })
-  await test('延迟阈值边界与触感开关', () => {
-    pref.savePreferences({ delayGreen: 240, delayRed: 500, haptics: true }); pref.feedback(); assert.equal(pref.getPreferences().haptics, false); assert.equal(haptics, 0)
+  await test('延迟阈值边界与废弃偏好字段过滤', () => {
+    pref.savePreferences({ delayGreen: 240, delayRed: 500, haptics: true }); assert.equal(pref.getPreferences().haptics, undefined); assert.equal(haptics, 0)
     assert.equal(api.delayColor(239), 'systemGreen'); assert.equal(api.delayColor(240), 'systemYellow'); assert.equal(api.delayColor(500), 'systemYellow'); assert.equal(api.delayColor(501), 'systemRed'); assert.equal(api.delayColor(0), 'systemRed')
-  })
-  await test('iCloud备份白名单/校验：无秘密；恢复合并不删本地且保留密码', () => {
-    const backup = cloud.makeBackup(), txt = JSON.stringify(backup)
-    for (const s of ['password-sensitive', 'session-sensitive', 'discovered-sensitive', 'private-header-value']) assert.ok(!txt.includes(s))
-    const before = api.listControllers().length, id = backup.controllers[0].id, password = api.getSecret(id)
-    cloud.restoreBackup(backup); assert.equal(api.listControllers().length, before); assert.equal(api.getSecret(id), password)
-    const invalid = clone(backup); invalid.controllers[0].port = 70000
-    assert.throws(() => cloud.restoreBackup(invalid)); assert.equal(api.listControllers().length, before)
   })
   await test('代理配置加载前后保留输入/勾选/开关和状态区尺寸，不靠动画隐藏重排', async () => {
     let release; const wait = new Promise(r => { release = r })
@@ -746,7 +738,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
   await test('设置子页Form统一原生白底，隐藏分组滚动背景且保留主题适配', () => {
     const src = fs.readFileSync(path.join(root, 'settings-ui.tsx'), 'utf8')
     const forms = src.match(/<Form\b[^>]*>/g)
-    assert.equal(forms.length, 3)
+    assert.equal(forms.length, 1)
     assert.ok(forms.every(form => form.includes('background="systemBackground"') && form.includes('scrollContentBackground="hidden"')))
   })
   await test('日志设置移到运行日志顶部，保留已存值及保存行为，全局配置不再重复', () => {
@@ -802,7 +794,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     assert.ok(!text(backCard).includes('°C'));assert.ok(text(backCard).includes('ImmortalWrt 25.12.1'));assert.ok(text(backCard).includes('LENOVO 10MUS1LH00'));assert.ok(text(backCard).includes('6.12.94'));unmount()
   })
   await test('默认界面选择tab；主题与外观项接入、概览数据布局不变', () => {
-    pref.savePreferences({ defaultPage: 'rules', theme: 'dark', showWrt: false })
+    pref.savePreferences({ defaultPage: 'rules', theme: 'dark' })
     let tree = render(app.OverviewPage, { active: c, version: 0, onSwitch() {} }, true); assert.equal(tree.props.navigationDestination, undefined)
     assert.equal(nodes(tree,home.HomeDashboard).length,1);assert.equal(tree.props.sheet,undefined)
     const dashboard=render(home.HomeDashboard,{overview:null,histories:metrics.newHistory(),running:false,cpuFlipped:false,onToggleCpu(){}},true)
@@ -810,35 +802,8 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     const appearance = render(app.AppearanceRoot, {}, true); assert.equal(appearance.props.preferredColorScheme, 'dark'); tree = render(app.Root, {}, true); assert.equal(nodes(tree,'TabView')[0].props.selection.value, 'rules'); assert.equal(nodes(tree, app.RulesPage).length, 1)
     tree = render(ui.PanelSettingsSections, { active: null }, true); assert.ok(!text(tree).includes('应用图标')); assert.ok(!nodes(tree, 'Toggle').some(n => n.props.title === '自定义代理组图标'))
   })
-  await test('曲线几何：真实历史不变、横向连续滚动、末端视觉插值和无过冲路径', () => {
-    const chart = load('chart'), previous = [100, 300], current = [100, 300, 900]
-    const before = clone(previous), next = clone(current), p0 = chart.scrollPoints(previous, current, 0, 100), mid = chart.scrollPoints(previous, current, 0.5, 100), end = chart.scrollPoints(previous, current, 1, 100)
-    assert.equal(p0.at(-1).value, 300); assert.equal(mid.at(-1).value, 600); assert.equal(end.at(-1).value, 900)
-    assert.ok(mid[0].x < p0[0].x && mid[0].x > end[0].x); assert.equal(mid[0].value, 100)
-    assert.deepEqual(previous, before); assert.deepEqual(current, next)
-    assert.match(chart.smoothPath(mid, 40, 1024), /^M .* C /)
-    assert.equal(chart.plotScale([[100]], [[2100]], 0.5, 1024), 1562)
-  })
-  await test('曲线调度：三个图表共享50ms/20fps计时器，结束或取消即释放', () => {
-    unmount(); const chart = load('chart'), base = intervals.size; let ticks = 0
-    const a = chart.animateChart(() => { ticks++; return true }), b = chart.animateChart(() => { ticks++; return true }), c = chart.animateChart(() => { ticks++; return true })
-    assert.equal(intervals.size, base + 1)
-    const timer = [...intervals.values()].find(x => x.ms === 50); assert.ok(timer); timer.fn(); assert.equal(ticks, 3)
-    a(); b(); c(); assert.equal(intervals.size, base)
-    chart.animateChart(() => false); [...intervals.values()].find(x => x.ms === 50).fn(); assert.equal(intervals.size, base)
-  })
-  await test('曲线hook：采样之间逐帧更新，隐藏/卸载时释放订阅', async () => {
-    unmount(); const chartUI = load('chart-ui'); let data = [100, 300], enabled = true
-    const renderPlot = () => chartUI.useSmoothPlot(data, undefined, enabled, 100, 40)
-    render(renderPlot, {}, true); await flush(); const base = intervals.size
-    now += 1000; data = [100, 300, 900]; render(renderPlot, {}); await flush()
-    assert.equal(intervals.size, base + 1); now += 500; [...intervals.values()].find(x => x.ms === 50).fn()
-    const frame = render(renderPlot, {}); assert.equal(frame.points[0].at(-1).value, 600)
-    enabled = false; render(renderPlot, {}); await flush(); assert.equal(intervals.size, base)
-    unmount(); assert.equal(intervals.size, base)
-  })
   await test('共享NavigationStack内原生TabView五入口、selection默认值/切换与根X', () => {
-    pref.savePreferences({ defaultPage: 'overview', connectionBackground: false })
+    pref.savePreferences({ defaultPage: 'overview' })
     let tree = render(app.Root, {}, true)
     assert.equal(tree.type, 'TabView'); assert.equal(nodes(tree,'TabView')[0].props.selection.value, 'home')
     const tabs = nodes(tree, 'Tab')
@@ -876,7 +841,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       assert.equal(nodes(tree, 'NavigationStack').length, 5)
       for (let i = 0; i < ids.length; i++) { const lazy = ['proxies','rules'].includes(ids[i]) && ids[i] !== id; assert.equal(nodes(tree, types[i]).length, lazy ? 0 : 1); if (!lazy) assert.equal(nodes(tree, types[i])[0].props.selected, ids[i] === id) }
     }
-    assert.equal(api.VERSION, '1.135'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
+    assert.equal(api.VERSION, '1.136'); assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'script.json'))).version, api.VERSION)
   })
   await test('独立导航栈保留业务owner和身份，只有选中页提供可见工具栏', () => {
     pref.savePreferences({ defaultPage: 'overview' })
@@ -965,7 +930,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     assert.equal(nodes(tree, 'Toggle').length, 0); assert.ok(!text(tree).includes('交互体验')); assert.ok(!text(tree).includes('触感反馈'))
     const beforeConfirms = confirms.length
     context.confirmResult = false; await button(tree, '清除缓存').props.action(); assert.equal(confirms.length, beforeConfirms + 1)
-    pref.savePreferences({ haptics: true }); pref.feedback(); assert.equal(pref.getPreferences().haptics, false); assert.equal(haptics, beforeHaptics)
+    pref.savePreferences({ haptics: true }); assert.equal(pref.getPreferences().haptics, undefined); assert.equal(haptics, beforeHaptics)
     unmount(); pref.savePreferences(before)
   })
   await test('更多版本预取在页面挂载前完成，首帧显示版本，启动入口包含预取',async()=>{
@@ -1065,7 +1030,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
   })
   await test('离线控制器默认折叠，不受旧关闭值影响，长按只展开当前地址', () => {
     const before = pref.getPreferences()
-    pref.savePreferences({ foldOffline: false }); assert.equal(pref.getPreferences().foldOffline, true)
+    pref.savePreferences({ foldOffline: false }); assert.equal(pref.getPreferences().foldOffline, undefined)
     const list = api.listControllers(); assert.ok(list.length)
     const current = list[0], health = pref.controllerHealth[current.id]
     pref.controllerHealth[current.id] = false
@@ -1197,7 +1162,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     const d = await api.loadDockerSettings(router); assert.equal(d.logLevel, 'warn'); assert.equal(d.dataRoot, '/opt/docker/')
     await assert.rejects(() => api.saveDockerSettings(router, { logLevel: 'warn', httpProxy: 'http://a;rm -rf', httpsProxy: '', noProxy: '' })); await assert.rejects(() => api.saveDockerSettings(router, { logLevel: 'x', httpProxy: '', httpsProxy: '', noProxy: '' }))
     seen.length = 0; await api.saveDockerSettings(router, { logLevel: 'info', httpProxy: '', httpsProxy: '', noProxy: '' }); assert.ok(seen.some(x => x.method === 'commit' && x.args.config === 'dockerd')); assert.ok(seen.some(x => x.obj === 'rc' && x.args.name === 'dockerd'))
-    assert.equal(await api.loadContainerPolicy(router, 'f01e8c0c992d37147ed051e6'), 'always'); await assert.rejects(() => api.saveContainerPolicy(router, 'f01e8c0c992d37147ed051e6', 'bad'))
+    await assert.rejects(() => api.saveContainerPolicy(router, 'f01e8c0c992d37147ed051e6', 'bad'))
     await api.saveContainerPolicy(router, 'f01e8c0c992d37147ed051e6', 'unless-stopped'); assert.ok(seen.some(x => x.obj === 'docker.container' && x.method === 'update'))
     const src = fs.readFileSync(path.join(root, 'index.tsx'), 'utf8'); assert.ok(fs.readFileSync(path.join(root, 'docker-icon.ts'), 'utf8').includes('DOCKER_PNG_BASE64')); assert.ok(src.includes('UIImage.fromBase64String')); assert.ok(src.includes('<DockerLogo')); assert.ok(src.includes('title="保存"')); assert.ok(!src.includes('保存并重启')); assert.ok(!src.includes('title="保持"')); assert.ok(!src.includes('点进可编辑')); assert.ok(src.includes('<DockerLogo size={22} mono />')); assert.ok(!src.includes('SecureField title="Token')); assert.ok(!src.includes('title="Docker 管理" systemImage="shippingbox"')); assert.ok(!src.includes('title="刷新" systemImage="arrow.clockwise" action={() => setTick'))
     const ov = await api.loadDockerOverview(router); assert.equal(ov.version, '29.6.1'); assert.equal(ov.api, '1.59'); assert.equal(ov.root, '/opt/docker')
@@ -1245,8 +1210,8 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
   await test('1.5.46 面板管理地址打码；FRP页Token完整显示可编辑', () => {
     const src = fs.readFileSync(path.join(root, 'index.tsx'), 'utf8')
     const strip = s => s.replace(/\((\w+): string\)/g, '($1)'), maskUrl = new Function('return ' + strip(src.match(/const maskUrl = (.*)/)[1]))()
-    assert.equal(maskUrl('http://43.153.184.66:8008'), 'http://43.153.*.*:8008'); assert.equal(maskUrl('https://10.0.0.1'), 'https://10.0.*.*'); assert.equal(maskUrl('http://router.example.com:80'), 'http://router.example.com:80')
-    assert.ok(src.includes('{maskUrl(c.url)}')); assert.ok(src.includes('{maskUrl(info.server)}')); assert.equal(maskUrl('43.153.184.66:8055'), '43.153.*.*:8055'); assert.ok(!src.includes('maskToken')); assert.ok(src.includes('<Field title="Token" value={token}')); assert.ok(src.includes('token: token.trim()')); assert.ok(src.includes('useState(info.common.token)'))
+    assert.equal(maskUrl('http://192.0.2.66:8008'), 'http://192.0.*.*:8008'); assert.equal(maskUrl('https://10.0.0.1'), 'https://10.0.*.*'); assert.equal(maskUrl('http://router.example.com:80'), 'http://router.example.com:80')
+    assert.ok(src.includes('{maskUrl(c.url)}')); assert.ok(src.includes('{maskUrl(info.server)}')); assert.equal(maskUrl('192.0.2.66:8055'), '192.0.*.*:8055'); assert.ok(!src.includes('maskToken')); assert.ok(src.includes('<Field title="Token" value={token}')); assert.ok(src.includes('token: token.trim()')); assert.ok(src.includes('useState(info.common.token)'))
   })
   await test('1.5.46 面板设置页布局：外观设置在添加OpenWrt下；全局配置在路由器详情最上；运行日志在软件管理后', () => {
     const src = fs.readFileSync(path.join(root, 'index.tsx'), 'utf8'), body = src.slice(src.indexOf('function SettingsPage'), src.indexOf('function MorePage'))
@@ -1377,9 +1342,21 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
       await tree.props.onDisappear();const saved=api.listControllers().find(c=>c.id===initial.id);assert.equal(saved.name,'Edited without rerender');assert.equal(saved.url,'https://new-edit.invalid');assert.equal(saved.username,'admin');assert.equal(saved.plugin,'nikki');assert.equal(saved.cport,9191);assert.equal(api.getSecret(initial.id),'return-password-only-keychain');assert.equal(api.getClashSecret(initial.id),'return-secret-only-keychain');assert.ok(!JSON.stringify([...store]).includes('return-password-only-keychain'));assert.ok(!JSON.stringify([...store]).includes('return-secret-only-keychain'));assert.equal(completed,1);assert.equal(dismissed,0);assert.equal(calls.length,0)
     }finally{scripting.Navigation.useDismiss=originalDismiss;unmount();api.removeController(initial.id)}
   })
-  await test('编辑OpenWrt校验失败留在页面不覆盖旧设置；帮助/卸载/后台不触发保存', async () => {
-    const initial=api.saveController({name:'Validation edit',host:'validation-edit.invalid',port:80,https:false,username:'root',plugin:'nikki',auto:true,cport:9090},'validation-old-password','validation-old-secret');let completed=0;const props={initial,onDone(){completed++}};let tree=render(app.EditController,props,true);const before=JSON.stringify([...store]),credentials=JSON.stringify([...secrets]);nodes(tree,'TextField').find(f=>f.props.title==='地址').props.onChanged('');calls.length=0;await tree.props.onDisappear();tree=render(app.EditController,props);assert.ok(text(tree).includes('请填写路由器地址'));assert.equal(completed,0);assert.equal(JSON.stringify([...store]),before);assert.equal(JSON.stringify([...secrets]),credentials);nodes(tree,'TextField').find(f=>f.props.title==='地址').props.onChanged('repaired-edit.invalid');nodes(tree,'TextField').find(f=>f.props.title==='端口').props.onChanged('99999');await tree.props.onDisappear();tree=render(app.EditController,props);assert.ok(text(tree).includes('端口无效'));assert.equal(JSON.stringify([...store]),before);nodes(tree,'TextField').find(f=>f.props.title==='端口').props.onChanged('8080');await tree.props.onDisappear();assert.equal(completed,1);assert.equal(api.listControllers().find(c=>c.id===initial.id).url,'http://repaired-edit.invalid:8080');assert.equal(calls.length,0)
-    tree=render(app.EditController,props,true);nodes(tree,'TextField')[0].props.onChanged('Unsaved draft');const stable=JSON.stringify([...store]);assert.ok(tree.props.onDisappear);assert.equal(tree.props.onAppear,undefined);assert.ok(nodes(tree,'NavigationLink').some(l=>l.props.destination.type.name==='HelpPage'));unmount();assert.equal(JSON.stringify([...store]),stable);api.removeController(initial.id)
+  await test('编辑OpenWrt校验失败留在页面不覆盖旧设置；帮助/卸载/后台不触发保存，返回后继续编辑不丢改动且不重复新建', async () => {
+    const initial=api.saveController({name:'Validation edit',host:'validation-edit.invalid',port:80,https:false,username:'root',plugin:'nikki',auto:true,cport:9090},'validation-old-password','validation-old-secret');let completed=0;const props={initial,onDone(){completed++}};let tree=render(app.EditController,props,true);await flush();const before=JSON.stringify([...store]),credentials=JSON.stringify([...secrets]);nodes(tree,'TextField').find(f=>f.props.title==='地址').props.onChanged('');calls.length=0;await tree.props.onDisappear();tree=render(app.EditController,props);assert.ok(text(tree).includes('请填写路由器地址'));assert.equal(completed,0);assert.equal(JSON.stringify([...store]),before);assert.equal(JSON.stringify([...secrets]),credentials);nodes(tree,'TextField').find(f=>f.props.title==='地址').props.onChanged('repaired-edit.invalid');nodes(tree,'TextField').find(f=>f.props.title==='端口').props.onChanged('99999');await tree.props.onDisappear();tree=render(app.EditController,props);assert.ok(text(tree).includes('端口无效'));assert.equal(JSON.stringify([...store]),before);nodes(tree,'TextField').find(f=>f.props.title==='端口').props.onChanged('8080');await tree.props.onDisappear();assert.equal(completed,1);assert.equal(api.listControllers().find(c=>c.id===initial.id).url,'http://repaired-edit.invalid:8080');assert.equal(calls.length,0)
+    tree=render(app.EditController,props,true);await flush();nodes(tree,'TextField')[0].props.onChanged('Unsaved draft');const stable=JSON.stringify([...store]);assert.ok(tree.props.onDisappear);assert.ok(tree.props.onAppear)
+    const helpLink=nodes(tree,'NavigationLink').find(l=>l.props.destination.type.name==='HelpPage');assert.ok(helpLink)
+    const helpTree=helpLink.props.destination.type(helpLink.props.destination.props);helpTree.props.onAppear();await tree.props.onDisappear();assert.equal(JSON.stringify([...store]),stable,'pushing HelpPage must not save')
+    helpTree.props.onDisappear();tree.props.onAppear()
+    emitScene('background');await tree.props.onDisappear();assert.equal(JSON.stringify([...store]),stable,'backgrounding must not save')
+    emitScene('active');tree.props.onAppear();unmount();assert.equal(JSON.stringify([...store]),stable)
+    // Subsequent edits after a first save update the same controller rather than dropping or duplicating
+    tree=render(app.EditController,props,true);await flush();nodes(tree,'TextField')[0].props.onChanged('First pass');await tree.props.onDisappear();assert.equal(api.listControllers().find(c=>c.id===initial.id).name,'First pass')
+    tree.props.onAppear();nodes(tree,'TextField')[0].props.onChanged('Second pass');await tree.props.onDisappear();assert.equal(api.listControllers().find(c=>c.id===initial.id).name,'Second pass')
+    // IPv6 bare and bracketed addresses preserve full address without truncation or double brackets
+    const v6a=api.saveController({name:'v6a',host:'fd00::1',port:8080,https:false,username:'root',plugin:'nikki',auto:false,cport:9090},'',''),v6b=api.saveController({name:'v6b',host:'[2001:db8::1]:8443',port:443,https:true,username:'root',plugin:'nikki',auto:false,cport:9090},'','')
+    assert.equal(v6a.url,'http://[fd00::1]:8080');assert.equal(v6b.url,'https://[2001:db8::1]')
+    api.removeController(v6a.id);api.removeController(v6b.id);api.removeController(initial.id)
   })
   await test('添加OpenWrt同样返回自动保存，无右上保存按钮', () => {
     const tree=render(app.EditController,{onDone(){}},true);assert.equal(tree.props.navigationTitle,'添加 OpenWrt');assert.equal(tree.props.toolbar,undefined);assert.ok(tree.props.onDisappear);unmount()
@@ -1650,7 +1627,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     pref.savePreferences({ theme: 'dark' }); assert.notEqual(render(Probe, {}), first); assert.equal(render(Probe, {}).theme, 'dark')
     unmount(); pref.savePreferences({ headersEnabled: true, theme: 'system' })
     const src = fs.readFileSync(path.join(root, 'index.tsx'), 'utf8')
-    assert.ok(src.includes('function AppearanceRoot()')); assert.ok(src.includes('usePreferences(["connectionBackground"])'));  assert.ok(!src.includes('prefs.foldOffline'))
+    assert.ok(src.includes('function AppearanceRoot()')); assert.ok(!src.includes('connectionBackground')); assert.ok(!src.includes('prefs.foldOffline'))
   })
   await test('五种节点排序：升降序、超时未测速最后、原始顺序不变', () => {
     const g = { all: ['C','B','A','D','E'], delays: { A: 10, B: 20, C: 0, E: 20 } }
@@ -1662,28 +1639,28 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     assert.equal(pref.NODE_SORT_OPTIONS.length, 5)
   })
   await test('全局配置移除iCloud同步与代理内核区块，其他内核页面保留', () => {
-    const src = fs.readFileSync(path.join(root, 'settings-ui.tsx'), 'utf8'), body = src.slice(src.indexOf('export function PanelSettingsSections'), src.indexOf('function CloudSettingsPage'))
+    const src = fs.readFileSync(path.join(root, 'settings-ui.tsx'), 'utf8'), body = src.slice(src.indexOf('export function PanelSettingsSections'), src.indexOf('export function LogsPage'))
     assert.ok(!body.includes('iCloud 同步')); assert.ok(!body.includes('代理内核')); assert.ok(!body.includes('CloudSettingsPage')); assert.ok(!body.includes('KernelConfigPage')); assert.ok(src.includes('export function KernelConfigPage'))
   })
   await test('全局配置移除外观与测速入口，保留缓存管理', () => {
-    const src = fs.readFileSync(path.join(root, 'settings-ui.tsx'), 'utf8'), body = src.slice(src.indexOf('export function PanelSettingsSections'), src.indexOf('function CloudSettingsPage'))
+    const src = fs.readFileSync(path.join(root, 'settings-ui.tsx'), 'utf8'), body = src.slice(src.indexOf('export function PanelSettingsSections'), src.indexOf('export function LogsPage'))
     assert.ok(!body.includes('（本地替代）')); assert.ok(!body.includes('（长按组标题）')); assert.ok(!body.includes('（淡出替代）'))
     assert.ok(body.includes('clearImageCache')); for (const k of ['ThresholdRange','requestTimeout','testTimeout','TestURLField']) assert.ok(!body.includes(k))
     for (const k of ['theme','defaultPage','showHidden','customIcons']) assert.ok(!body.includes(k))
   })
-  await test('设置子页打开时暂停主页偏好刷新，返回补齐；外观去掉编辑组图标', async () => {
-    pref.savePreferences({ showWrt: true })
-    const Probe = ({ enabled }) => ui.usePreferences(['showWrt'], enabled)
+  await test('设置子页打开时暂停偏好刷新，返回补齐；外观去掉编辑组图标', async () => {
+    pref.savePreferences({ customIcons: true })
+    const Probe = ({ enabled }) => ui.usePreferences(['customIcons'], enabled)
     const first = render(Probe, { enabled: true }, true); await flush()
     render(Probe, { enabled: false }); await flush()
-    pref.savePreferences({ showWrt: false }); assert.equal(render(Probe, { enabled: false }), first)
-    render(Probe, { enabled: true }); await flush(); assert.equal(render(Probe, { enabled: true }).showWrt, false)
-    unmount(); pref.savePreferences({ showWrt: true })
-    const src = fs.readFileSync(path.join(root, 'settings-ui.tsx'), 'utf8'), body = src.slice(src.indexOf('export function PanelSettingsSections'), src.indexOf('function CloudSettingsPage'))
+    pref.savePreferences({ customIcons: false }); assert.equal(render(Probe, { enabled: false }), first)
+    render(Probe, { enabled: true }); await flush(); assert.equal(render(Probe, { enabled: true }).customIcons, false)
+    unmount(); pref.savePreferences({ customIcons: true })
+    const src = fs.readFileSync(path.join(root, 'settings-ui.tsx'), 'utf8'), body = src.slice(src.indexOf('export function PanelSettingsSections'), src.indexOf('export function LogsPage'))
     assert.ok(!body.includes('编辑组图标')); assert.ok(!body.includes('IconsPage')); assert.ok(!body.includes('自定义代理组图标'))
   })
   await test('全局配置包含迁移项且无概览组，两个外观入口都删除', async () => {
-    pref.savePreferences({ theme: 'dark', customIcons: true, showWrt: false })
+    pref.savePreferences({ theme: 'dark', customIcons: true })
     let tree = render(ui.PanelSettingsSections, { active: null }, true)
     assert.ok(!text(tree).includes('概览页面'))
     for (const key of ['showWrt','droplets','connectionBackground','ripple']) assert.ok(!nodes(tree, 'Toggle').some(n => n.props.key === key))
@@ -1692,7 +1669,7 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     assert.ok(button(tree, '清除缓存'))
     assert.equal(pref.getPreferences().theme, 'dark')
     const src = fs.readFileSync(path.join(root, 'index.tsx'), 'utf8'); assert.ok(!src.includes('AppearancePage')); assert.ok(!src.includes('prefs.showWrt'))
-    pref.savePreferences({ theme: 'system', showWrt: true }); unmount()
+    pref.savePreferences({ theme: 'system' }); unmount()
   })
   await test('全局配置移除列表与动画整组和显示Global开关，其余设置保留', () => {
     const tree = render(ui.PanelSettingsSections, { active: null }, true)
@@ -2255,6 +2232,22 @@ async function test(title, fn) { await fn(); count++; console.log('PASS', title)
     assert.ok(!source.includes('function RateChart('));assert.ok(!source.includes('function StatCard('));assert.ok(!source.includes('function Big('))
     assert.ok(source.includes('<HomeDashboard overview={shownOv}'));assert.ok(!source.includes('sheet={{isPresented:cpuOpen'))
     assert.ok(home.includes('<InlineCanvasPlot {...props}/>'))
+  })
+  await test('代码审查回归：IPv6连接地址拆分、非OpenWrt顶栏状态色与Nikki删除规则缓存失效', async () => {
+    responder = () => ({ body: { connections: [
+      { id: 'v6-port', start: new Date(now).toISOString(), metadata: { host: 'v6.invalid', sourceIP: '2001:db8::2', sourcePort: 54321, destinationIP: '2001:db8::1', destinationPort: 443, network: 'tcp' }, upload: 1, download: 2 },
+      { id: 'v6-bare', start: new Date(now).toISOString(), metadata: { host: '', sourceIP: '2001:db8::2', destinationIP: '2001:db8::9', network: 'icmpv6' }, upload: 0, download: 0 },
+    ] } })
+    const xs = await api.loadConnections(c)
+    assert.equal(xs[0].src, '[2001:db8::2]:54321'); assert.equal(xs[0].dst, '[2001:db8::1]:443')
+    assert.equal(xs[1].dst, '2001:db8::9')
+    const d1 = pages.ConnectionDetailPage({ x: xs[0], onDisconnect() {} }), d2 = pages.ConnectionDetailPage({ x: xs[1], onDisconnect() {} })
+    const rowsOf = tree => tree.props.children.flatMap(s => s.props?.children ?? []).filter(r => r?.props?.title).map(r => [r.props.title, r.props.value])
+    assert.deepEqual(rowsOf(d1).filter(([k]) => k === '端口' || k === '目标IP'), [['端口', '443'], ['目标IP', '2001:db8::1']])
+    assert.deepEqual(rowsOf(d2).filter(([k]) => k === '端口' || k === '目标IP'), [['端口', ''], ['目标IP', '2001:db8::9']])
+    const badHome = render(app.OverviewPage, { active: c, version: 0, onSwitch() {} }, true)
+    assert.equal(nodes(badHome.props.toolbar.principal.props.overlay.content, 'Circle')[0].props.fill, 'systemRed')
+    unmount()
   })
   console.log(`\n${count} tests passed. All fetch, Storage, Keychain, iCloud and UI bindings were mocked; no device/remote effects executed.`)
 })().catch(e => { console.error(e); process.exitCode = 1 })

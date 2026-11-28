@@ -36,14 +36,6 @@ function slot(n,height){
      assert.equal(intervals.size,0)
    }unmount()
  })
- await test('共享调度: 所有订阅仅一个50ms timer，最后取消/到期即停止，无独立timer',()=>{
-   const chart=load('chart');let a=0,b=0
-   const offA=chart.animateChart(()=>{a++;return true}),offB=chart.animateChart(()=>{b++;return true})
-   assert.equal(intervals.size,1);assert.ok([...intervals.values()][0].ms>=34)
-   for(const t of intervals.values())t.fn();assert.equal(a,1);assert.equal(b,1)
-   offA();assert.equal(intervals.size,1);offB();assert.equal(intervals.size,0)
-   chart.animateChart(()=>false);for(const t of [...intervals.values()])t.fn();assert.equal(intervals.size,0)
- })
  // Continuous geometry and native bridge lifecycle are exercised by native-plot.cjs and plot-host.cjs.
  await test('契约(非实机): 负载条 GeometryReader 外有单次固定24pt容器，空值保留灰底条',()=>{
    for(const f of [undefined,NaN,-1,0,0.001,1,2]){

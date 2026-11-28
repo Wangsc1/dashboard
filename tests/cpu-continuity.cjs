@@ -8,11 +8,6 @@ function instance(fn){const state={hooks:[],cleanups:new Map()};return {async dr
  let out=fn(props);await flush();hookIndex=0;effects=[];out=fn(props);await flush()
  hooks=saved.hooks;cleanups=saved.cleanups;effects=saved.effects;hookIndex=saved.hookIndex;return out
 },close(){for(const c of state.cleanups.values())c();state.cleanups.clear()}}}
-const chart=load('chart'),origPath=chart.smoothPath,origSubscribe=chart.animateChart
-let points=[],starts=0,stops=0,active=0
-chart.smoothPath=(p,...rest)=>{points=p.map(x=>({...x}));return origPath(p,...rest)}
-chart.animateChart=cb=>{starts++;active++;let live=true;const end=()=>{if(live){live=false;stops++;active--}};const cancel=origSubscribe(at=>{const more=cb(at);if(!more)end();return more});return()=>{end();cancel()}}
-const tick=async(plot,props,ms=50)=>{now+=ms;for(const t of [...intervals.values()])t.fn();return plot.draw(props)}
 const near=(a,b,msg)=>assert.ok(Math.abs(a-b)<0.00001,msg+': '+a+' vs '+b)
 ;(async()=>{
  // Geometry is covered by native-plot.cjs; the shared component contract by plot-host.cjs.

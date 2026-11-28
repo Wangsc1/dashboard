@@ -9,7 +9,7 @@ import {
 } from "scripting"
 import {
   VERSION, Controller, Overview, Plugin, PLUGINS, listControllers, saveController, removeController, getActive, setActive, getSecret, getClashSecret,
-  loadOverview, overviewSource, resetOverviewSampling, loadClashOverview, loadConnectionHosts,
+  loadOverview, overviewSource, resetOverviewSampling, loadClashOverview,
   DockerContainer, FrpInfo, FrpProxy, DockerSettings, upgradablePkgs, filterPkgs, pkgUpdateLists, pkgInstall, pkgRemove, pkgUpgrade, Pkg, loadContainerDetail, dockerContainerOp, DockerContainerDetail, dockerImageRemove, DockerImage, dockerAction, frpAction, saveFrpCommon, saveFrpProxy, deleteFrpProxy, saveDockerSettings, saveContainerPolicy, fmtUptime,
 } from "./api"
 
@@ -59,7 +59,7 @@ function saveOverviewFrame(source: string, o: Overview, baseline: boolean): Over
     ...(keepTraffic ? {traffic:previous!.overview.traffic} : {}),
     ...(keepCpu ? {wrt:{...o.wrt!,cpu:old!.cpu,cpus:old!.cpus}} : {}),
   } : o
-  const histories = appendHistory(h,o.traffic.down,o.traffic.up,cpus)
+  const histories = appendHistory(h,o.traffic.down,o.traffic.up,cpus.filter(c=>c.id==="cpu"))
   // A rebase measures counters, not CPU/rates. Retain the old drawing without
   // adding held values or artificial zero points; real new samples append later.
   if (baseline) { histories.up=h.up; histories.down=h.down }
@@ -130,15 +130,13 @@ function startOverviewSampling(active: Controller, foreground: boolean): () => v
   return () => { disposed = true; pause(); AppEvents.scenePhase.removeListener(phaseChanged) }
 }
 function OverviewPage({ active, version, onSwitch, onClose, selected = true }: { active: Controller | null; version: number; onSwitch: () => void; onClose?: () => void; selected?: boolean }) {
-  const prefs = usePreferences(["connectionBackground"])
-  const [hosts, setHosts] = useState<string[]>([])
   const [ov, setOv] = useState<Overview | null>(() => (active ? overviewPrime.get(overviewSource(active))?.overview ?? null : null))
   const [err, setErr] = useState("")
   const [histories, setHistories] = useState(() => (active ? overviewPrime.get(overviewSource(active))?.histories : undefined) ?? newHistory())
   const [sampleSource,setSampleSource]=useState(() => (active ? overviewSource(active) : ""))
   const [cpuFlipped,setCpuFlipped]=useState(false)
   const source=active?overviewSource(active):""
-  const all = listControllers()
+  const all = useMemo(() => listControllers(), [active?.id, version])
   // Retain the navigation owner while pausing work behind pushed settings pages.
   const [visible, setVisible] = useState(true)
   const [sceneVisibility] = useState(() => ({ model: new SceneVisibility(), selected }))
@@ -169,26 +167,13 @@ function OverviewPage({ active, version, onSwitch, onClose, selected = true }: {
     return()=>{overviewPrimeListeners.delete(receive)}
   },[source,showCharts])
   useEffect(()=>{if(selected){setVisible(true);requestPlotKick("selected")}else setCpuFlipped(false)},[selected])
-  useEffect(() => {
-    setHosts([])
-    if (!active || !prefs.connectionBackground || !showCharts) return
-    let alive = true
-    let reading = false
-    const read = () => {
-      if (reading) return
-      reading = true
-      loadConnectionHosts(active).then(xs => { if (alive) setHosts(h => h.length === xs.length && h.every((v, i) => v === xs[i]) ? h : xs) }).catch(() => { if (alive) setHosts([]) }).finally(() => { reading = false })
-    }
-    void read(); const t = setInterval(read, 30000)
-    return () => { alive = false; clearInterval(t) }
-  }, [source, prefs.connectionBackground, showCharts])
   const currentFrame=showCharts?overviewPrime.get(source):undefined
   const shownOv=currentFrame?.overview??(sampleSource===source?ov:null)
   const shownHistory=currentFrame?.histories??(sampleSource===source?histories:newHistory())
   const toggleCpu=useMemo(()=>()=>setCpuFlipped(v=>!v),[])
   const homeContent=useMemo(()=><HomeDashboard overview={shownOv} histories={shownHistory} running={showCharts&&visible} cpuFlipped={cpuFlipped} onToggleCpu={toggleCpu}/>,[shownOv,shownHistory,showCharts&&visible,cpuFlipped,toggleCpu])
   const shownError = active && active.kind !== "openwrt" ? "主页仅支持 OpenWrt 路由器数据，请在设置添加 OpenWrt" : err
-  const statusText = shownError ? "连接失败" : ov ? "运行正常" : "连接中", statusColor = err ? "systemRed" : "systemGreen"
+  const statusText = shownError ? "连接失败" : ov ? "运行正常" : "连接中", statusColor = shownError ? "systemRed" : "systemGreen"
   const toolbar = useMemo(() => ({ ...rootToolbar("home", onClose, <NavigationLink destination={<SettingsPage active={active} onChanged={onSwitch} />}><Image systemName="ellipsis.circle" /></NavigationLink>),
     // Status is an overlay: only the single title participates in toolbar layout,
     // so adding the subtitle does not lift the title above other tabs' baseline.
@@ -202,7 +187,7 @@ function OverviewPage({ active, version, onSwitch, onClose, selected = true }: {
         {all.length>1?<HomeCard><HStack spacing={8}><HomeBadge icon="server.rack" color="#3485eb"/><Picker title="当前路由器" pickerStyle="menu" value={active.id} onChanged={(v:string)=>{setActive(v);onSwitch()}}>{all.map(c=><Text key={c.id} tag={c.id}>{c.name}</Text>)}</Picker></HStack></HomeCard>:null}
         {shownError&&!/^请求超时[。.!！]?$/.test(shownError.trim())?<Text font={12} foregroundStyle="systemRed">{shownError}</Text>:null}
         {homeContent}
-        <HomeConnectionsCard count={shownOv?.connCount} hosts={hosts}/>
+        <HomeConnectionsCard count={shownOv?.connCount}/>
       </VStack>
     </ScrollView>
   </VStack>
@@ -555,10 +540,10 @@ function SoftwarePage({ active }: { active: Controller }) {
   </Form>
 }
 
-function HelpPage() {
-
+function HelpPage({ onVisibility }: { onVisibility?: (open: boolean) => void }) {
+  const showHelp = () => onVisibility?.(true), hideHelp = () => onVisibility?.(false)
   const pageScheme = usePageColorScheme()
-  return <Form preferredColorScheme={pageScheme} background="systemBackground" scrollContentBackground="hidden" navigationTitle="使用说明" navigationBarTitleDisplayMode="inline">
+  return <Form preferredColorScheme={pageScheme} onAppear={showHelp} onDisappear={hideHelp} background="systemBackground" scrollContentBackground="hidden" navigationTitle="使用说明" navigationBarTitleDisplayMode="inline">
     <Section listRowBackground={panelRowBackground()} header={<Text>OpenWrt</Text>}>
       <Text>地址填路由器 LuCI 后台的 IP，端口为 LuCI 的端口（默认 80；开启 HTTPS 时通常 443）。用户名、密码是登录 LuCI 的账号。</Text>
     </Section>
@@ -586,8 +571,17 @@ function EditController({ initial, onDone }: { initial?: Controller; onDone: () 
   const [cport, setCport] = useState(String(initial?.cport ?? 9090))
   const [csecret, setCsecret] = useState(initial ? getClashSecret(initial.id) : "")
   const [err, setErr] = useState("")
+  const snapDraft = (d: { name:string;host:string;port:string;https:boolean;username:string;password:string;plugin:Plugin;auto:boolean;cport:string;csecret:string }) => JSON.stringify(d)
   // Keep the latest input synchronously: a return tap need not wait for another render.
-  const [entry] = useState(() => ({ busy:false, finished:false, draft:{name,host,port,https,username,password,plugin,auto,cport,csecret} }))
+  const [entry] = useState(() => {
+    const draft = {name,host,port,https,username,password,plugin,auto,cport,csecret}
+    return { busy:false, helpOpen:false, savedId:initial?.id as string|undefined, savedSnap:initial?snapDraft(draft):"", sceneVis:new SceneVisibility(), draft }
+  })
+  useEffect(() => {
+    const changed = (phase: "active" | "inactive" | "background") => { entry.sceneVis.scene(phase === "active", Date.now()) }
+    AppEvents.scenePhase.addListener(changed)
+    return () => AppEvents.scenePhase.removeListener(changed)
+  }, [])
   function change<K extends keyof typeof entry.draft>(key:K,set:(value:typeof entry.draft[K])=>void) {
     return (value:typeof entry.draft[K]) => { entry.draft[key]=value;set(value) }
   }
@@ -596,23 +590,33 @@ function EditController({ initial, onDone }: { initial?: Controller; onDone: () 
     if (v && entry.draft.port === "80") change("port",setPort)("443")
     if (!v && entry.draft.port === "443") change("port",setPort)("80")
   }
-  async function save(auto=false) {
-    if (entry.busy || entry.finished) return
+  async function save(fromDisappear=false) {
+    if (entry.busy) return
+    if (fromDisappear && (entry.helpOpen || !entry.sceneVis.disappear(Date.now()))) return
+    const d = entry.draft, currentSnap = snapDraft(d)
+    if (entry.savedId && currentSnap === entry.savedSnap) return
+    // Cancelling an untouched blank "Add OpenWrt" form should exit quietly.
+    if (!entry.savedId && !d.host.trim() && !d.name.trim() && !d.password && !d.csecret && d.port === "80" && !d.https && d.username === "root") return
     entry.busy=true; setErr("")
     try {
-      const d=entry.draft
-      const c = saveController({ id: initial?.id, name:d.name, host:d.host, port:Number(d.port), https:d.https, username:d.username, plugin:d.plugin, auto:d.auto, cport:Number(d.cport)||9090 }, d.password, d.csecret)
-      // Editing a stored connection is local-only. Persist before dismiss, never onDisappear.
-      if(initial){entry.finished=true;onDone();if(!auto)dismiss();return}
-      try { await loadOverview(c) } catch (e) { await Dialog.alert({ title: "已保存，但连接测试失败", message: msg(e) }); onDone(); if(!auto)dismiss(); return }
+      const existed = !!entry.savedId
+      const c = saveController({ id: entry.savedId, name:d.name, host:d.host, port:Number(d.port), https:d.https, username:d.username, plugin:d.plugin, auto:d.auto, cport:Number(d.cport)||9090 }, d.password, d.csecret)
+      entry.savedId = c.id; entry.savedSnap = currentSnap
+      if(existed){onDone();if(!fromDisappear)dismiss();return}
+      try { await loadOverview(c) } catch (e) { await Dialog.alert({ title: "已保存，但连接测试失败", message: msg(e) }); onDone(); if(!fromDisappear)dismiss(); return }
       try { await loadClashOverview(c) } catch (e) { await Dialog.alert({ title: "已保存，路由器已连接，但代理控制器获取失败", message: msg(e) }) }
-      onDone(); if(!auto)dismiss()
-    } catch (e) { setErr(msg(e)) } finally { entry.busy=false }
+      onDone(); if(!fromDisappear)dismiss()
+    } catch (e) {
+      const text = msg(e)
+      setErr(text)
+      if (fromDisappear) await Dialog.alert({ title: "保存未完成", message: text })
+    } finally { entry.busy=false }
   }
 
+  const showEdit = () => { entry.helpOpen = false; entry.sceneVis.appear() }, hideEdit = () => save(true)
   const pageScheme = usePageColorScheme()
   return <Form preferredColorScheme={pageScheme} background="systemBackground" scrollContentBackground="hidden" navigationTitle={initial ? "编辑 OpenWrt" : "添加 OpenWrt"} navigationBarTitleDisplayMode="inline"
-    onDisappear={()=>save(true)}>
+    onAppear={showEdit} onDisappear={hideEdit}>
     <Section listRowBackground={panelRowBackground()} header={<Text>基本信息</Text>}>
       <TextField title="名称" value={name} onChanged={change("name",setName)} prompt="例如：家庭路由" />
       <TextField title="地址" value={host} onChanged={change("host",setHost)} prompt="IP 地址" />
@@ -635,7 +639,7 @@ function EditController({ initial, onDone }: { initial?: Controller; onDone: () 
     </Section>
     {err ? <Section listRowBackground={panelRowBackground()}><Text foregroundStyle="systemRed">{err}</Text></Section> : null}
     <Section listRowBackground={panelRowBackground()}>
-      <NavigationLink destination={<HelpPage />}><Label title="使用说明" systemImage="questionmark.circle.fill" /></NavigationLink>
+      <NavigationLink destination={<HelpPage onVisibility={open => { entry.helpOpen = open }} />}><Label title="使用说明" systemImage="questionmark.circle.fill" /></NavigationLink>
     </Section>
   </Form>
 }
@@ -680,8 +684,8 @@ function SettingsPage({ active, onChanged }: { active: Controller | null; onChan
 }
 
 type RootTab = "home" | "proxies" | "rules" | "connections" | "more"
-function MorePage({ active, onChanged, onClose, selected = true }: { active: Controller | null; onChanged: () => void; onClose?: () => void; selected?: boolean }) {
-  return <DashboardMorePage selected={selected} active={active} onChanged={onChanged} onClose={onClose} />
+function MorePage({ active, version = 0, onChanged, onClose, selected = true }: { active: Controller | null; version?: number; onChanged: () => void; onClose?: () => void; selected?: boolean }) {
+  return <DashboardMorePage selected={selected} active={active} version={version} onChanged={onChanged} onClose={onClose} />
 }
 function Root() {
   useEffect(observeDetailsPhase,[])
@@ -737,7 +741,7 @@ function Root() {
     </Tab>
     <Tab key="more" title="更多" systemImage="square.split.2x2" value="more">
       <NavigationStack key="more-stack" background="systemBackground" scrollContentBackground="hidden">
-        <MorePage selected={tab === "more"} onClose={dismiss} key={`more:${active?.id ?? "empty"}`} active={active} onChanged={bump} />
+        <MorePage selected={tab === "more"} onClose={dismiss} key={`more:${active?.id ?? "empty"}`} active={active} version={version} onChanged={bump} />
       </NavigationStack>
     </Tab>
   </TabView>

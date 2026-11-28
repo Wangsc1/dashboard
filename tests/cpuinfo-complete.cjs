@@ -29,8 +29,8 @@ async function ready(c){await sample(c);return sample(c)}
    const a=await ready(device());assert.equal(a.wrt.cpuMeta.cpu15.mhz,1755.125);assert.equal(a.wrt.cpuMeta.cpu15.cacheKB,1472);assert.equal(a.wrt.cpuMeta.cpu7.mhz,undefined);assert.equal(a.wrt.cpuMeta.cpu7.cacheKB,undefined);assert.equal(Object.keys(a.wrt.cpuMeta).length,16);assert.ok(a.wrt.cpu!==undefined)
    assert.ok(!requests.some(q=>q.obj==='file'&&q.args?.path==='/proc/cpuinfo'))
  })
- await test('虚拟size0/流EOF、5秒缓存与单飞：慢元数据不阻塞1秒使用率，失败退避',async()=>{
-   const c=device(),before=downloads;await ready(c);for(let i=0;i<4;i++){now+=1000;await sample(c)}assert.equal(downloads-before,1);now+=1000;await sample(c);assert.equal(downloads-before,2)
+ await test('虚拟size0/流EOF、开机周期内单次缓存与单飞：慢元数据不阻塞1秒使用率，失败退避',async()=>{
+   const c=device(),before=downloads;await ready(c);for(let i=0;i<8;i++){now+=1000;await sample(c)}assert.equal(downloads-before,1)
    gate=new Promise(r=>release=r);const slow=device(),start=downloads;await sample(slow);for(let i=0;i<8;i++){now+=1000;assert.ok((await sample(slow)).wrt.cpu!==undefined)}assert.equal(downloads-start,1);release();gate=null;await flush();assert.equal((await sample(slow)).wrt.cpuMeta.cpu15.mhz,1755.125)
    mode='403';const denied=device(),n=downloads;await ready(denied);now+=10000;await sample(denied);assert.equal(downloads-n,1);now+=5000;await sample(denied);assert.equal(downloads-n,2)
  })
