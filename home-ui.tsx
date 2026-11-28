@@ -17,25 +17,17 @@ function animationApi(): any {
   try { return (globalThis as any).Animation } catch {}
   return undefined
 }
-function flipRotateAnimation(step: number): any {
+function cardCrossfadeAnimation(step: number): any {
   try {
     const A = animationApi()
-    if (typeof A?.smooth === "function") return { animation: A.smooth({ duration: 0.5 }), value: step }
-    if (typeof A?.easeOut === "function") return { animation: A.easeOut(0.45), value: step }
+    if (typeof A?.smooth === "function") return { animation: A.smooth({ duration: 0.28 }), value: step }
+    if (typeof A?.easeOut === "function") return { animation: A.easeOut(0.28), value: step }
     if (typeof A?.default === "function") return { animation: A.default(), value: step }
   } catch {}
   return undefined
 }
-function flipOpacityAnimation(step: number): any {
-  try {
-    const A = animationApi()
-    const base = typeof A?.linear === "function" ? A.linear(0.03) : undefined
-    if (base && typeof base.delay === "function") return { animation: base.delay(0.12), value: step }
-    if (base) return { animation: base, value: step }
-  } catch {}
-  return undefined
-}
 export const CPU_CARD_HEIGHT = 232
+const CPU_FACE_FRAME = { minWidth: 0, maxWidth: "infinity" as const, height: CPU_CARD_HEIGHT - 32, alignment: "topLeading" as const }
 export function HomeBadge({icon,color}:{icon:string;color:string}) {
   return <Image systemName={icon} font={11.5} fontWeight="semibold" foregroundStyle={color as any} frame={{width:22,height:22}} background={<RoundedRectangle cornerRadius={7} fill={{light:hexTint(color,0.12),dark:hexTint(color,0.20)}}/>}/>
 }
@@ -72,7 +64,7 @@ export function tempBadgeStyle(temp?:number):{fg:any;bg:any} {
 export function CpuBreakdown({cpu,running}:{cpu?:CpuUsage;running:boolean}) {
   return <HStack spacing={0} alignment="bottom"><HStack spacing={22}>{([['SYS',cpu?.system],['USER',cpu?.user],['STEAL',cpu?.steal]] as const).map(([title,value])=><VStack key={title} alignment="leading" spacing={3}><Text font={10} fontWeight="medium" foregroundStyle="secondaryLabel" lineLimit={1}>{title}</Text><MetricNumber value={value} digits={1} pointSize={14} running={running}/></VStack>)}</HStack><Spacer/><HStack alignment="lastTextBaseline" spacing={2}><MetricNumber running={running} value={cpu?.usage} digits={1} pointSize={24} tone="#3485eb"/><Text font={12} fontWeight="medium" foregroundStyle="#3485eb">%</Text></HStack></HStack>
 }
-export function CpuSystemCard({w,onFlip}:{w?:WrtInfo;onFlip?:()=>void}) {
+export function CpuSystemCard({w,onFlip,bare=false}:{w?:WrtInfo;onFlip?:()=>void;bare?:boolean}) {
   const cores=w?.cpus?.filter(x=>x.id!=='cpu')??[]
   const info=[['Uptime',w?fmtUptime(w.uptime,true):'--'],['Arch',w?.arch||'--'],['Cpu',cores.length?String(cores.length):'--'],['Kernel',w?.kernel||'--'],['Board',w?.model||'--']] as const
   const rows:any[]=[]
@@ -80,30 +72,28 @@ export function CpuSystemCard({w,onFlip}:{w?:WrtInfo;onFlip?:()=>void}) {
     if(i>0){rows.push(<Spacer key={`s0-${title}`}/>);rows.push(<Divider key={`d-${title}`}/>);rows.push(<Spacer key={`s1-${title}`}/>)}
     rows.push(<HStack key={title}><Text font={12.5} foregroundStyle="label">{title}</Text><Spacer/><Text font={12.5} foregroundStyle="secondaryLabel" lineLimit={1} minimumScaleFactor={0.85} multilineTextAlignment="trailing">{value}</Text></HStack>)
   })
-  return <HomeCard onOpen={onFlip} fixedHeight={CPU_CARD_HEIGHT}><HStack spacing={8}><HomeBadge icon="info.circle" color="#3485eb"/><Text font={15} fontWeight="semibold" lineLimit={1} minimumScaleFactor={0.85}>{w?.release||'系统版本未提供'}</Text><Spacer/><Image systemName="arrowshape.turn.up.left" font={11.5} fontWeight="semibold" foregroundStyle="tertiaryLabel"/></HStack><Spacer/>{rows}</HomeCard>
+  const content=<VStack alignment="leading" spacing={0} frame={CPU_FACE_FRAME}><HStack spacing={8}><HomeBadge icon="info.circle" color="#3485eb"/><Text font={15} fontWeight="semibold" lineLimit={1} minimumScaleFactor={0.85}>{w?.release||'系统版本未提供'}</Text><Spacer/><Image systemName="arrowshape.turn.up.left" font={11.5} fontWeight="semibold" foregroundStyle="tertiaryLabel"/></HStack><Spacer/>{rows}</VStack>
+  return bare ? content : <HomeCard onOpen={onFlip} fixedHeight={CPU_CARD_HEIGHT}>{content}</HomeCard>
 }
 export function CpuCard({w,history,running,flipped=false,onFlip}:{w?:WrtInfo;history:number[];running:boolean;flipped?:boolean;onFlip?:()=>void}) {
   const temp=tempBadgeStyle(w?.temperature)
   const step=flipped?1:0
-  const rotAnim=flipRotateAnimation(step)
-  const opAnim=flipOpacityAnimation(step)
+  const anim=cardCrossfadeAnimation(step)
   const cpuModel=w?.cpuModel?.replace(/\s+/g," ").trim()
-  return <ZStack frame={{height:CPU_CARD_HEIGHT}}>
-    <VStack spacing={0} zIndex={flipped?0:1}
-      rotation3DEffect={{degrees:flipped?180:0,axis:{x:0,y:1,z:0},perspective:0.5}}
-      {...(rotAnim?{animation:rotAnim}:{})}>
-      <VStack spacing={0} opacity={flipped?0:1} {...(opAnim?{animation:opAnim}:{})}>
-        <HomeCard onOpen={flipped?undefined:onFlip} fixedHeight={CPU_CARD_HEIGHT}><VStack alignment="leading" spacing={4}><HStack spacing={8}><HomeBadge icon="cpu" color="#3485eb"/><Text font={16} fontWeight="semibold" lineLimit={1}>CPU</Text><Spacer/><HStack spacing={6}><HStack spacing={3} padding={{horizontal:8,vertical:3.5}} background={<RoundedRectangle cornerRadius={10} fill={temp.bg}/>}><Image systemName="thermometer.medium" font={10} foregroundStyle={temp.fg}/><Text font={11} fontWeight="bold" foregroundStyle={temp.fg}>{w?.temperature===undefined?"-- °C":`${w.temperature.toFixed(1)} °C`}</Text></HStack><Image systemName="arrowshape.turn.up.left" font={11.5} fontWeight="semibold" foregroundStyle="tertiaryLabel"/></HStack></HStack><Text font={12} foregroundStyle="secondaryLabel" lineLimit={1} minimumScaleFactor={0.82}>{cpuModel||(w?"CPU 型号未提供":"--")}</Text></VStack><Spacer/><GridPlot samples={history} tone="#3485eb" plotHeight={92} area percent running={running} plotWidth={PLOT_FULL_W}/><Spacer/><CpuBreakdown cpu={w?.cpus?.find(c=>c.id==='cpu')} running={running}/></HomeCard>
+  return <HomeCard onOpen={onFlip} fixedHeight={CPU_CARD_HEIGHT}>
+    <ZStack alignment="topLeading" frame={CPU_FACE_FRAME}>
+      <VStack alignment="leading" spacing={0} frame={CPU_FACE_FRAME}
+        opacity={flipped?0:1} scaleEffect={flipped?0.97:1}
+        {...(anim?{animation:anim}:{})}>
+        <VStack alignment="leading" spacing={4}><HStack spacing={8}><HomeBadge icon="cpu" color="#3485eb"/><Text font={16} fontWeight="semibold" lineLimit={1}>CPU</Text><Spacer/><HStack spacing={6}><HStack spacing={3} padding={{horizontal:8,vertical:3.5}} background={<RoundedRectangle cornerRadius={10} fill={temp.bg}/>}><Image systemName="thermometer.medium" font={10} foregroundStyle={temp.fg}/><Text font={11} fontWeight="bold" foregroundStyle={temp.fg}>{w?.temperature===undefined?"-- °C":`${w.temperature.toFixed(1)} °C`}</Text></HStack><Image systemName="arrowshape.turn.up.left" font={11.5} fontWeight="semibold" foregroundStyle="tertiaryLabel"/></HStack></HStack><Text font={12} foregroundStyle="secondaryLabel" lineLimit={1} minimumScaleFactor={0.82}>{cpuModel||(w?"CPU 型号未提供":"--")}</Text></VStack><Spacer/><GridPlot samples={history} tone="#3485eb" plotHeight={92} area percent running={running} plotWidth={PLOT_FULL_W}/><Spacer/><CpuBreakdown cpu={w?.cpus?.find(c=>c.id==='cpu')} running={running}/>
       </VStack>
-    </VStack>
-    <VStack spacing={0} zIndex={flipped?1:0}
-      rotation3DEffect={{degrees:flipped?0:-180,axis:{x:0,y:1,z:0},perspective:0.5}}
-      {...(rotAnim?{animation:rotAnim}:{})}>
-      <VStack spacing={0} opacity={flipped?1:0} {...(opAnim?{animation:opAnim}:{})}>
-        <CpuSystemCard w={w} onFlip={flipped?onFlip:undefined}/>
+      <VStack alignment="leading" spacing={0} frame={CPU_FACE_FRAME}
+        opacity={flipped?1:0} scaleEffect={flipped?1:0.97}
+        {...(anim?{animation:anim}:{})}>
+        <CpuSystemCard w={w} bare/>
       </VStack>
-    </VStack>
-  </ZStack>
+    </ZStack>
+  </HomeCard>
 }
 export function TrafficCard({heading,rate,total,history,tone,running}:{heading:string;rate?:number;total?:number;history:number[];tone:string;running:boolean}) {
   const parts=rate===undefined?undefined:fmtSpeed(rate).split(' '),value=parts?Number(parts[0]):undefined,unit=parts?" "+parts.slice(1).join(' '):""

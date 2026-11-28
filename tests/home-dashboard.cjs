@@ -95,39 +95,41 @@ function fixture(url,init){if(url.endsWith('/cgi-bin/cgi-download'))return {stat
    assert.equal(ram.props.bars.type,home.CapacityBars);assert.equal(home.CapacityBars(ram.props.bars.props).props.frame.maxHeight,24);assert.ok(nodes(load.props.bars,home.LoadBars).every(n=>home.LoadBars(n.props).props.frame.height===24))
    // Verifies native constraints, not actual iOS bounds or Dynamic Type rendering.
  })
- await test('CPU正反整卡点击面覆盖绘制层和留白，入口只触发一次；其他卡片不拦截',()=>{
+ await test('CPU正反整卡共用单外壳与点击面，内部双面轻柔缩放交叉淡入淡出且不重建热区；其他卡片不拦截',()=>{
    let flips=0;const onFlip=()=>flips++
-   for(const flipped of [false,true]){
-     const cpu=home.CpuCard({history:[10,20],running:true,flipped,onFlip})
-     assert.equal(cpu.props.frame.height,home.CPU_CARD_HEIGHT)
-     const [frontWrap,backWrap]=cpu.props.children
-     assert.equal(frontWrap.props.rotation3DEffect.degrees,flipped?180:0)
-     assert.equal(backWrap.props.rotation3DEffect.degrees,flipped?0:-180)
-     deep(frontWrap.props.rotation3DEffect.axis,{x:0,y:1,z:0})
-     deep(backWrap.props.rotation3DEffect.axis,{x:0,y:1,z:0})
-     assert.equal(frontWrap.props.rotation3DEffect.perspective,0.5)
-     assert.equal(backWrap.props.rotation3DEffect.perspective,0.5)
-     assert.equal(frontWrap.props.children[0].props.opacity,flipped?0:1)
-     assert.equal(backWrap.props.children[0].props.opacity,flipped?1:0)
-     assert.equal(frontWrap.props.zIndex,flipped?0:1)
-     assert.equal(backWrap.props.zIndex,flipped?1:0)
-     const frontFace=nodes(frontWrap,home.HomeCard)[0]
-     const backFace=home.CpuSystemCard(nodes(backWrap,home.CpuSystemCard)[0].props)
-     assert.equal(frontFace.props.fixedHeight,home.CPU_CARD_HEIGHT)
-     assert.equal(backFace.props.fixedHeight,home.CPU_CARD_HEIGHT)
-     assert.equal(frontFace.props.onOpen,flipped?undefined:onFlip)
-     assert.equal(backFace.props.onOpen,flipped?onFlip:undefined)
-     const face=flipped?backFace:frontFace
-     assert.equal(face.props.onOpen,onFlip)
-     const card=home.HomeCard(face.props),steps=card.props.modifiers.steps
-     deep(steps.map(s=>s[0]),['frame','frame','padding','background','overlay'])
-     const hit=steps.at(-1)[1]
-     assert.equal(hit.type,'RoundedRectangle');assert.equal(hit.props.fill,'clear');assert.equal(hit.props.contentShape,'rect')
-     assert.equal(hit.props.frame,undefined,'overlay uses the complete padded base bounds, not a title-sized frame')
-     assert.equal(hit.props.onTapGesture,onFlip);assert.equal(card.props.onTapGesture,undefined,'no duplicate parent gesture')
-     hit.props.onTapGesture()
-     assert.equal(hit.props.onDragGesture,undefined)
-   }
+   const origAnim=context.Animation
+   context.Animation={smooth:(o)=>({kind:'smooth',...o}),easeOut:(d)=>({kind:'easeOut',duration:d}),default:()=>({kind:'default'})}
+   try{
+     for(const flipped of [false,true]){
+       const cpu=home.CpuCard({history:[10,20],running:true,flipped,onFlip})
+       assert.equal(cpu.type,home.HomeCard)
+       assert.equal(cpu.props.fixedHeight,home.CPU_CARD_HEIGHT)
+       assert.equal(cpu.props.onOpen,onFlip)
+       const stack=cpu.props.children[0]
+       assert.equal(stack.type,'ZStack')
+       assert.equal(stack.props.frame.height,home.CPU_CARD_HEIGHT-32)
+       const [frontFace,backFace]=stack.props.children
+       assert.equal(frontFace.props.rotation3DEffect,undefined)
+       assert.equal(backFace.props.rotation3DEffect,undefined)
+       assert.equal(frontFace.props.zIndex,undefined)
+       assert.equal(backFace.props.zIndex,undefined)
+       assert.equal(frontFace.props.opacity,flipped?0:1)
+       assert.equal(backFace.props.opacity,flipped?1:0)
+       assert.equal(frontFace.props.scaleEffect,flipped?0.97:1)
+       assert.equal(backFace.props.scaleEffect,flipped?1:0.97)
+       deep(frontFace.props.animation,{animation:{kind:'smooth',duration:0.28},value:flipped?1:0})
+       deep(backFace.props.animation,{animation:{kind:'smooth',duration:0.28},value:flipped?1:0})
+       assert.equal(nodes(backFace,home.CpuSystemCard)[0].props.bare,true)
+       const card=home.HomeCard(cpu.props),steps=card.props.modifiers.steps
+       deep(steps.map(s=>s[0]),['frame','frame','padding','background','overlay'])
+       const hit=steps.at(-1)[1]
+       assert.equal(hit.type,'RoundedRectangle');assert.equal(hit.props.fill,'clear');assert.equal(hit.props.contentShape,'rect')
+       assert.equal(hit.props.frame,undefined,'overlay uses the complete padded base bounds, not a title-sized frame')
+       assert.equal(hit.props.onTapGesture,onFlip);assert.equal(card.props.onTapGesture,undefined,'no duplicate parent gesture')
+       hit.props.onTapGesture()
+       assert.equal(hit.props.onDragGesture,undefined)
+     }
+   }finally{context.Animation=origAnim}
    assert.equal(flips,2)
    assert.ok(!home.HomeCard({children:[]}).props.modifiers.steps.some(s=>s[0]==='overlay'))
  })

@@ -57,11 +57,11 @@ function slot(n,height){
  await test('CPU卡片翻转背面显示完整系统信息五项，正面显示型号与折线，双面等高同栈且右上角图标正确',()=>{
    const w={release:'ImmortalWrt 25.12.1',uptime:120,arch:'x86_64',kernel:'6.12.94',model:'Board',cpuModel:'Intel(R) Xeon(R) E-2286M CPU @ 2.40GHz',cpus:[{id:'cpu',usage:1},...Array.from({length:16},(_,i)=>({id:'cpu'+i,usage:i}))]}
    const front=home.CpuCard({w,history:[1,2],running:true,flipped:false})
-   assert.equal(front.props.frame.height,home.CPU_CARD_HEIGHT)
+   assert.equal(front.props.fixedHeight,home.CPU_CARD_HEIGHT)
    assert.equal(nodes(front,home.GridPlot).length,1);assert.equal(nodes(front,home.CpuBreakdown).length,1);assert.ok(text(front).includes('Intel(R) Xeon(R) E-2286M'))
    assert.ok(nodes(front,'Image').some(i=>i.props.systemName==='arrowshape.turn.up.left'))
    const back=home.CpuCard({w,history:[1,2],running:false,flipped:true})
-   assert.equal(back.props.frame.height,home.CPU_CARD_HEIGHT)
+   assert.equal(back.props.fixedHeight,home.CPU_CARD_HEIGHT)
    assert.equal(nodes(back,home.GridPlot)[0].props.running,false)
    const sys=home.CpuSystemCard(nodes(back,home.CpuSystemCard)[0].props)
    assert.ok(nodes(sys,'Image').some(i=>i.props.systemName==='arrowshape.turn.up.left'))
