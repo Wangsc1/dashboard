@@ -139,12 +139,19 @@ function fixture(url,init){if(url.endsWith('/cgi-bin/cgi-download'))return {stat
    assert.equal(home.CpuDetails,undefined);assert.equal(home.LiveCpuDetails,undefined)
    const source=fs.readFileSync(path.join(root,'home-ui.tsx'),'utf8');assert.ok(!source.includes('gradient('));assert.ok(!source.includes('shadow='));assert.ok(source.includes('#17965b'));assert.ok(source.includes('#3485eb'))
  })
- await test('CPU卡片正面展示型号、翻转背面展示系统信息五项且字段颜色正确',()=>{
-   const w={release:'ImmortalWrt 25.12.1 r37978',uptime:7450599,arch:'x86_64',kernel:'6.12.94',model:'LENOVO 10MUS1LH00',cpuModel:'Intel(R) Xeon(R) E-2286M  CPU @ 2.40GHz',temperature:41,cpus:[{id:'cpu',usage:0.6},...Array.from({length:16},(_,i)=>({id:'cpu'+i,usage:0.1}))]}
+ await test('CPU卡片正面展示型号、翻转背面展示系统信息五项且发行版后面版本号字号缩小完整显示',()=>{
+   const w={release:'ImmortalWrt 25.12.1 r37978-cd0a012345',uptime:7450599,arch:'x86_64',kernel:'6.12.94',model:'LENOVO 10MUS1LH00',cpuModel:'Intel(R) Xeon(R) E-2286M  CPU @ 2.40GHz',temperature:41,cpus:[{id:'cpu',usage:0.6},...Array.from({length:16},(_,i)=>({id:'cpu'+i,usage:0.1}))]}
    const front=home.CpuCard({w,history:[0.6],running:false,flipped:false})
    assert.ok(text(front).includes('Intel(R) Xeon(R) E-2286M CPU @ 2.40GHz'));assert.ok(text(front).includes('41.0 °C'));assert.equal(nodes(front,home.GridPlot).length,1)
    const back=home.CpuSystemCard({w})
-   assert.ok(text(back).includes('ImmortalWrt 25.12.1 r37978'));assert.ok(text(back).includes('x86_64'));assert.ok(text(back).includes('16'));assert.ok(text(back).includes('6.12.94'));assert.ok(text(back).includes('LENOVO 10MUS1LH00'))
+   assert.ok(text(back).includes('ImmortalWrt 25.12.1 r37978-cd0a012345'));assert.ok(text(back).includes('x86_64'));assert.ok(text(back).includes('16'));assert.ok(text(back).includes('6.12.94'));assert.ok(text(back).includes('LENOVO 10MUS1LH00'))
+   const nameNode=nodes(back,'Text').find(n=>text(n)==='ImmortalWrt')
+   const verNode=nodes(back,'Text').find(n=>text(n)==='25.12.1 r37978-cd0a012345')
+   assert.ok(nameNode && verNode)
+   assert.equal(nameNode.props.font,15);assert.equal(verNode.props.font,11.5);assert.ok(verNode.props.minimumScaleFactor<=0.6)
+   deep(home.splitReleaseTitle('OpenWrt SNAPSHOT r28000-abcdef1234'),['OpenWrt','SNAPSHOT r28000-abcdef1234'])
+   deep(home.splitReleaseTitle('OpenWrt'),['OpenWrt',''])
+   deep(home.splitReleaseTitle(undefined),['系统版本未提供',''])
    for(const label of ['Uptime','Arch','Cpu','Kernel','Board']) {const n=nodes(back,'Text').find(n=>text(n)===label);assert.ok(n,label);assert.equal(n.props.foregroundStyle,'label')}
  })
  await test('所有数值逐采样直接显示，无数字timer；曲线共用Canvas槽',async()=>{

@@ -63,15 +63,25 @@ export function tempBadgeStyle(temp?:number):{fg:any;bg:any} {
 export function CpuBreakdown({cpu,running}:{cpu?:CpuUsage;running:boolean}) {
   return <HStack spacing={0} alignment="bottom"><HStack spacing={22}>{([['SYS',cpu?.system],['USER',cpu?.user],['STEAL',cpu?.steal]] as const).map(([title,value])=><VStack key={title} alignment="leading" spacing={3}><Text font={10} fontWeight="medium" foregroundStyle="secondaryLabel" lineLimit={1}>{title}</Text><MetricNumber value={value} digits={1} pointSize={14} running={running}/></VStack>)}</HStack><Spacer/><HStack alignment="lastTextBaseline" spacing={2}><MetricNumber running={running} value={cpu?.usage} digits={1} pointSize={24} tone="#3485eb"/><Text font={12} fontWeight="medium" foregroundStyle="#3485eb">%</Text></HStack></HStack>
 }
+export function splitReleaseTitle(release?:string):[string,string] {
+  const s=release?.replace(/\s+/g," ").trim()??""
+  if(!s)return ["系统版本未提供",""]
+  const m=/^(.+?)\s+((?:v?\d|r\d|SNAPSHOT\b).*)$/i.exec(s)
+  return m?[m[1],m[2]]:[s,""]
+}
 export function CpuSystemCard({w,onFlip,bare=false}:{w?:WrtInfo;onFlip?:()=>void;bare?:boolean}) {
   const cores=w?.cpus?.filter(x=>x.id!=='cpu')??[]
+  const [releaseName,releaseVer]=splitReleaseTitle(w?.release)
   const info=[['Uptime',w?fmtUptime(w.uptime,true):'--'],['Arch',w?.arch||'--'],['Cpu',cores.length?String(cores.length):'--'],['Kernel',w?.kernel||'--'],['Board',w?.model||'--']] as const
   const rows:any[]=[]
   info.forEach(([title,value],i)=>{
     if(i>0){rows.push(<Spacer key={`s0-${title}`}/>);rows.push(<Divider key={`d-${title}`}/>);rows.push(<Spacer key={`s1-${title}`}/>)}
     rows.push(<HStack key={title}><Text font={12.5} foregroundStyle="label">{title}</Text><Spacer/><Text font={12.5} foregroundStyle="secondaryLabel" lineLimit={1} minimumScaleFactor={0.85} multilineTextAlignment="trailing">{value}</Text></HStack>)
   })
-  const content=<VStack alignment="leading" spacing={0} frame={CPU_FACE_FRAME}><HStack spacing={8}><HomeBadge icon="info.circle" color="#3485eb"/><Text font={15} fontWeight="semibold" lineLimit={1} minimumScaleFactor={0.85}>{w?.release||'系统版本未提供'}</Text><Spacer/><Image systemName="arrowshape.turn.up.left" font={11.5} fontWeight="semibold" foregroundStyle="tertiaryLabel"/></HStack><Spacer/>{rows}</VStack>
+  const title=releaseVer
+    ? <HStack spacing={6} alignment="lastTextBaseline"><Text font={15} fontWeight="semibold" lineLimit={1} {...(releaseName.length<=18?{fixedSize:{horizontal:true,vertical:false}}:{minimumScaleFactor:0.85})}>{releaseName}</Text><Text font={11.5} foregroundStyle="secondaryLabel" lineLimit={1} minimumScaleFactor={0.55}>{releaseVer}</Text></HStack>
+    : <Text font={15} fontWeight="semibold" lineLimit={1} minimumScaleFactor={0.75}>{releaseName}</Text>
+  const content=<VStack alignment="leading" spacing={0} frame={CPU_FACE_FRAME}><HStack spacing={8}><HomeBadge icon="info.circle" color="#3485eb"/>{title}<Spacer/><Image systemName="arrowshape.turn.up.left" font={11.5} fontWeight="semibold" foregroundStyle="tertiaryLabel"/></HStack><Spacer/>{rows}</VStack>
   return bare ? content : <HomeCard onOpen={onFlip} fixedHeight={CPU_CARD_HEIGHT}>{content}</HomeCard>
 }
 export function CpuCard({w,history,running,flipped=false,onFlip}:{w?:WrtInfo;history:number[];running:boolean;flipped?:boolean;onFlip?:()=>void}) {
